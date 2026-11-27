@@ -1,4 +1,4 @@
-import { computed, Injectable, signal } from '@angular/core';
+import { DestroyRef, computed, inject, Injectable, signal } from '@angular/core';
 
 /**
  * Cycle 9 shell feature service: durable user-interface preferences
@@ -6,16 +6,8 @@ import { computed, Injectable, signal } from '@angular/core';
  * the shell stops owning persistence wiring for prefs that have
  * nothing to do with kanban data flow.
  *
- * State backed by localStorage today (the keys match the pre-extraction
- * shell exactly, so the move is invisible to existing users):
- *
- *   - `taskNavCollapsed`  - left task-nav collapsed or expanded
- *   - `compactCards`      - dense vs full job-card mode
- *   - `sideSheetWidth`    - resizable side-sheet width in pixels
- *
- * Methods are deliberately small: no derived state, no computeds, no
- * effects. The service is a thin wrapper around three signals + their
- * persistence so its surface area stays trivial to read.
+ * Browser-local signals persist through reload and mirror sibling-tab writes.
+ * Surface density is independent of the retired compactCards preference.
  *
  * `startResize` lives here because the drag handlers it installs
  * directly call `sideSheetWidth.set` on every mousemove and persist
@@ -28,6 +20,13 @@ import { computed, Injectable, signal } from '@angular/core';
  * already the persistence channel; the `storage` event is the only
  * way one tab finds out the other one wrote.
  */
+export type SurfaceDensity = 'compact' | 'default' | 'cozy';
+const STORAGE_KEY_SURFACE_DENSITY = 'atp.studio.surfaceDensity.v1';
+
+function surfaceDensity(value: string | null): SurfaceDensity {
+  return value === 'default' || value === 'cozy' ? value : 'compact';
+}
+
 const STORAGE_KEY_TASK_NAV = 'taskNavCollapsed';
 // AGT-2035: the card-density feature was abolished. `compactCards` is no longer
 // a live preference; the key is proactively cleared on boot (see constructor).
@@ -45,6 +44,10 @@ const STORAGE_KEY_TREE_METRICS = 'atp.studio.explorer.metrics';
 
 @Injectable({ providedIn: 'root' })
 export class UiPreferencesService {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly density = signal<SurfaceDensity>(this.savedSurfaceDensity());
+  readonly surfaceDensity = this.density.asReadonly();
+
   readonly taskNavCollapsed = signal<boolean>(localStorage.getItem(STORAGE_KEY_TASK_NAV) === '1');
   readonly treeMetricView = signal<'numbers' | 'dots'>(
     localStorage.getItem(STORAGE_KEY_TREE_METRICS) === 'dots' ? 'dots' : 'numbers',
@@ -74,6 +77,7 @@ export class UiPreferencesService {
   private resizing = false;
 
   constructor() {
+    this.reflectSurfaceDensity();
     // AGT-2035 migration: drop the abolished card-density preference so a stale
     // value can never resurrect compact rendering.
     try { localStorage.removeItem(STORAGE_KEY_COMPACT_CARDS); } catch { /* ignore */ }
@@ -84,6 +88,7 @@ export class UiPreferencesService {
     try { localStorage.removeItem(STORAGE_KEY_ORCHESTRATOR_SETTINGS_OPEN); } catch { /* ignore */ }
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', this.onStorageEvent);
+      this.destroyRef.onDestroy(() => window.removeEventListener('storage', this.onStorageEvent));
     }
   }
 
@@ -98,6 +103,11 @@ export class UiPreferencesService {
   private readonly onStorageEvent = (e: StorageEvent): void => {
     if (e.storageArea !== null && e.storageArea !== localStorage) return;
     switch (e.key) {
+      case null:
+      case STORAGE_KEY_SURFACE_DENSITY:
+        this.density.set(surfaceDensity(e.newValue));
+        this.reflectSurfaceDensity();
+        return;
       case STORAGE_KEY_TASK_NAV:
         this.taskNavCollapsed.set(e.newValue === '1');
         return;
@@ -119,6 +129,21 @@ export class UiPreferencesService {
         return;
     }
   };
+
+  private savedSurfaceDensity(): SurfaceDensity {
+    try { return surfaceDensity(localStorage.getItem(STORAGE_KEY_SURFACE_DENSITY)); }
+    catch { return 'compact'; }
+  }
+
+  private reflectSurfaceDensity(): void {
+    document.documentElement.dataset['studioDensity'] = this.surfaceDensity();
+  }
+
+  setSurfaceDensity(value: SurfaceDensity): void {
+    this.density.set(value);
+    this.reflectSurfaceDensity();
+    try { localStorage.setItem(STORAGE_KEY_SURFACE_DENSITY, value); } catch { /* storage blocked */ }
+  }
 
   setTaskNavCollapsed(collapsed: boolean): void {
     this.taskNavCollapsed.set(collapsed);

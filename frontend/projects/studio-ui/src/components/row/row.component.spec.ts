@@ -10,10 +10,11 @@ describe('RowComponent', () => {
     });
   });
 
-  it('constructs and exposes compact as the default variant', () => {
+  it('constructs with an inherited density variant', () => {
     const fixture = TestBed.createComponent(RowComponent);
     fixture.detectChanges();
-    expect(fixture.componentInstance.variant()).toBe('compact');
+    expect(fixture.componentInstance.variant()).toBeUndefined();
+    expect(fixture.nativeElement.hasAttribute('data-variant')).toBe(false);
     expect(fixture.componentInstance.interactive()).toBe(false);
   });
 

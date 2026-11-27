@@ -133,6 +133,52 @@ the pre-change build for baseline capture. The audit instruction prohibited
 builds and test execution, so browser verification and before/after screenshot
 comparison remain pending; source checks do not substitute for those checks.
 
+## Surface density
+
+After the F01 token-set foundation, `UiPreferencesService.surfaceDensity` owns
+an independent browser-local `compact | default | cozy` preference.
+Appearance > Layout > Surface density writes `atp.studio.surfaceDensity.v1`;
+reload restores it, and sibling-tab storage writes, removal and clear update
+both the signal and `<html data-studio-density>`. Missing or invalid values
+select compact. The retired `compactCards` key is still removed on boot and
+never participates in this preference. Density changes spacing, not row data.
+
+The app token entry `frontend/src/styles/_tokens-semantic.scss` maps six active
+aliases onto the library's existing scales, independently of light/dark theme:
+
+| Active alias suffix (`--studio-`) | Compact (initial) | Default | Cozy |
+|---|---:|---:|---:|
+| `row-pad-block` | 3 px | 6 px | 10 px |
+| `row-pad-inline` | 6 px | 10 px | 14 px |
+| `row-gap` | 3 px | 6 px | 10 px |
+| `section-gap` | 10 px | 16 px | 24 px |
+| `row-min-h` | 20 px | 24 px | 32 px |
+| `row-min-h-interactive` | 32 px | 36 px | 40 px |
+
+Precedence is CSS inheritance: the root supplies aliases; a surface may override
+aliases locally; a shared row with an explicit `variant="compact|default|cozy"`
+remaps them on its own host and wins over inherited values. Omitting `variant`
+(or binding `undefined`) inherits the containing surface/root. Direct declarations
+on a descendant still take precedence over inherited aliases. Current Diff rows
+explicitly select compact and Access detail rows explicitly select default;
+these choices are retained. Unrelated surface-specific geometry remains local.
+
+The shared row keeps flush inline padding and its existing compact gap floors
+(8 px between slots, 6 px within values, 4 px within trailing content), using
+existing tokens. Gaps expand when the selected row-gap exceeds those floors.
+Thus the initial compact geometry is unchanged. `interactive` continues to
+select the separate 32/36/40 px minimum-height floor; projected native controls
+retain their keyboard behavior and static rows add no Tab stop.
+
+The historical app row path re-exports the current implementation under
+`frontend/projects/studio-ui/src/components/row/`. Focused coverage lives in
+`ui-preferences.service.spec.ts`, `appearance-settings.component.spec.ts`, both
+row test paths and `frontend/e2e/restyle-base/surface-density.spec.ts`. Browser
+checks cover exact compact aliases, both themes, 1280/390 px, keyboard choice,
+reload, real sibling-tab preference events, local overrides and unchanged row
+content. The row CSS test changes host attributes on a fixture-backed Access
+row; Angular input reflection is verified separately by the unit tests.
+
 ## Phone navigation and theme
 
 At 390 px the Studio board shows one lane at a time. The Board lane picker
