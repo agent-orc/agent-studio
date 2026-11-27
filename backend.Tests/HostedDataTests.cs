@@ -93,6 +93,109 @@ public sealed class HostedDataTests : IDisposable
         Assert.Equal(expected, HostedVolumeSchedulePolicy.IsDue(schedule, now));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DueSweep_ContainsUnreadableProject_TracksIncidentUntilRecovery(bool locked)
+    {
+        string[] projects = ["before", "broken", "after"];
+        var settings = new Dictionary<string, string?> { ["TaskRepository"] = Path.Combine(_root, "workspace") };
+        for (var i = 0; i < projects.Length; i++)
+        {
+            var repo = Path.Combine(_root, projects[i]);
+            var declarations = Path.Combine(repo, "docs", "deployments", "environments");
+            Directory.CreateDirectory(declarations);
+            File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } } },
+            }));
+            settings[$"WatchPaths:{i}:Name"] = projects[i];
+            settings[$"WatchPaths:{i}:Path"] = repo;
+            settings[$"WatchPaths:{i}:RepositoryPath"] = repo;
+        }
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var environments = new ProjectEnvironmentService(config, scanner,
+            new GitService(NullLogger<GitService>.Instance, scanner, config),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config), _clock);
+        var log = new ScheduleLogger();
+        var service = new HostedVolumeBackupService(config, environments, new ScheduleEngine(), _clock, log);
+        foreach (var project in projects)
+            await service.SetScheduleAsync(project, "stage", "uploads", 8, "owner", CancellationToken.None);
+        var brokenFile = Path.Combine(_root, "workspace", "hosted-volume-backups", "broken.json");
+        var original = File.ReadAllText(brokenFile);
+        using (var fileLock = locked ? new FileStream(brokenFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None) : null)
+        {
+            if (!locked) File.WriteAllText(brokenFile, "{ unreadable json");
+            var firstFailure = _clock.GetUtcNow();
+            for (var sweep = 0; sweep < 3; sweep++)
+            {
+                await service.RunDueAsync(CancellationToken.None);
+                foreach (var project in new[] { "before", "after" })
+                {
+                    var state = (await service.ReadAsync(project, CancellationToken.None))!;
+                    Assert.Equal(sweep + 1, Assert.Single(state.Schedules).Backups.Count);
+                    Assert.Equal(_clock.GetUtcNow(), state.Schedules[0].LastAttemptAt);
+                    Assert.Null(state.Schedules[0].LastError);
+                    Assert.Equal(sweep + 1, state.Audit.Count(item => item.Action == "backup" && item.Outcome == "succeeded"));
+                }
+                var failure = log.Entries.Last();
+                Assert.Equal(LogLevel.Warning, failure.Level);
+                Assert.Equal("broken", failure.Fields["Project"]);
+                Assert.Equal(firstFailure, failure.Fields["FirstFailedAt"]);
+                Assert.Equal(_clock.GetUtcNow().AddMinutes(5), failure.Fields["RetryAt"]);
+                Assert.Equal(sweep * 2 + 1, log.Entries.Count);
+                // A five-minute retry leaves the healthy schedules bounded to one attempt per UTC day.
+                _clock.Advance(TimeSpan.FromMinutes(5));
+                await service.RunDueAsync(CancellationToken.None);
+                foreach (var project in new[] { "before", "after" })
+                    Assert.Equal(sweep + 1, (await service.ReadAsync(project, CancellationToken.None))!.Schedules[0].Backups.Count);
+                Assert.Equal(firstFailure, log.Entries.Last().Fields["FirstFailedAt"]);
+                // Both warnings refer to the same continuing incident.
+                Assert.Equal((sweep + 1) * 2, log.Entries.Count);
+                _clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromMinutes(5));
+            }
+        }
+        File.WriteAllText(brokenFile, original);
+        await service.RunDueAsync(CancellationToken.None);
+        var recovery = log.Entries.Last();
+        Assert.Equal(LogLevel.Information, recovery.Level);
+        Assert.Equal("broken", recovery.Fields["Project"]);
+        Assert.Equal(_clock.GetUtcNow(), recovery.Fields["RecoveredAt"]);
+        Assert.Equal(_clock.GetUtcNow().AddDays(-3), recovery.Fields["FirstFailedAt"]);
+        Assert.Single((await service.ReadAsync("broken", CancellationToken.None))!.Schedules[0].Backups);
+        var logCount = log.Entries.Count;
+        await service.RunDueAsync(CancellationToken.None);
+        Assert.Equal(logCount, log.Entries.Count);
+        File.WriteAllText(brokenFile, "{ broken again");
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        await service.RunDueAsync(CancellationToken.None);
+        Assert.Equal(_clock.GetUtcNow(), log.Entries.Last().Fields["FirstFailedAt"]);
+    }
+
+    private sealed class ScheduleEngine : IHostedVolumeBackupEngine
+    {
+        public Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now, CancellationToken cancellationToken)
+            => Task.FromResult(new HostedVolumeBackup(Guid.NewGuid().ToString("N"), key, now, "test-digest", 0));
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
+    private sealed class ScheduleLogger : ILogger<HostedVolumeBackupService>
+    {
+        public List<(LogLevel Level, Dictionary<string, object?> Fields)> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, ((IEnumerable<KeyValuePair<string, object?>>)(object)state!).ToDictionary()));
+    }
+
     [Fact]
     public async Task VolumeIdentitySurvivesReleases_AndBackupRestoresExactBytes()
     {
