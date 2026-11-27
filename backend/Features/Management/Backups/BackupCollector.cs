@@ -25,7 +25,7 @@ public sealed record BackupCollectRequest(
 /// </summary>
 public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause pause)
 {
-    private static readonly string[] OperationsRequired =
+    internal static IReadOnlyList<string> OperationsRequired { get; } =
         ["principals/principals.json", "agent-secret/token", "client-secret/token", "data/operations.db"];
     /// <summary>Called after each file capture; tests use it to write while the backup reads.</summary>
     public Action<string>? AfterCapture { get; init; }
@@ -76,9 +76,10 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                         File.Delete(path);
                         File.Delete(capture.SpoolPath);
                     }
-                    foreach (var source in options.Sources)
+                    foreach (var declared in manifest.Sources.Where(source => source.Present))
                     {
-                        if (!Directory.Exists(source.Path)) continue;
+                        var source = options.Sources.Single(source => source.Name == declared.Name);
+                        RequireSourceDirectory(source);
                         var symlinksBefore = stats.Symlinks;
                         var checkouts = source.Projects ? CheckoutRoots(source.Path) : [];
                         var roots = new List<string> { source.Path };
@@ -88,6 +89,7 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                                                   && Directory.Exists(storage)));
                         foreach (var root in roots)
                             Walk(writer, request, source, root, checkouts, contents, stats, ReleaseWhenOverdue, cancellationToken);
+                        RequireSourceDirectory(source);
                         if (source.Name == "operations" && stats.Unreadable.Any(entry => entry.Path == "operations"
                                 || entry.Path.StartsWith("operations/", StringComparison.Ordinal)))
                             throw new BackupException("backup-operations-unreadable",
@@ -176,6 +178,13 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
             Environment.MachineName, request.Key.Id, request.SecretKeyId, sources, checkouts, notIncluded), bundles);
     }
 
+    private static void RequireSourceDirectory(BackupSource source)
+    {
+        if (!Directory.Exists(source.Path))
+            throw new BackupException("backup-source-missing",
+                $"Backup source {source.Name} ({source.Path}) disappeared after the manifest was created; the archive was refused.");
+    }
+
     private void Walk(TarWriter writer, BackupCollectRequest request, BackupSource source, string root,
         IReadOnlyList<(string Root, bool Worktree)> checkouts, List<BackupContentEntry> contents, Stats stats,
         Action releaseWhenOverdue, CancellationToken cancellationToken, string? archiveRoot = null)
@@ -205,9 +214,19 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                 children = info.GetDirectories();
                 files = info.GetFiles();
             }
-            catch (DirectoryNotFoundException) { stats.Vanished++; continue; }
+            catch (DirectoryNotFoundException)
+            {
+                if (PathComparer.Equals(directory, source.Path))
+                    throw new BackupException("backup-source-missing",
+                        $"Backup source {source.Name} ({source.Path}) disappeared during collection; the archive was refused.");
+                stats.Vanished++;
+                continue;
+            }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
+                if (PathComparer.Equals(directory, source.Path))
+                    throw new BackupException("backup-source-unreadable",
+                        $"Backup source {source.Name} ({source.Path}) could not be read; the archive was refused: {ex.Message}");
                 stats.Unreadable.Add(new(relativeDirectory == "." ? source.Name : $"{source.Name}/{relativeDirectory}", ex.Message));
                 continue;
             }
