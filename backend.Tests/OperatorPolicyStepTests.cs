@@ -42,17 +42,16 @@ public sealed class OperatorPolicyStepTests : IDisposable
         await AssertRefused(client.PostAsJsonAsync("/api/tasks/alpha-card/preview-comments",
             new { previewId = "preview-1", comment = "Looks fine." }), OperatorPolicyReasons.NotCatalogued);
         await AssertRefused(client.DeleteAsync("/api/tasks/alpha-card"), OperatorPolicyReasons.ApprovalRequired);
-        // A T2 request waits for the Owner's approval (SM-5) only once the bindings admit it:
-        // Developer holds no secrets.write, so no approval request opens.
+        // ES-7: hard refusals precede the tier, bindings, grants and approvals.
         await AssertRefused(client.PostAsJsonAsync("/api/projects/alpha/secrets", new { name = "DEPLOY_VALUE", value = "x" }),
-            "permission-denied");
+            "operator-route-denied");
         await AssertRefused(client.PostAsJsonAsync("/api/tasks/alpha-card/move",
             new MoveJobRequest { TargetState = TaskStates.Completed }), OperatorPolicyReasons.ApprovalRequired);
-        // Access changes are T2 as well; the policy step answers before the access floor.
+        // Access administration is refused before a T2 approval can be opened.
         await AssertRefused(client.PostAsJsonAsync("/api/auth/iam/bindings", new
         {
             principalKind = "service-account", principalId = agentId, role = "admin", scope = new { kind = "workspace" },
-        }), OperatorPolicyReasons.ApprovalRequired);
+        }), "token-route-denied");
 
         // A T1 requeue without a standing grant is refused with a typed reason.
         await AssertRefused(client.PostAsJsonAsync("/api/tasks/alpha-card/move",
@@ -92,8 +91,8 @@ public sealed class OperatorPolicyStepTests : IDisposable
         Assert.Equal("active", grant.GetProperty("state").GetString());
         Assert.Equal(grant.GetProperty("issuedAt").GetDateTime().AddDays(7), grant.GetProperty("expiresAt").GetDateTime());
 
-        // The operator session cannot change grants: that is T2.
-        await AssertRefused(client.PostAsJsonAsync("/api/auth/iam/standing-grants", grantRequest), OperatorPolicyReasons.ApprovalRequired);
+        // Grant administration stays behind the hard refusal even with a live grant.
+        await AssertRefused(client.PostAsJsonAsync("/api/auth/iam/standing-grants", grantRequest), "token-route-denied");
 
         await ReadOk(client.PostAsJsonAsync("/api/tasks/alpha-card/move", new MoveJobRequest { TargetState = TaskStates.Preparation }));
         await ReadOk(client.PostAsJsonAsync("/api/tasks/alpha-card/move", new MoveJobRequest { TargetState = TaskStates.Backlog }));

@@ -128,7 +128,7 @@ public sealed partial class AccessSecurityStore
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = agent with
             {
                 Sessions = agent.Sessions.Select(session => session.Id != sessionId ? session : action == "keep"
-                    ? session with { ReviewedAt = Now } : session with { Classes = [] }).ToList(),
+                    ? session with { ReviewedAt = Now } : session with { Classes = [], Elevation = null, ElevationRateEndedAt = null }).ToList(),
             };
             SaveLocked(next);
             AppendIamAudit(ownerId, "operator-session." + action, "operator-agent", agentId, new { sessionId });
@@ -142,7 +142,8 @@ public sealed partial class AccessSecurityStore
             RequireActiveOwnerLocked(StateLocked(), ownerId);
             foreach (var agent in ListOperatorAgents())
             foreach (var session in agent.Sessions ?? [])
-                if (!SessionEnded(StateLocked(), session, Now) && IsElevatedSession(session))
+                if (session.RevokedAt is null && (session.ElevationRateEndedAt is not null
+                    || !SessionEnded(StateLocked(), session, Now) && IsElevatedSession(session)))
                     RevokeOperatorSession(agent.Id, session.Id, ownerId);
         }
     }

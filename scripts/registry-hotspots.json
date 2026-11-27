@@ -45,6 +45,13 @@
       "bytes": 103904
     },
     {
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract mutation groups into feature-owned partials for routing, delivery attribution and token receipts; preserve the existing lock ownership and write ordering.",
+      "lines": 3458,
+      "bytes": 170051
+    },
+    {
       "path": "backend/Host/Program.cs",
       "status": "measured-backlog",
       "strategy": "Extract ordered feature registration extension methods, preserving service and endpoint order.",
@@ -99,6 +106,13 @@
       "strategy": "Split policy-family contract sections into linked feature contracts.",
       "lines": 1150,
       "bytes": 77855
+    },
+    {
+      "path": "docs/system/domains/frontend.md",
+      "status": "measured-backlog",
+      "strategy": "Split frontend feature sections into linked domain pages with stable anchors; keep this map as the navigation entry.",
+      "lines": 1783,
+      "bytes": 122320
     },
     {
       "path": "docs/system/domains/pipeline.md",

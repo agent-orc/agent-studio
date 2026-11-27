@@ -28,6 +28,7 @@ export interface OrchestratorLogEntry {
   topic: string;
   summary: string;
   reasoning?: string | null;
+  testingUndoSequence?: number | null;
   stall?: {
     subject: string;
     severity: string;

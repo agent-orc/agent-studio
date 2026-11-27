@@ -593,8 +593,8 @@ SM-5 approval for the exact strategy request. After the Owner approves with
 step-up, repeat the same request with `X-Operator-Approval`; it runs once.
 Send `X-Operator-Reason` with the stated reason, percent-encoded when needed.
 The operator-agent role does not hold `project.settings.write`; this narrow
-approval path does not grant that permission to other requests. The named
-`project.testing` elevated class remains future ES-7 work.
+approval path does not grant that permission to other requests. The armed
+`project.testing` class can also admit this request, as described below.
 
 Each strategy change writes one `project.testing.set` control plane audit
 entry with actor, project, old and new strategy, and the stated reason for an
@@ -654,4 +654,49 @@ the next request and live operator connections recheck within 15 seconds.
 After upgrading from a bound session without hourly certification, run a new
 `studio-op login`: Studio accepts that old key for at most 60 minutes from
 its confirmation. The kill switch also invalidates uncollected sign-in codes.
+
+## Use elevated classes and re-arm testing (ES-7)
+
+At terminal confirmation leave only the requested classes you want the
+session to carry. The implemented choices are ES-D6 A, ES-D9 A and ES-D16 A.
+`project.testing` lets the session call `PUT /api/projects/{project}/testing`
+without a separate approval for 24 hours from confirmation. Send a nonempty
+`X-Operator-Reason`; `X-Operator-Instruction-Source` records the source as the
+agent states it. Your project bindings still apply. There is no 60-minute
+elevation window, and the session's chosen end always wins.
+
+The header's Elevated control opens the session controls on desktop and
+phone. On phones it sits above the existing header actions to keep it reachable.
+Its Settings link opens and focuses the Elevated sessions list after it loads.
+Settings > Access > Elevated sessions shows classes, hourly uses by
+project and remaining arming time. In the last hour a quiet reminder offers
+Re-arm. Choose **Re-arm project.testing**, then enter an authenticator or
+recovery code, or leave it empty for a passkey. Only an Owner can confirm.
+That grants another 24 hours, never past the session end. The agent cannot
+re-arm, add a class, or extend your session. Re-arming keeps rate history.
+
+Each direct change appears in the project Activity feed with **Undo**.
+Undo restores the previous strategy as you, with an audit entry, once. It
+also performs the normal queued review replanning and testing-mode handoff.
+The agent cannot invoke it. Settings > Access > Operator activity filters
+by agent, session or **Elevated actions only** and shows class, reason,
+stated source, device thumbprint and arming id.
+
+Six testing requests per project per rolling hour are allowed; the seventh
+returns `elevation-rate-exceeded`. Admitted requests consume a slot even if
+invalid parameters fail later. Three rate refusals within ten minutes end all
+classes and add a Needs you row. Ordinary session access stays available.
+Review the activity, end or acknowledge the elevation, and sign in again if
+you need new classes. Without the class, or after its arming lapses, testing
+returns `approval-required` and you can use the ordinary exact-request
+approval flow.
+
+The two override classes last for the session: `cards.accept-override` has a
+30-item hourly limit and `cards.archive-override` a 10-item limit. Their batch
+confirmation is ES-8; until then each override still needs its own approval.
+End elevation removes all classes without a second factor, End session ends
+the session, and the kill switch ends every elevation and session. Secrets,
+production deployment and approval, access and session management, grants,
+break-glass management, catalogue, audit and installation administration
+remain hard refusals for the agent regardless of class or approval.
 <!-- append-only:operator-agent:end -->

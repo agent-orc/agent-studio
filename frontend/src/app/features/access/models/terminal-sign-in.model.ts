@@ -12,8 +12,8 @@ export const TERMINAL_SIGN_IN_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
 export interface TerminalSignInClass {
   id: string;
   title: string;
-  /** `batch` classes need one Owner tap per batch, `direct` classes act on their own (ES-7). */
-  mode: 'batch' | 'direct';
+  /** `batch` classes need one Owner tap per batch, `direct-action` classes act on their own (ES-7). */
+  mode: 'batch' | 'direct-action';
 }
 
 export interface TerminalSignInAgent {

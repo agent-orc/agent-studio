@@ -99,7 +99,7 @@ public sealed record ControlPlaneAuditAlert(string Code, string Message, DateTim
 
 public sealed record ControlPlaneAuditEntryView(
     long Sequence, DateTime At, string Stream, string Actor, string? Session, string? DelegatedBy,
-    string Operation, string? Target, string? ParameterDigest, string Outcome, string Hash, string PreviousHash);
+    string Operation, string? Target, string? ParameterDigest, string Outcome, string Hash, string PreviousHash, JsonElement? Details = null);
 
 public sealed record OperatorActivityResponse(
     IReadOnlyList<OperatorAgentResponse> OperatorAgents,
