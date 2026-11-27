@@ -81,7 +81,7 @@ public class TaskMutationService
     /// </summary>
     private bool Updated(TaskInfo info)
     {
-        _scanner.InvalidateCache();
+        _scanner.InvalidateCache(changedPath: Path.Combine(info.FolderPath, "task.json"));
         _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
         _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
         return true;
@@ -98,7 +98,7 @@ public class TaskMutationService
     /// </summary>
     private bool Updated(string folderPath)
     {
-        _scanner.InvalidateCache();
+        _scanner.InvalidateCache(changedPath: Path.Combine(folderPath, "task.json"));
         _scanner.PublishCoreFromKnownFolder(folderPath);
         return true;
     }

@@ -73,11 +73,14 @@ public sealed class RestoredBoard(BoardSummaryStore store, ILogger<RestoredBoard
 
     /// <summary>The restored answer of <c>GET /api/tasks/grouped</c>, or null when nothing was persisted.</summary>
     public IResult? Grouped(HttpContext context, Func<string, bool> projectVisible, bool includeFixtures,
-        bool legacyReviewLane, string scope)
+        bool legacyReviewLane, string scope, bool completedSummary = false)
     {
         var projects = Projects;
         if (projects.Count == 0) return null;
         var cards = BoardSummaryPolicy.Select(projects, projectVisible, watchPath: null, includeFixtures);
+        if (completedSummary)
+            cards = cards.Select(card => card.State == TaskStates.Completed
+                ? card with { Summary = BoardCardSummary.SerializeCompleted(card.Summary) } : card).ToList();
         var gitStateAt = BoardSummaryPolicy.GitStateAt(projects, cards);
         if (gitStateAt is { } at) context.Response.Headers["X-Git-State-At"] = at.ToString("O");
         context.Response.Headers["X-Git-State-Stale"] = "true";

@@ -191,6 +191,7 @@ public sealed class TaskIndexCache
     public long MutationInvalidations;
     internal long FullRawScans;
     internal long FolderReloads;
+    internal long FolderStampProbes;
     private long _blockingRefreshWaits;
     private string? _firstBlockingRefreshWaitStack;
 
@@ -1739,6 +1740,7 @@ public sealed class TaskIndexCache
         }
         foreach (var (folder, source) in candidates)
         {
+            Interlocked.Increment(ref FolderStampProbes);
             var stamp = _scanner.CaptureFolderStamp(folder);
             if (stamp is null)
             {
