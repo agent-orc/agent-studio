@@ -43,7 +43,11 @@ def owner(repo, body):
     if match := CARD.search(subject):
         return match[0]
     if source := re.search(r"(?:Integrate net change from |Agent-Studio-Net-Change-Of: )([a-f0-9]+)", body):
-        original, _ = git(repo, "show", "-s", "--format=%B", source[1])
+        revision, code = git(repo, "rev-parse", "--verify", "--quiet", source[1] + "^{commit}", allowed=(0, 1))
+        if code == 1:
+            # Review clones can retain receipts after their source objects have disappeared.
+            return None
+        original, _ = git(repo, "show", "-s", "--format=%B", revision.strip())
         if original != body:
             return owner(repo, original)
     return None

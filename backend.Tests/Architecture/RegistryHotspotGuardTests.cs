@@ -7,7 +7,14 @@ namespace AgentStudio.Tests.Architecture;
 public sealed class RegistryHotspotGuardTests
 {
     [Fact]
-    public async Task New_registry_hotspots_have_a_recorded_split_generation_or_bounded_union_strategy()
+    public Task New_registry_hotspots_have_a_recorded_split_generation_or_bounded_union_strategy() =>
+        RunPython("scripts/registry-hotspots.py", "--guard");
+
+    [Fact]
+    public Task Measurement_fixtures_cover_missing_source_objects_and_card_attribution() =>
+        RunPython("scripts/test_registry_hotspots.py");
+
+    private static async Task RunPython(params string[] arguments)
     {
         var root = CSharpSourceScanner.RepoRoot();
         var output = Path.Combine(Path.GetTempPath(), "registry-guard-" + Guid.NewGuid().ToString("N"));
@@ -18,7 +25,8 @@ public sealed class RegistryHotspotGuardTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        foreach (var argument in new[] { "scripts/registry-hotspots.py", "--guard", "--output", output })
+        foreach (var argument in arguments.Concat(arguments.Contains("--guard")
+                     ? new[] { "--output", output } : Array.Empty<string>()))
             start.ArgumentList.Add(argument);
         try
         {

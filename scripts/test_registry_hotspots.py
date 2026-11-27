@@ -82,6 +82,41 @@ class RegistryHotspotTests(unittest.TestCase):
             self.assertEqual([], unknown)
             self.assertEqual([dict(path="a.cs", count=1)], hotspots.rank(rows, True))
 
+    def test_guard_reports_missing_source_commits_without_losing_available_attribution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            def git(*args):
+                return subprocess.check_output(["git", "-C", folder, *args], stderr=subprocess.DEVNULL,
+                                               env=GIT_TIME).decode().strip()
+            git("init", "-q", "-b", "develop")
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            (repo / "a.cs").write_text("base\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            git("commit", "--allow-empty", "-qm", "AGT-1: available source")
+            source = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-qm", f"Integrate net change from {source[:8]}")
+            # Receipt-only attribution must also work when the source object has been pruned.
+            missing_source = "f" * 40
+            for message in [f"Integrate net change from {missing_source[:8]}",
+                            "Integrate net change\n\nAgent-Studio-Net-Change-Of: " + missing_source]:
+                git("commit", "--allow-empty", "-qm", message)
+            missing = git("rev-parse", "HEAD~1"), git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-qm", "Integrate net change from " + missing_source,
+                "-m", "Agent-Studio-Task: AGT-2")
+            git("commit", "--allow-empty", "-qm", "Integrate AGT-3: named card",
+                "-m", "Agent-Studio-Net-Change-Of: " + missing_source)
+            output = repo / "reports"
+            result = subprocess.run(["python" if os.name == "nt" else "python3",
+                                     str(REPO / "scripts/registry-hotspots.py"), "--guard",
+                                     "--repo", folder, "--output", str(output)], capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            report = json.loads((output / "registry-hotspots.json").read_text())
+            self.assertEqual(set(missing), set(report["unattributedIntegrations"]))
+            self.assertEqual({"AGT-1", "AGT-2", "AGT-3"}, {row["card"] for row in report["integrations"]})
+            self.assertEqual(3, report["integratedCards"])
+
     def test_git_fallback_recovers_paths_from_a_resolved_sync_merge(self):
         with tempfile.TemporaryDirectory() as folder:
             repo = Path(folder)

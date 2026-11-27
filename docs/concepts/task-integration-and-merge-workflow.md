@@ -105,6 +105,10 @@ develop-sync merges on all refs and labels those recovered conflicts separately.
 This fallback cannot reconstruct failed attempts that left no Git objects or
 prove a historical conflict rate. Touch counts use first-parent integration
 diffs and distinct owning cards, including net-change attribution.
+If a net-change receipt references an unavailable source commit and has no
+explicit card attribution, the report lists its SHA in
+`unattributedIntegrations` and continues measuring the available history.
+These receipts do not contribute to distinct-card counts.
 
 `RegistryHotspotGuardTests` fails above eight distinct contributing cards in a
 UTC calendar week within the last seven revision-relative days for an untracked
