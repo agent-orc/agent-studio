@@ -67,22 +67,39 @@ internal static class TaskLayoutTransition
         if (string.Equals(fromState, newState, StringComparison.Ordinal))
             return new TransitionResult(taskKey, location, fromState, newState, Changed: false);
 
-        // 1. Authority: the lane lives in task.json.state.
-        TaskJsonFile.UpdateField(jobDir, "state", newState, logger);
+        // 1. Authority: the lane lives in task.json.state. A failed write must
+        // stop before the derived index or any caller's lane-change effects.
+        try
+        {
+            TaskJsonFile.UpdateFieldOrThrow(jobDir, "state", newState);
+        }
+        catch (Exception ex)
+        {
+            throw new IOException(
+                $"Failed to persist authoritative state for task '{taskKey}'; the lane change was not applied.", ex);
+        }
 
-        // 2. Derived cache: move the location between state buckets and write
-        //    both index maps atomically. by-key is unchanged (the physical
-        //    location does not move), so it is written back as-is. Pruning the
-        //    emptied state keeps the live index shape identical to a Rebuild.
-        var byState = TaskLayoutIndex.ReadByState(projectRoot);
-        foreach (var list in byState.Values)
-            list.RemoveAll(l => string.Equals(l, location, StringComparison.Ordinal));
-        foreach (var emptied in byState.Where(kv => kv.Value.Count == 0).Select(kv => kv.Key).ToList())
-            byState.Remove(emptied);
-        if (!byState.TryGetValue(newState, out var dest))
-            byState[newState] = dest = new List<string>();
-        dest.Add(location);
-        TaskLayoutIndex.WriteByState(projectRoot, byState, logger);
+        // 2. Derived cache: move the location between state buckets. by-key
+        // is unchanged because the physical location does not move. Pruning
+        // the emptied state keeps the live index shape identical to a Rebuild.
+        try
+        {
+            var byState = TaskLayoutIndex.ReadByState(projectRoot);
+            foreach (var list in byState.Values)
+                list.RemoveAll(l => string.Equals(l, location, StringComparison.Ordinal));
+            foreach (var emptied in byState.Where(kv => kv.Value.Count == 0).Select(kv => kv.Key).ToList())
+                byState.Remove(emptied);
+            if (!byState.TryGetValue(newState, out var dest))
+                byState[newState] = dest = new List<string>();
+            dest.Add(location);
+            TaskLayoutIndex.WriteByState(projectRoot, byState, logger);
+        }
+        catch (Exception ex)
+        {
+            // Keep the successful authority write: the index is rebuildable.
+            throw new IOException(
+                $"The authoritative state was saved for task '{taskKey}', but the derived index update failed; rebuild the task index.", ex);
+        }
 
         logger.LogInformation(
             "task-transition key={Key} from={From} to={To} location={Location} (metadata-only, no folder move)",
