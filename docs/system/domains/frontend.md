@@ -977,6 +977,33 @@ occur. It is not a claim about tunnel transfer time.
   without a Studio session cookie. Only those capability-bearing asset
   responses allow CORS for `Origin: null`; they never allow credentials. Other
   opaque-origin requests to Studio APIs are rejected before session authentication.
+  Preview and readiness HTTP clients share a connection-time destination policy
+  in `ProjectUrlProbePolicy.cs`. Each connection resolves DNS once and connects
+  only to an IP checked by the shared health address policy. Private networks,
+  link-local and metadata endpoints are refused; registering a URL does not
+  grant access to them. This transport rule applies in both security profiles.
+  Loopback is allowed only for the matching project URL's active process started
+  by Studio, with the same start command and a declared loopback origin at the
+  configured port (or the registered port when no port is configured). The
+  declared health URL can supply that origin for readiness. A manually started
+  localhost service therefore fails closed: use the URL's Start action with its
+  start rule to let Studio own the process, or open the URL directly on the
+  machine serving it. Stopping the process removes its local permission on the
+  next request. An unapproved preview returns HTTP 502; networked readiness can
+  report `local-only` before making a request, or `offline` when the transport
+  refuses a resolved address.
+  Automatic upstream redirects, proxies, cookies and connection reuse are
+  disabled. Preview redirects within the registered origin and path are
+  rewritten through the preview route, where destination checks run again;
+  off-origin redirects return HTTP 502. Readiness does not follow redirects.
+  The preview forwards only the caller's `Accept` header, never Studio
+  authorization, cookies or arbitrary request headers. Normal authenticated
+  preview and readiness GETs remain `ProjectRead` and operator T0 `Observe`;
+  URL writes remain operator T2 `ExposureChange`. Capability-bearing asset GETs
+  still require HTTPS in the networked profile and bypass principal
+  authentication for their project URL scope and 30 minute lifetime. The
+  operator kill switch does not revoke those capabilities; the destination
+  policy and local process permission still apply to each asset request.
 - `frontend/src/app/features/project-detail/components/workbench-viewer/` is the
   isolated Dossier host. The workspace-wide `#/workbenches` overview and
   project-scoped `#/projects/<project>/workbenches` overview share one ordered
