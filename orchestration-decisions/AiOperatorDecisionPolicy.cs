@@ -80,6 +80,9 @@ public static class AiOperatorEffects
     public const string PromoteToHumanReview = "promote-to-human-review";
     public const string ReturnToAutoReview = "return-to-auto-review";
     public const string QueueMergeRound = "queue-merge-round";
+    public const string RequestFreshDeliveryReview = "request-fresh-delivery-review";
+    public const string RouteDeliveryGateFailure = "route-delivery-gate-failure";
+    public const string WaitDeliveryCapacity = "wait-delivery-capacity";
     public const string CloseBreaker = "close-breaker";
     public const string AcceptDelivery = "accept-delivery";
     public const string RequeueRebase = "requeue-rebase";
@@ -268,6 +271,12 @@ public static class AiOperatorDecisionPolicy
         var verdict = DeliveryChainPolicy.Decide(facts);
         return verdict.Action switch
         {
+            DeliveryChainAction.RequestFreshReview => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.RequestFreshDeliveryReview, verdict.ReasonCode, verdict.Detail),
+            DeliveryChainAction.RouteGateFailure => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.RouteDeliveryGateFailure, verdict.ReasonCode, verdict.Detail),
+            DeliveryChainAction.WaitCapacity => Effect(payload, AutonomyClass.A1,
+                AiOperatorEffects.WaitDeliveryCapacity, verdict.ReasonCode, verdict.Detail),
             DeliveryChainAction.PromoteToHumanReview => Effect(payload, AutonomyClass.A1,
                 AiOperatorEffects.PromoteToHumanReview, verdict.ReasonCode, verdict.Detail),
             DeliveryChainAction.ReturnToAutoReview => Effect(payload, AutonomyClass.A1,
