@@ -40,6 +40,8 @@ public sealed class ControlPlaneAuditLog
     private long _knownLength;
     private long _highestWritten;
     private bool _tornTail;
+    private bool _recoveryAnchorLoaded;
+    private ControlPlaneAuditEntry? _recoveryAnchor;
 
     public ControlPlaneAuditLog(string folder, TimeProvider? clock = null, ILogger? logger = null)
     {
@@ -51,7 +53,7 @@ public sealed class ControlPlaneAuditLog
     public string FilePath => Path.Combine(_folder, FileName);
     public string ForwardPositionPath => Path.Combine(_folder, ForwardPositionFileName);
 
-    /// <summary>The highest sequence this process wrote; a stored chain that ends below it lost entries.</summary>
+    /// <summary>The highest sequence this writer appended or imported from an existing head.</summary>
     public long HighestWritten { get { lock (_gate) return _highestWritten; } }
 
     public long HeadSequence { get { lock (_gate) return HeadLocked().Sequence; } }
@@ -100,7 +102,13 @@ public sealed class ControlPlaneAuditLog
             _highestWritten = Math.Max(_highestWritten, head.Sequence + 1);
             // Appends run under the gate, so the count cannot change between the check and the release.
             if (_appended.CurrentCount == 0) _appended.Release();
-            return Parse(line)!;
+            var entry = Parse(line)!;
+            if (entry.Operation == RecoveryOperation)
+            {
+                _recoveryAnchor = entry;
+                _recoveryAnchorLoaded = true;
+            }
+            return entry;
         }
     }
 
@@ -181,35 +189,135 @@ public sealed class ControlPlaneAuditLog
         return result;
     }
 
+    // Runs outside the append gate so tests can deterministically interleave mutations with verification.
+    internal Action? VerificationSnapshotCaptured { get; set; }
+
     /// <summary>
-    /// Recomputes the stored chain from the first line: each line's hash must
-    /// cover its bytes, sequences must run 1, 2, 3 without a gap, and each entry
-    /// must name its predecessor's hash. A changed, deleted, inserted, or
-    /// reordered line fails at the first entry it affects.
+    /// Recomputes the chain from genesis, or from an explicit recovery anchor
+    /// after checking the seal of the damaged prefix. Each subsequent line must
+    /// hash correctly, continue the sequence, and name its predecessor's hash.
     /// </summary>
     public ChainCheck VerifyChain()
     {
-        var lines = SnapshotLines();
+        byte[] bytes;
+        long highestWritten;
+        ControlPlaneAuditForwardPosition position;
+        lock (_gate)
+        {
+            // The bytes and both watermarks describe the same instant. Hashing and sink I/O
+            // happen after releasing the writer, without consulting newer watermarks.
+            bytes = SnapshotBytesLocked();
+            highestWritten = _highestWritten;
+            position = ReadForwardPosition();
+        }
+        VerificationSnapshotCaptured?.Invoke();
+        var lines = Lines(bytes);
         var hashes = new List<string>(lines.Count);
         var previous = GenesisHash;
+        long anchorSequence = 0;
+        var start = 0;
+        long observedThrough = 0;
+        var byteOffset = 0;
+        using var prefix = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        // A recovery anchor seals the exact damaged prefix, rather than rewriting or
+        // silently treating it as intact. Its own entry still has to verify below.
         for (var index = 0; index < lines.Count; index++)
         {
-            var expected = index + 1L;
+            var parsed = Parse(lines[index]);
+            observedThrough = Math.Max(observedThrough, parsed?.Sequence ?? 0);
+            if (parsed is { Operation: RecoveryOperation } entry
+                && entry.Details is { ValueKind: JsonValueKind.Object } details
+                && details.TryGetProperty("prefixHash", out var digest)
+                && details.TryGetProperty("previousSequence", out var prior)
+                && digest.ValueKind == JsonValueKind.String && prior.ValueKind == JsonValueKind.Number
+                && prior.TryGetInt64(out var sequence) && sequence >= 0 && entry.Sequence == sequence + 1
+                && digest.GetString() is { } expectedDigest
+                && expectedDigest == Convert.ToHexStringLower(prefix.GetCurrentHash())
+                && entry.PreviousHash == expectedDigest
+                && TrySplit(lines[index], out var body, out var hash) && Sha256Hex(body) == hash)
+            {
+                anchorSequence = sequence;
+                previous = expectedDigest;
+                start = index;
+            }
+            var newline = Array.IndexOf(bytes, (byte)'\n', byteOffset);
+            var end = newline < 0 ? bytes.Length : newline + 1;
+            prefix.AppendData(bytes.AsSpan(byteOffset, end - byteOffset));
+            byteOffset = end;
+        }
+        ChainCheck Result(bool ok, string? problem = null, long? sequence = null, string? message = null)
+            => new(ok, hashes, problem, sequence, message, anchorSequence, highestWritten, position,
+                bytes.LongLength, Convert.ToHexStringLower(SHA256.HashData(bytes)), observedThrough);
+        for (var index = start; index < lines.Count; index++)
+        {
+            var expected = anchorSequence + hashes.Count + 1;
             if (!TrySplit(lines[index], out var body, out var hash) || Sha256Hex(body) != hash)
-                return ChainCheck.Fail(hashes, "modified", expected, $"Entry at line {expected} does not match its hash.");
+                return Result(false, "modified", expected, $"Entry at line {index + 1} does not match its hash.");
             var entry = Parse(lines[index]);
             if (entry is null)
-                return ChainCheck.Fail(hashes, "modified", expected, $"Entry at line {expected} cannot be read.");
+                return Result(false, "modified", expected, $"Entry at line {index + 1} cannot be read.");
             if (entry.Sequence != expected)
-                return ChainCheck.Fail(hashes, entry.Sequence > expected ? "gap" : "reordered", expected,
+                return Result(false, entry.Sequence > expected ? "gap" : "reordered", expected,
                     $"Expected sequence {expected}, found {entry.Sequence}.");
             if (entry.PreviousHash != previous)
-                return ChainCheck.Fail(hashes, "reordered", expected, $"Entry {expected} does not follow entry {expected - 1}.");
+                return Result(false, "reordered", expected, $"Entry {expected} does not follow entry {expected - 1}.");
             hashes.Add(hash);
             previous = hash;
         }
-        return new ChainCheck(true, hashes, null, null, null);
+        return Result(true);
     }
+
+    internal const string RecoveryOperation = "audit.chain-anchor";
+
+    internal ControlPlaneAuditEntry? LatestRecoveryAnchor
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!_recoveryAnchorLoaded)
+                {
+                    _recoveryAnchor = ReadNewest(entry => entry.Operation == RecoveryOperation
+                        && TrySplit(entry.Raw, out var body, out var hash) && Sha256Hex(body) == hash, 1).FirstOrDefault();
+                    _recoveryAnchorLoaded = true;
+                }
+                return _recoveryAnchor;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Seals a detected local break with a new explicit anchor. Existing bytes stay
+    /// untouched. Concurrent appends are included; a changed prefix invalidates the proposal.
+    /// </summary>
+    internal bool TryAnchorBreak(ChainCheck check, string message, string occurrence, DateTime firstObservedAt)
+    {
+        lock (_gate)
+        {
+            var bytes = SnapshotBytesLocked();
+            if (bytes.LongLength < check.SnapshotLength
+                || Convert.ToHexStringLower(SHA256.HashData(bytes.AsSpan(0, checked((int)check.SnapshotLength))))
+                    != check.SnapshotHash) return false;
+            var lastSequence = Lines(bytes).Select(Parse).OfType<ControlPlaneAuditEntry>()
+                .Select(entry => entry.Sequence).DefaultIfEmpty(0).Max();
+            var sequence = Math.Max(Math.Max(check.ProblemSequence ?? 0, check.HighestWritten),
+                Math.Max(Math.Max(lastSequence, _highestWritten), ReadForwardPosition().Sequence));
+            _tornTail = bytes.Length > 0 && bytes[^1] != (byte)'\n';
+            byte[] prefixBytes = _tornTail ? [.. bytes, (byte)'\n'] : bytes;
+            var prefixHash = Convert.ToHexStringLower(SHA256.HashData(prefixBytes));
+            _head = (sequence, prefixHash);
+            _knownLength = bytes.LongLength;
+            Append(new(ControlPlaneAuditStreams.Operator, "system", RecoveryOperation, "history-broken",
+                Details: new
+                {
+                    prefixHash, previousSequence = sequence, firstAffected = check.ProblemSequence ?? check.VerifiedThrough + 1,
+                    lastAffected = sequence, message, process = ProcessIdentity, occurrence, firstObservedAt,
+                }));
+            return true;
+        }
+    }
+
+    internal static string ProcessIdentity => $"{Environment.MachineName}/pid:{Environment.ProcessId}";
 
     public ControlPlaneAuditForwardPosition ReadForwardPosition()
     {
@@ -314,23 +422,26 @@ public sealed class ControlPlaneAuditLog
         return stream.ReadByte() != '\n';
     }
 
-    /// <summary>The complete lines stored when the call began; a line an append is writing is not included.</summary>
-    private List<string> SnapshotLines()
+    /// <summary>The bytes stored at one instant under the append gate.</summary>
+    private byte[] SnapshotBytesLocked()
     {
-        long length;
-        lock (_gate)
-        {
-            if (!File.Exists(FilePath)) return [];
-            length = new FileInfo(FilePath).Length;
-        }
+        if (!File.Exists(FilePath)) return [];
         using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        var buffer = new byte[length];
+        var buffer = new byte[stream.Length];
         stream.ReadExactly(buffer);
-        var text = Encoding.UTF8.GetString(buffer);
-        var lines = text.Split('\n').ToList();
-        // The text after the last newline is either empty or a torn line.
+        return buffer;
+    }
+
+    private static List<string> Lines(byte[] bytes)
+    {
+        var lines = Encoding.UTF8.GetString(bytes).Split('\n').ToList();
         if (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
         return lines;
+    }
+
+    private List<string> SnapshotLines()
+    {
+        lock (_gate) return Lines(SnapshotBytesLocked());
     }
 
     private void EnsureFolder()
@@ -363,12 +474,15 @@ public sealed class ControlPlaneAuditLog
 
 /// <summary>
 /// The result of <see cref="ControlPlaneAuditLog.VerifyChain"/>: the hashes of
-/// the entries that verified (index = sequence - 1) and the first problem.
+/// the verified segment (index = sequence - AnchorSequence - 1), its captured
+/// watermarks and byte fingerprint, and the first problem.
 /// </summary>
-public sealed record ChainCheck(bool Ok, IReadOnlyList<string> Hashes, string? Problem, long? ProblemSequence, string? Message)
+public sealed record ChainCheck(
+    bool Ok, IReadOnlyList<string> Hashes, string? Problem, long? ProblemSequence, string? Message,
+    long AnchorSequence, long HighestWritten, ControlPlaneAuditForwardPosition ForwardPosition,
+    long SnapshotLength, string SnapshotHash, long ObservedThrough)
 {
-    public long VerifiedThrough => Hashes.Count;
+    public long VerifiedThrough => AnchorSequence + Hashes.Count;
 
-    public static ChainCheck Fail(IReadOnlyList<string> hashes, string problem, long sequence, string message)
-        => new(false, hashes, problem, sequence, message);
+    public string HashAt(long sequence) => Hashes[checked((int)(sequence - AnchorSequence - 1))];
 }
