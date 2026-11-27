@@ -2419,7 +2419,8 @@ public class TaskScannerService : ITaskScanner
         if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
             return (null, null);
 
-        var normalized = relativePath.Replace('\\', '/').Trim('/');
+        var normalized = relativePath.Replace('\\', '/');
+        if (Path.IsPathRooted(normalized)) return (null, null);
         var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0 || segments.Any(segment => segment is "." or ".."))
             return (null, null);
@@ -2427,15 +2428,8 @@ public class TaskScannerService : ITaskScanner
         var info = FindJob(jobId, watchPath);
         if (info == null) return (null, null);
 
-        var resultsRoot = Path.GetFullPath(Path.Combine(info.FolderPath, "results"));
-        var fullPath = Path.GetFullPath(Path.Combine(resultsRoot, Path.Combine(segments)));
-        var rootPrefix = resultsRoot.EndsWith(Path.DirectorySeparatorChar)
-            ? resultsRoot
-            : resultsRoot + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
-            return (null, null);
-
-        return (fullPath, ResultContentType(fullPath));
+        var fullPath = ResolveArtifactPath(info, "results", Path.Combine(segments));
+        return fullPath is null ? (null, null) : (fullPath, ResultContentType(fullPath));
     }
 
     private static string ResultContentType(string path)
@@ -2453,15 +2447,15 @@ public class TaskScannerService : ITaskScanner
 
     private (string? Path, string? ContentType) ResolveJobBinaryFile(string jobId, string subDir, string fileName, string? watchPath)
     {
-        if (string.IsNullOrWhiteSpace(fileName) || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+        if (string.IsNullOrWhiteSpace(fileName) || Path.IsPathRooted(fileName)
+            || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
             return (null, null);
 
         var info = FindJob(jobId, watchPath);
         if (info == null) return (null, null);
 
-        var dir = Path.Combine(info.FolderPath, subDir);
-        var fullPath = Path.Combine(dir, fileName);
-        if (!File.Exists(fullPath)) return (null, null);
+        var fullPath = ResolveArtifactPath(info, subDir, fileName);
+        if (fullPath is null) return (null, null);
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         var contentType = ext switch
@@ -2473,6 +2467,29 @@ public class TaskScannerService : ITaskScanner
             _ => "application/octet-stream"
         };
         return (fullPath, contentType);
+    }
+
+    /// <summary>
+    /// Shares the regular-file boundary for task artifacts. Anchor link checks
+    /// at the authoritative task folder so a linked artifact root is refused too.
+    /// </summary>
+    private static string? ResolveArtifactPath(TaskInfo info, string subDir, string relativePath)
+    {
+        try
+        {
+            var root = Path.GetFullPath(Path.Combine(info.FolderPath, subDir));
+            var fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
+            var rootPrefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return fullPath.StartsWith(rootPrefix, comparison)
+                && FilesystemPathBoundary.IsRegularFileUnder(info.FolderPath, fullPath)
+                    ? fullPath : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     internal static List<TaskLogEntry> BuildLog(string dir)

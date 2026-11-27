@@ -163,31 +163,10 @@ public class ScreenshotIndexService
     /// </summary>
     public (string? Path, string? ContentType) ResolveScreenshotFile(string jobId, string relativePath, string? watchPath)
     {
-        if (string.IsNullOrWhiteSpace(relativePath) || relativePath.Contains(".."))
+        var (path, contentType) = _scanner.ResolveResult(jobId, relativePath, watchPath);
+        if (path is null || Array.IndexOf(ImageExtensions, Path.GetExtension(path).ToLowerInvariant()) < 0)
             return (null, null);
-
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return (null, null);
-
-        var resultsDir = Path.GetFullPath(Path.Combine(info.FolderPath, "results"));
-        var combined = Path.GetFullPath(Path.Combine(resultsDir, relativePath));
-        if (!combined.StartsWith(resultsDir, StringComparison.OrdinalIgnoreCase))
-            return (null, null);
-
-        if (!File.Exists(combined)) return (null, null);
-
-        var ext = Path.GetExtension(combined).ToLowerInvariant();
-        if (Array.IndexOf(ImageExtensions, ext) < 0) return (null, null);
-
-        var contentType = ext switch
-        {
-            ".png" => "image/png",
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".gif" => "image/gif",
-            ".webp" => "image/webp",
-            _ => "application/octet-stream"
-        };
-        return (combined, contentType);
+        return (path, contentType);
     }
 
     private IEnumerable<string> EnumerateImages(string dir)
