@@ -50,3 +50,6 @@ button.activity__session:focus-visible { outline: 2px solid var(--studio-accent)
 code { font-family: var(--font-mono); }
 
 @media (max-width: 900px) { .activity__body { grid-template-columns: minmax(0, 1fr); } }
+
+.activity__filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-3); }
+.activity__filters label:has(input[type='checkbox']) { flex-direction: row; align-items: center; min-height: var(--studio-row-min-h-interactive); }

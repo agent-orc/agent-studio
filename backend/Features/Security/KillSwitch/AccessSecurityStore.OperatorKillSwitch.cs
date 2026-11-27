@@ -78,7 +78,7 @@ public sealed partial class AccessSecurityStore
             next.ServiceAccounts[next.ServiceAccounts.IndexOf(agent)] = agent with
             {
                 Sessions = agent.Sessions!.Select(candidate => candidate.Id == sessionId
-                    ? candidate with { RevokedAt = now, RevokedBy = ownerId } : candidate).ToList(),
+                    ? candidate with { RevokedAt = now, RevokedBy = ownerId, Classes = [], Elevation = null } : candidate).ToList(),
             };
             var approvals = CancelOpenApprovalsLocked(next,
                 approval => approval.PrincipalId == agentId && approval.SessionId == sessionId, now, KillSwitchCancelReason);

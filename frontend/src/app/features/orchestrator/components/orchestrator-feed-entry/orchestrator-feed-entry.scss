@@ -1,3 +1,6 @@
+@use '../../../../../styles/mixins' as m;
+@include m.action-buttons;
+
 :host {
   display: block;
   width: 100%;
@@ -115,6 +118,8 @@
 
 .feed-entry__task-link:hover { color: var(--studio-fg-strong); }
 .feed-entry__disclosure { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-31); line-height: 1; }
+.feed-entry__actions { display: inline-flex; align-items: center; gap: var(--studio-spacing-2); }
+.feed-entry__undo-error { grid-column: 1 / -1; }
 
 @media (min-width: 681px) and (max-width: 1450px) {
   .feed-entry {
@@ -132,7 +137,8 @@
   .feed-entry__time { grid-column: 1; grid-row: 1; }
   .feed-entry__project { grid-column: 2; grid-row: 1; }
   .feed-entry__context { grid-column: 3; grid-row: 1; }
-  .feed-entry__disclosure { grid-column: 4; grid-row: 1; }
+  .feed-entry__actions { grid-column: 4; grid-row: 1; }
+  .feed-entry__actions .btn { min-height: var(--studio-target-coarse-min); }
   .feed-entry__kind { grid-column: 1; grid-row: 2; }
   .feed-entry__summary {
     grid-column: 2 / 4;

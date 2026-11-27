@@ -46,7 +46,7 @@ incident record and operator links. The task toolbar and phone lane primary are
 omitted for those cards because coding and lane actions do not apply. This is a
 conditional rendering of the existing task header slots, not a new slot.
 
-The global top row's child order is navigation, breadcrumb, project picker,
+The global top row's child order is navigation, breadcrumb, project picker, elevation,
 search, defaults, Environment, Project Chat, theme, Needs you, Settings, and
 account. Navigation is always available; the breadcrumb needs an active
 workspace, and the project picker and Needs you are always available. Search
@@ -144,3 +144,17 @@ Add the child in the slot order above, register it once in `TASK_HEADER_SLOTS`,
 state its precise lane and phase relevance condition here, and extend the
 focused component and Playwright coverage. If it carries a fact already owned
 by a slot, extend that owner instead of adding a duplicate block.
+
+`app-elevation-control` owns live session classes in the global navigation row
+(AGT-4017). It renders only while a live session carries a class, uses the
+shared neutral status indicator, and discloses agent, session end and remaining
+direct arming time. The compact session end uses hours or days; ∞ means until revoked.
+The Elevated label and direct-action timer stay readable under compression.
+On phone the compact Elevated label and timer open the same
+responsive session controls. While elevated, the phone header places authority
+and More navigation above the existing action row, allowing that row to wrap
+without overlapping the chip. Its dialog reuses Access's Re-arm with step-up,
+End elevation and End session actions, links to and focuses Elevated sessions
+after its data renders, and shows
+a quiet last-hour arming notice. It is a global navigation child, so it does
+not belong in `TASK_HEADER_SLOTS`. No task header repeats this fact.

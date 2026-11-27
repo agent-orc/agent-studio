@@ -33,6 +33,29 @@ describe('OperatorAgentsService', () => {
     for (let i = 0; i < 4; i++) await Promise.resolve();
   }
 
+  it('filters elevated audit actions by agent and session on the server', async () => {
+    service.agentFilter.set('opa_ops'); service.sessionFilter.set('ses_live'); service.elevatedOnly.set(true);
+    const loading = service.loadActivity();
+    const request = http.expectOne(req => req.url === ACTIVITY);
+    expect(request.request.params.get('operatorAgentId')).toBe('opa_ops');
+    expect(request.request.params.get('sessionId')).toBe('ses_live');
+    expect(request.request.params.get('elevatedOnly')).toBe('true');
+    request.flush(operatorActivity()); await loading;
+  });
+
+  it('verifies the second factor before re-arming and reloads session facts', async () => {
+    const rearming = service.rearm('opa_ops', 'ses_live', 'project.testing', '123456');
+    http.expectNone(`${OPERATORS}/opa_ops/sessions/ses_live/rearm`);
+    http.expectOne('/api/v1/studio/auth/step-up').flush({});
+    await settle();
+    const request = http.expectOne(`${OPERATORS}/opa_ops/sessions/ses_live/rearm`);
+    expect(request.request.body).toEqual({ classId: 'project.testing' });
+    request.flush(null);
+    await settle();
+    http.expectOne(OPERATORS).flush(operatorAgents());
+    expect(await rearming).toBe(true);
+  });
+
   it('loads the operator agents and marks the sections available', async () => {
     const loading = service.load();
     http.expectOne(OPERATORS).flush(operatorAgents());

@@ -1,0 +1,30 @@
+@use '../../../../../styles/mixins' as m;
+@include m.action-buttons;
+
+:host { display: contents; }
+.elevation-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  max-width: 34ch;
+  flex: 0 0 auto;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-dim);
+  font: inherit;
+  cursor: pointer;
+  &:focus-visible { outline: 2px solid var(--studio-accent-strong); }
+}
+.elevation-control app-status-indicator,
+.elevation-control__time,
+.elevation-control__end { flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.elevation-control__agent { min-width: 0; max-width: 10ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 719px) {
+  .btn { min-height: var(--studio-target-coarse-min); }
+  .elevation-control { min-height: var(--studio-target-coarse-min); }
+}
+
+.elevation-control__notice { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

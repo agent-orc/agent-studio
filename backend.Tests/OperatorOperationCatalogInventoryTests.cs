@@ -66,6 +66,40 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.PersonaPause, OperatorTier.T1 },
     };
 
+    [Fact]
+    public void No_elevated_class_names_a_hard_refused_operation_or_route()
+    {
+        Assert.Equal(3, ElevatedActionClasses.All.Select(entry => entry.Id).Distinct().Count());
+        foreach (var actionClass in ElevatedActionClasses.All)
+        foreach (var id in actionClass.Operations)
+        {
+            Assert.NotNull(OperatorOperationCatalog.Find(id));
+            Assert.DoesNotContain(id, OperatorHardRefusals.Operations);
+            var rules = OperatorOperationCatalog.Routes.Where(rule => OperatorOperationCatalog.PossibleOperations(rule).Contains(id));
+            Assert.NotEmpty(rules);
+            Assert.All(rules, rule =>
+            {
+                Assert.DoesNotContain("/api/auth/", rule.Pattern, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("/api/v1/", rule.Pattern, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("secrets", rule.Pattern, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("audit", rule.Pattern, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+        using var factory = Factory(null);
+        foreach (var endpoint in Routes(factory.Services))
+        foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
+        {
+            var permission = RoutePermissionCatalog.Resolve(endpoint, method);
+            if (permission is null || !AccessSecurityMiddleware.OperatorDeniedPermission(permission.Permission)) continue;
+            var route = RoutePermissionCatalog.Normalize(endpoint.RoutePattern);
+            var rule = OperatorOperationCatalog.ResolveWrite(method, route);
+            if (rule is null) continue;
+            var operations = OperatorOperationCatalog.PossibleOperations(rule);
+            Assert.DoesNotContain(ElevatedActionClasses.All, actionClass => actionClass.Operations.Any(operations.Contains));
+        }
+        Assert.Equal(OperatorTier.T2, OperatorOperationCatalog.Find(OperatorOperationIds.CatalogueChange)!.Tier);
+    }
+
     [Theory]
     [MemberData(nameof(Seed))]
     public void The_tier_table_is_seeded_with_one_tier_per_operation(string id, OperatorTier tier)

@@ -113,26 +113,6 @@ public sealed record OperatorDevice
     public string? LastAddress { get; init; }
 }
 
-/// <summary>
-/// The first elevated action classes of the Dossier (section "Elevated
-/// scope"). ES-3 records the classes the terminal requested and the Owner
-/// kept on the session; ES-7 admits their operations. Until then a session
-/// has the operator-agent role and nothing more.
-/// </summary>
-public static class ElevatedActionClasses
-{
-    public sealed record ActionClass(string Id, string Title, string Mode);
-
-    public static readonly IReadOnlyList<ActionClass> All =
-    [
-        new("cards.accept-override", "Accept with override", "batch"),
-        new("cards.archive-override", "Archive with override", "batch"),
-        new("project.testing", "Set the testing strategy", "direct"),
-    ];
-
-    public static ActionClass? Find(string? id) => All.FirstOrDefault(candidate => candidate.Id == id);
-}
-
 /// <summary>Eight characters of the RFC 8628 base-20 consonant alphabet, shown as two groups of four.</summary>
 public static class OperatorSignInCodes
 {
