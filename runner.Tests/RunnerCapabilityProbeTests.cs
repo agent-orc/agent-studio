@@ -38,6 +38,8 @@ public sealed class RunnerCapabilityProbeTests
         var registered = RunnerCapabilityProbe.GateRegistrationCapabilities(options);
         var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: false);
         Assert.Contains(GateCapabilities.Executor, registered);
+        Assert.Contains(GateCapabilities.PostMerge, registered);
+        Assert.Contains(advertised, item => item.Key == GateCapabilities.PostMerge);
         Assert.Contains(advertised, item => item.Key == GateCapabilities.Executor);
         Assert.Contains(advertised, item => item.Key == GateCapabilities.GitMaterialization);
         Assert.Contains(advertised, item => item.Key == GateCapabilities.BundleMaterialization);

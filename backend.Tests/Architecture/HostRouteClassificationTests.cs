@@ -79,6 +79,8 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("GET", "/api/runner/post-merge/projects/{}", Monolith.RunnerScope),
         new("GET", "/api/runner/post-merge/projects", Monolith.RunnerScope),
         new("POST", "/api/runner/post-merge/projects/{}/window", Monolith.RunnerScope),
+        new("POST", "/api/runner/post-merge/projects/{}/placement", Monolith.RunnerScope),
+        new("POST", "/api/runner/post-merge/projects/{}/close-window", Monolith.RunnerScope),
         new("POST", "/api/runner/post-merge/projects/{}/runs", Monolith.RunnerScope),
         new("POST", "/api/runner/post-merge/projects/{}/escalation-check", Monolith.RunnerScope),
         new("POST", "/api/runner/project-chat/claim", Monolith.RunnerScope),

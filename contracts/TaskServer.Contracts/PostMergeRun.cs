@@ -16,6 +16,8 @@ public sealed record PostMergeRunRecord(
     /// attempt (initial, same-SHA repeat, last-green control, bisect points).
     /// Null on receipts of older runners.
     /// </summary>
+    public string? ExecutionHost { get; init; }
+    public string? ExecutionPlane { get; init; }
     public IReadOnlyList<PostMergeTestVerdict>? TestVerdicts { get; init; }
     /// <summary>RT-3: every focused run (repeat, control, bisect) and test-project build with its duration.</summary>
     public IReadOnlyList<PostMergeFocusedRun>? FocusedRuns { get; init; }
@@ -171,6 +173,8 @@ public sealed record PostMergeProjectState(
     public int? WindowMaxMerges { get; init; }
     public int? WindowMinutes { get; init; }
     public PostMergeWindowObservation? PendingWindow { get; init; }
+    public PostMergeWindowClosure? ClosedWindow { get; init; }
+    public string? GateSubjectId { get; init; }
     /// <summary>
     /// What a merge-window run selects, from the project's testing strategy
     /// (AGT-3965): <see cref="PostMergeWindowSuiteModes.Affected"/> (fast) or

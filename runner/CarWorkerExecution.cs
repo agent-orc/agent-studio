@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using AgentStudio.CliHosting;
 using AgentStudio.TaskServer.Contracts;
@@ -81,6 +83,11 @@ internal static class CarWorkerExecution
         var options = BuildCliOptions(spec, cliType) with { Spawner = signalRecorder };
         if (optionsCustomizer is not null) options = optionsCustomizer(options);
         var recordsSignals = ReferenceEquals(options.Spawner, signalRecorder);
+        options = options with
+        {
+            Spawner = new CodingWorkerSpawner(cliType, options.Spawner,
+                optionsCustomizer is null ? null : options.EnvironmentOverrides),
+        };
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
 
@@ -176,7 +183,9 @@ internal static class CarWorkerExecution
             }
             // The agent's own build/test/lint must resolve against the caches
             // repository preparation restored into for this run (TE-52).
-            PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment);
+            PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment?
+                .Where(pair => WorkerEdgeCredentialBoundary.IsCodingRuntimeName(pair.Key, cliType))
+                .ToDictionary(pair => pair.Key, pair => pair.Value));
             ApplyThinkingEnvironment(extraEnvironment, cliType, spec.Model, spec.ThinkingLevel);
             WorkerEdgeCredentialBoundary.RemoveFrom(extraEnvironment);
             // The candidate token must win over the clean home's inherited environment.
@@ -350,6 +359,60 @@ internal static class CarWorkerExecution
         }
 
         public void Dispose() => _file.Dispose();
+    }
+    /// <summary>
+    /// CAR inherits the daemon environment even when its request overlay is clean.
+    /// Enforce the same policy as the detached worker at the final process boundary.
+    /// Explicit fixture overrides from the trusted test-only options customizer
+    /// remain available to replay binaries. Production requests cannot supply them.
+    /// </summary>
+    internal sealed class CodingWorkerSpawner(
+        string cliType,
+        ICliProcessSpawner? inner = null,
+        IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null) : ICliProcessSpawner
+    {
+        public CliSpawn Spawn(ProcessStartInfo startInfo)
+        {
+            WorkerEdgeCredentialBoundary.ApplyCodingEnvironment(startInfo.Environment, cliType);
+            if (testEnvironmentOverrides is not null)
+                foreach (var pair in testEnvironmentOverrides) startInfo.Environment[pair.Key] = pair.Value;
+            if (inner is not null) return inner.Spawn(startInfo);
+            if (OperatingSystem.IsWindows())
+            {
+                // Retain CAR's curated Windows handle inheritance as well as its pipes.
+                return SpawnWindows(startInfo);
+            }
+            var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            process.Start();
+            return new CliSpawn(process,
+                startInfo.RedirectStandardInput ? process.StandardInput.BaseStream : Stream.Null,
+                process.StandardOutput, process.StandardError);
+        }
+
+        // CAR 0.7.0 keeps its native adapter internal. Bind the pinned contract
+        // instead of falling back to broader Windows handle inheritance. Missing
+        // members fail the launch closed; the regression test checks this shape.
+        internal static MethodInfo WindowsSpawnMethod => typeof(CliRunner).Assembly
+            .GetType("CodingAgentRunner.Execution.Win.WindowsHandleScrubSpawner", throwOnError: true)!
+            .GetMethod("Spawn", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new MissingMethodException("CAR Windows spawn contract is unavailable.");
+
+        private static CliSpawn SpawnWindows(ProcessStartInfo startInfo)
+        {
+            var method = WindowsSpawnMethod;
+            var result = method.Invoke(null,
+            [
+                startInfo.FileName, startInfo.ArgumentList.ToArray(), startInfo.WorkingDirectory,
+                startInfo.Environment.Where(pair => pair.Value is not null)
+                    .ToDictionary(pair => pair.Key, pair => pair.Value!),
+                startInfo.RedirectStandardInput, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            ]) ?? throw new InvalidOperationException("CAR Windows spawn returned no process.");
+            object? Read(string name) => method.ReturnType.GetProperty(name)!.GetValue(result);
+            return new CliSpawn((Process)Read("Process")!, (Stream?)Read("Stdin") ?? Stream.Null,
+                new StreamReader((Stream)Read("Stdout")!), new StreamReader((Stream)Read("Stderr")!),
+                _ => ((Action)Read("KillTree")!)());
+        }
+
     }
 }
 

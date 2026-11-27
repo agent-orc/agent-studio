@@ -8,16 +8,18 @@ namespace AgentStudio.Pipeline;
 /// <summary>
 /// Pushes workspace artifacts and other bounded platform-owned repository
 /// commits off the run path.
-/// Failures are visible and retried with bounded exponential backoff; a later
-/// commit also acts as a natural retry for all still-ahead commits.
+/// Failures are visible and retried with bounded exponential backoff. Exact-SHA
+/// obligations survive restart and are swept without requiring another commit.
 /// </summary>
 public sealed class WorkspaceArtifactPushWorker : BackgroundService
 {
     private readonly WorkspaceArtifactPushQueue _queue;
+    private readonly HashSet<(string Repository, string Branch, string Sha)> _attempted = [];
     private readonly ILogger<WorkspaceArtifactPushWorker> _logger;
     private readonly AgentStudio.Bus.AgentMessageBusBridge? _bus;
     private readonly SupervisorAdvisoryStore? _advisories;
     private readonly TimeSpan _baseBackoff;
+    private readonly TimeSpan _sweepInterval;
     private readonly TimeSpan _defaultTimeout;
     private readonly TimeSpan _catchUpTimeout;
     private readonly int _backlogWarningCommits;
@@ -67,6 +69,8 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
             configuration.GetValue<long?>("WorkspaceArtifacts:BacklogWarningBytes") ?? 512L * 1024 * 1024);
         _workspaceRoot = configuration["TaskRepository"];
         _autoPushEnabled = configuration.GetValue<bool?>("WorkspaceArtifacts:AutoPushEnabled") ?? true;
+        _sweepInterval = TimeSpan.FromSeconds(Math.Clamp(
+            configuration.GetValue<int?>("WorkspaceArtifacts:PushOutboxSweepSeconds") ?? 60, 1, 3600));
         _runGit = runGit ?? RunGitAsync;
     }
 
@@ -74,15 +78,85 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
     {
         try
         {
+            // Start the timer before replay so a long failed startup push cannot
+            // postpone discovery indefinitely. Both paths run on this single reader.
+            using var timer = new PeriodicTimer(_sweepInterval, _time);
+            var tick = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+            await SweepPendingAsync(stoppingToken).ConfigureAwait(false);
             var catchUp = StartupCatchUpRequest();
             if (catchUp != null)
-                await ProcessAsync(catchUp, stoppingToken).ConfigureAwait(false);
-            await foreach (var request in _queue.Reader.ReadAllAsync(stoppingToken))
-                await ProcessAsync(request, stoppingToken);
+                await ProcessSafelyAsync(catchUp, stoppingToken).ConfigureAwait(false);
+            var available = _queue.Reader.WaitToReadAsync(stoppingToken).AsTask();
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                if (await Task.WhenAny(tick, available).ConfigureAwait(false) == tick)
+                {
+                    if (!await tick.ConfigureAwait(false)) break;
+                    await SweepPendingAsync(stoppingToken).ConfigureAwait(false);
+                    tick = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+                }
+                else
+                {
+                    if (!await available.ConfigureAwait(false)) break;
+                    if (_queue.Reader.TryRead(out var request))
+                    {
+                        // A startup/periodic replay may already have acknowledged
+                        // this channel notification. Failed receipts wait for the sweep.
+                        if (request.Sha == null || (_queue.IsPending(request) && !_attempted.Contains(
+                            (request.RepositoryRoot, request.TargetBranch, request.Sha))))
+                            await ProcessSafelyAsync(request, stoppingToken).ConfigureAwait(false);
+                    }
+                    available = _queue.Reader.WaitToReadAsync(stoppingToken).AsTask();
+                }
+            }
         }
         catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
         {
-            SilentCatch.Note(ex, "WorkspaceArtifactPushWorker: graceful shutdown; a later workspace commit retries pending history.");
+            SilentCatch.Note(ex, "WorkspaceArtifactPushWorker: shutdown; pending exact-SHA obligations remain in the outbox.");
+        }
+    }
+
+    internal async Task SweepPendingAsync(CancellationToken ct)
+    {
+        _attempted.Clear();
+        try
+        {
+            foreach (var intent in _queue.PendingIntents())
+            {
+                ct.ThrowIfCancellationRequested();
+                try { await RecoverIntentAsync(intent, ct).ConfigureAwait(false); }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.LogError(ex, "workspace-artifact-push intent recovery failed repo={Repo}; intent retained",
+                        intent.Request.RepositoryRoot);
+                }
+            }
+            foreach (var request in _queue.PendingRequests())
+            {
+                ct.ThrowIfCancellationRequested();
+                await ProcessSafelyAsync(request, ct).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(ex, "workspace-artifact-push outbox sweep failed; pending receipts retained");
+        }
+    }
+
+    private async Task ProcessSafelyAsync(WorkspaceArtifactPushRequest request, CancellationToken ct)
+    {
+        if (request.Sha != null)
+            _attempted.Add((request.RepositoryRoot, request.TargetBranch, request.Sha));
+        try
+        {
+            await ProcessAsync(request, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Includes acknowledgement failure after a successful remote push.
+            // The retained receipt will prove containment on the next sweep.
+            _logger.LogError(ex, "workspace-artifact-push interrupted repo={Repo} branch={Branch} sha={Sha}; receipt retained",
+                request.RepositoryRoot, request.TargetBranch, request.Sha);
         }
     }
 
@@ -108,8 +182,11 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return await ProcessSingleFlightAsync(request with { RepositoryRoot = repository }, ct)
-                .ConfigureAwait(false);
+            request = request with { RepositoryRoot = repository };
+            var pushed = await ProcessSingleFlightAsync(request, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (pushed) _queue.Acknowledge(request);
+            return pushed;
         }
         finally
         {
@@ -119,6 +196,10 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
 
     private async Task<bool> ProcessSingleFlightAsync(WorkspaceArtifactPushRequest request, CancellationToken ct)
     {
+        // Local tracking refs can be stale after an ambiguous push or a remote
+        // rewrite. Only an observation of origin can discharge an exact-SHA receipt.
+        if (request.Sha != null && await RemoteContainsAsync(request, ct).ConfigureAwait(false))
+            return true;
         var backlog = await MeasureBacklogAsync(request, ct).ConfigureAwait(false);
         if (backlog.AheadCount >= _backlogWarningCommits || backlog.EstimatedBytes >= _backlogWarningBytes)
         {
@@ -126,7 +207,7 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
                 "workspace-artifact-push-backlog repo={Repo} branch={Branch} ahead={AheadCount} estimatedBytes={EstimatedBytes}",
                 request.RepositoryRoot, request.TargetBranch, backlog.AheadCount, backlog.EstimatedBytes);
         }
-        if (backlog.AheadMeasured && backlog.AheadCount == 0)
+        if (request.Sha == null && backlog.AheadMeasured && backlog.AheadCount == 0)
         {
             _logger.LogDebug(
                 "workspace-artifact-push-skipped repo={Repo} branch={Branch} reason=already-current",
@@ -153,11 +234,52 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
             if (result.FailureKind == GitProcessFailureKind.TimedOut)
                 timeout = _catchUpTimeout;
             if (attempt < 3)
-                await Task.Delay(TimeSpan.FromTicks(_baseBackoff.Ticks * (1L << (attempt - 1))), ct);
+                await Task.Delay(TimeSpan.FromTicks(_baseBackoff.Ticks * (1L << (attempt - 1))), _time, ct);
             else
                 await RaiseFinalAdvisoryAsync(request, backlog, result.Error, attempt, ct).ConfigureAwait(false);
         }
         return false;
+    }
+
+    private async Task RecoverIntentAsync(WorkspaceArtifactPushIntent intent, CancellationToken ct)
+    {
+        var request = intent.Request;
+        if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, request.RepositoryRoot))
+            return;
+        var result = await _runGit(request.RepositoryRoot,
+            ["log", "--all", "--reflog", "--format=%H", "--fixed-strings", $"--grep={intent.Marker}"],
+            _defaultTimeout, ct).ConfigureAwait(false);
+        if (result.Code != 0) return;
+        var matches = result.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // An intent without a matching commit may still be in its write path.
+        // Retain it. An ambiguous marker never authorizes a branch-tip push.
+        if (matches.Length != 1 || matches[0].Length is not (40 or 64) || !matches[0].All(Uri.IsHexDigit))
+            return;
+        if (_queue.Enqueue(request with { Sha = matches[0] }))
+            _queue.CompleteIntent(intent);
+    }
+
+    private async Task<bool> RemoteContainsAsync(WorkspaceArtifactPushRequest request, CancellationToken ct)
+    {
+        var branchRef = $"refs/heads/{request.TargetBranch}";
+        var remote = await _runGit(request.RepositoryRoot,
+            ["ls-remote", "--heads", "origin", branchRef], _defaultTimeout, ct).ConfigureAwait(false);
+        if (remote.Code != 0) return false;
+        var fields = remote.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length != 2 || fields[1] != branchRef) return false;
+        var tip = fields[0];
+        if (tip.Equals(request.Sha, StringComparison.OrdinalIgnoreCase)) return true;
+        if (tip.Length is not (40 or 64) || !tip.All(Uri.IsHexDigit)) return false;
+
+        // Fetch objects by the observed remote tip without moving local branches,
+        // tracking refs or FETCH_HEAD. Never substitute local HEAD for the receipt.
+        var fetch = await _runGit(request.RepositoryRoot,
+            ["fetch", "--no-tags", "--no-write-fetch-head", "origin", tip], _defaultTimeout, ct).ConfigureAwait(false);
+        if (fetch.Code != 0) return false;
+        var contains = await _runGit(request.RepositoryRoot,
+            ["merge-base", "--is-ancestor", request.Sha!, tip], _defaultTimeout, ct).ConfigureAwait(false);
+        return contains.Code == 0;
     }
 
     private async Task<WorkspacePushBacklog> MeasureBacklogAsync(

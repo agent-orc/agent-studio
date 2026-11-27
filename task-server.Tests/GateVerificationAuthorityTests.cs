@@ -370,6 +370,73 @@ public sealed class GateVerificationAuthorityTests
         }
     }
 
+    [Fact]
+    public async Task Post_merge_host_availability_tracks_roles_freshness_and_gate_renewal()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        Assert.Equal(new PostMergeHostAvailability(false, false), await store.PostMergeHostsAsync(default));
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        Assert.Equal(new PostMergeHostAvailability(true, false), await store.PostMergeHostsAsync(default));
+        await store.RegisterRunnerAsync("coding", new RegisterRunnerRequest("coding", "run-host", "coding-instance",
+            "1", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), "coding", default);
+        Assert.Equal(new PostMergeHostAvailability(true, true), await store.PostMergeHostsAsync(default));
+        await CreateMergeAsync(store, clock, 1);
+        var claim = await store.ClaimGateAsync(new("gate-a", "instance-a", RequestedTtlSeconds: 600), "gate-a", default);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.Equal(new PostMergeHostAvailability(false, false), await store.PostMergeHostsAsync(default));
+        await store.RenewGateAsync(claim.Attempt!.AttemptId, new(Authority(claim), 600), default);
+        Assert.Equal(new PostMergeHostAvailability(true, false), await store.PostMergeHostsAsync(default));
+    }
+
+    [Fact]
+    public async Task Running_post_merge_does_not_delay_a_merge_and_test_start_fences_supersession()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        var plan = Plan() with { PostMerge = new("product", "develop", "window") };
+        var postMerge = new CreateGateSubjectRequest("product", "post-merge:1", Repository,
+            "https://example.invalid/product.git", Sha, Sha, null, null,
+            GateRules.PlanHash(plan), "policy", "1", new string('a', 64), plan,
+            clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: GateSubjectKinds.PostMerge);
+        var queued = await store.CreateGateSubjectAsync(postMerge, "monolith", default);
+        var claim = await store.ClaimGateAsync(new("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal(queued.Subject.SubjectId, claim.Subject!.SubjectId);
+        foreach (var phase in new[] { GateStates.Materializing, GateStates.Running })
+            await store.AdvanceGateAsync(claim.Attempt!.AttemptId, new(Authority(claim), phase), default);
+        var retained = await store.CancelGateSubjectAsync(queued.Subject.SubjectId, "monolith", default, onlyBeforeRunning: true);
+        Assert.Equal(GateStates.Running, retained.Phase);
+        var merge = await CreateMergeAsync(store, clock, 1);
+        var mergeClaim = await store.ClaimGateAsync(new("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal(merge.Subject.SubjectId, mergeClaim.Subject!.SubjectId);
+        Assert.Equal(GateStates.Running, (await store.GetGateStatusAsync(queued.Subject.SubjectId, default))!.Phase);
+    }
+
+    [Fact]
+    public async Task Queued_post_merge_is_supersedable_and_merge_has_first_pick()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        var plan = Plan() with { PostMerge = new("product", "develop", "window") };
+        var request = new CreateGateSubjectRequest("product", "post-merge:queued", Repository,
+            "https://example.invalid/product.git", Sha, Sha, null, null, GateRules.PlanHash(plan),
+            "policy", "1", new string('a', 64), plan, clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: GateSubjectKinds.PostMerge);
+        var queued = await store.CreateGateSubjectAsync(request, "monolith", default);
+        var merge = await CreateMergeAsync(store, clock, 1);
+        var claim = await store.ClaimGateAsync(new("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal(merge.Subject.SubjectId, claim.Subject!.SubjectId);
+        Assert.Equal(GateStates.Cancelled, (await store.CancelGateSubjectAsync(queued.Subject.SubjectId,
+            "monolith", default, onlyBeforeRunning: true)).Phase);
+    }
+
     private static async Task<(GateClaimResponse Claim, byte[] Content)> ClaimMergeAsync(
         TaskServerStore store, ManualTimeProvider clock, string runner, string host)
     {
@@ -461,7 +528,7 @@ public sealed class GateVerificationAuthorityTests
     private static async Task RegisterGateAsync(TaskServerStore store, ManualTimeProvider clock,
         string id, string instance, string host)
     {
-        string[] keys = [GateCapabilities.Executor, GateCapabilities.GitMaterialization,
+        string[] keys = [GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
             GateCapabilities.BundleMaterialization, CapabilityProtocol.GitFetch,
             CapabilityProtocol.RepositoryAccess, CapabilityProtocol.TaskServerConnectivity,
             CapabilityProtocol.Disk];

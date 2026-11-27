@@ -30,7 +30,7 @@ public sealed class TransitionDecisionBoundaryTests
         // AGT-3207: interventions on operational stall events.
         "StallInterventionPolicy",
         // AGT-3219: queue overrun, backlog and release rule of the batch gate.
-        "GateQueueStallPolicy",
+        "GateQueueStallPolicy", "PostMergeSchedulingPolicy",
         "LineGuardianPolicy", "RedDevelopRepairPolicy", "RedTestTriagePolicy", "TestQuarantineLifecyclePolicy", "HoldScopePolicy", "BisectVerdictPolicy",
         // AGT-3563: batch phase changes and the batch claim invariants.
         "BatchPhaseTransitionPolicy", "BatchGateInvariantPolicy", "BatchPendingRecoveryPolicy",

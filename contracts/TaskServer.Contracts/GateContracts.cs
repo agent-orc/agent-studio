@@ -3,6 +3,7 @@ namespace AgentStudio.TaskServer.Contracts;
 public static class GateCapabilities
 {
     public const string Executor = "gate-executor";
+    public const string PostMerge = "gate:post-merge";
     public const string GitMaterialization = "gate:git";
     public const string BundleMaterialization = "gate:source-bundle";
 }
@@ -20,12 +21,13 @@ public static class GateSubjectKinds
     public const string Merge = "merge";
     public const string Promotion = "promotion";
     public const string Batch = "batch";
+    public const string PostMerge = "post-merge";
 
     public static string Normalize(string? kind) => string.IsNullOrWhiteSpace(kind) ? Run : kind;
 
-    public static bool IsKnown(string? kind) => Normalize(kind) is Run or Merge or Promotion or Batch;
+    public static bool IsKnown(string? kind) => Normalize(kind) is Run or Merge or Promotion or Batch or PostMerge;
 
-    public static bool IsVerification(string? kind) => Normalize(kind) is Merge or Promotion or Batch;
+    public static bool IsVerification(string? kind) => Normalize(kind) is Merge or Promotion or Batch or PostMerge;
 
     /// <summary>Verification kind of a monolith gate id, or null when the gate stays on its current path.</summary>
     public static string? ForGateId(string gateId) => gateId switch
@@ -114,7 +116,9 @@ public sealed record GatePlan(
     string? SubjectBindingDigest = null,
     [property: System.Text.Json.Serialization.JsonIgnore(
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<string>? SourcePaths = null);
+    IReadOnlyList<string>? SourcePaths = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    PostMergeGateWork? PostMerge = null);
 
 public sealed record GateSubject(
     string SubjectId,
@@ -203,7 +207,8 @@ public sealed record GateClaimRequest(
     string ExecutorId,
     string InstanceId,
     int AvailableGateSlots = 1,
-    int RequestedTtlSeconds = 120);
+    int RequestedTtlSeconds = 120,
+    bool ExcludePostMerge = false);
 
 public sealed record GateClaimResponse(
     string Status,

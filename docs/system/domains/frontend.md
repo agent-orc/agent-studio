@@ -55,6 +55,84 @@ references, including literal inline style bindings. Existing debt lives in
 `scripts/style-token-baseline.json`; `--shrink` only removes debt, and the guard
 rejects growth against the checked-in baseline.
 
+## Runtime token sets and foreground roles
+
+`ThemeService` owns two independent choices. `atp.studio.theme` remains the
+`light` / `dark` / `system` preference. The typed registry in
+`frontend/src/app/features/studio-shell/services/theme-token-sets.ts` supplies
+palette families with both light and dark variants. The only shipped family is
+`studio-default`: its two empty override maps use the existing library CSS
+unchanged. Appearance and the titlebar keep their existing controls.
+
+`atp.studio.tokenSet` stores `{ "version": 1, "id": "studio-default" }`.
+Only a registered id at the supported version restores. Missing, malformed,
+unknown and future-version values resolve to `studio-default` and are repaired
+on the next persistence effect. Blocked storage uses the same in-memory default.
+The root carries `data-studio-theme="light|dark"` for the existing library
+selectors and `data-studio-token-set="<family-id>.<resolved-mode>"` for the
+runtime set. System changes update the resolved mode without replacing either
+saved choice; the media-query listener is removed on service destruction.
+
+`registerTokenSet(set)` snapshots a trusted typed descriptor with a stable
+lowercase id, label, and both mode maps. `setTokenSet(id)` selects it without a
+build; `tokenSets`, `tokenSetId` and `tokenSet` expose the registry, selected
+family and resolved variant as signals. Prototype maps override central
+`--studio-*` aliases only, on the document root. Switching family or mode restores
+previous inline values and removes overrides absent from the next variant.
+Primitives and the library bridge keep their names and definitions. This is an
+application configuration API, not an arbitrary CSS import facility. It validates
+descriptor shape and identity; palette authors remain responsible for CSS values,
+alias cycles and contrast. No prototype palette or new picker ships here.
+
+For restoration of a prototype after reload, supply it through `THEME_TOKEN_SETS`
+before `ThemeService` initializes. A runtime-only registration must be repeated
+by its owner on the next boot; CSS values are never restored from localStorage.
+Retired prototype ids intentionally fall back to the default family.
+
+Foreground/background contracts:
+
+| Role | Foreground | Background and rule |
+|---|---|---|
+| Body and secondary text | `--studio-fg`, `--studio-fg-strong`, `--studio-fg-dim`, `--studio-fg-muted` and their `--studio-text-*` aliases | Pair with the actual `--studio-bg-surface`, `--studio-bg-editor` or `--studio-bg-elevated`. Normal text needs 4.5:1. |
+| Accent text | The matching `--studio-accent-*-strong` or `--studio-accent-strong` | Check the actual opaque or tinted background. The suffix alone does not guarantee contrast. Base accents are brand pigments, not universal text colours. |
+| Primary action | `--studio-on-accent` | Pair with `--studio-accent`; do not reuse on arbitrary severity or info fills. |
+| Status chip | `--studio-status-<tone>` | Pair with `--studio-status-chip-surface`. Compact labels use `--studio-status-compact-<tone>` on the actual underlying surface. |
+| Selected navigation | `--studio-nav-active-fg` | Pair with `--studio-nav-active-bg` or `--studio-nav-active-bg-hover`. |
+| Wiki | `--studio-wiki-fg`, `--studio-wiki-muted`, `--studio-wiki-link` | Pair with `--studio-wiki-bg`; the link debt below remains explicit. |
+| Tints and overlays | The role's named foreground | Composite translucent layers onto the actual opaque canvas before computing contrast. Large text and necessary nontext indicators need 3:1; decorative borders are not body-text pairs. |
+
+AGT-4127 computed 114 default-set role/theme pairs from source at
+`688b7fb6d71af74df168674baf61d7dcdfb5581e` on 27 November 2026. The result
+report publishes the executable inventory, JSON and CSV, including sRGB
+`color-mix` resolution and unrounded-channel relative luminance. These are
+source-derived role contracts, not a browser audit of component cascade,
+opacity or overlays. Ten sampled pairs fall below 4.5:1, all in light mode:
+
+| Foreground | Surface ratio | Elevated ratio | Existing limitation |
+|---|---:|---:|---|
+| `--studio-accent` | 3.1219 | 2.6426 | Base brand pigment is weak for normal text. |
+| `--studio-accent-2` | 2.0377 | 1.7249 | Legacy teal is weak for text and necessary nontext marks. |
+| `--studio-accent-3` | 2.9486 | 2.4959 | Base info pigment falls below 3:1 too. |
+| `--studio-accent-4` | 2.7832 | 2.3559 | Base purple pigment falls below 3:1 too. |
+| `--studio-accent-success-strong` | 5.0156 | 4.2456 | Strong success clears white, not the elevated grey surface. |
+| `--studio-wiki-link` on `--studio-wiki-bg` | 3.6779 | n/a | Existing Wiki link is weak for normal text. |
+
+The audited light `--studio-accent-strong` on white still measures 5.7340:1.
+No values were recoloured. The original headline counts were not reproducible
+with an explicit source scope: the old named primitive/semantic files contain
+460 names and 663 definitions; the current library equivalents contain 461 and
+664. Including the library's compatibility vocabulary gives 913 names and
+1,116 definitions. Theme overrides and exact-value compatibility aliases are
+intentional and must not be treated as duplicate-palette bugs.
+
+Focused coverage is in `theme.service.spec.ts` and
+`frontend/e2e/restyle-base/runtime-token-sets.spec.ts`. The latter exercises
+selection, reload, fallback and System changes at 1280 and 390 px, and captures
+default appearance in both themes. Its appearance-evidence test also works on
+the pre-change build for baseline capture. The audit instruction prohibited
+builds and test execution, so browser verification and before/after screenshot
+comparison remain pending; source checks do not substitute for those checks.
+
 ## Phone navigation and theme
 
 At 390 px the Studio board shows one lane at a time. The Board lane picker
