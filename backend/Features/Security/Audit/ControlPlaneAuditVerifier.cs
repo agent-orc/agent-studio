@@ -78,113 +78,146 @@ public sealed class ControlPlaneAuditVerifier(
     {
         var now = _clock.GetUtcNow().UtcDateTime;
         var chain = log.VerifyChain();
-        ControlPlaneAuditIntegrity Failed(string problem, long? sequence, string message, bool sinkCompared = false)
-            => new(ControlPlaneAuditIntegrityStates.Failed, now, chain.VerifiedThrough, message, true, sinkCompared, problem, sequence);
+        var recovery = FindLocalBreak(chain, monitor.Integrity);
+        if (recovery is not null) return await RecoverAsync(chain, now, recovery, ct);
 
-        ControlPlaneAuditIntegrity LocalBreak(string problem, long sequence, string message, long witnessedThrough = 0,
-            bool establishAnchor = true, string? recoveryMessage = null)
-        {
-            var through = Math.Max(witnessedThrough,
-                Math.Max(chain.ObservedThrough, Math.Max(chain.HighestWritten, chain.ForwardPosition.Sequence)));
-            var detectedAt = _clock.GetUtcNow().UtcDateTime;
-            var basis = $"{log.LatestRecoveryAnchor?.Hash ?? ControlPlaneAuditLog.GenesisHash}|{sequence}|";
-            var open = monitor.IsOpen(ControlPlaneAuditAlertCodes.ChainBroken)
-                ? monitor.Raised.LastOrDefault(alert => alert.Code == ControlPlaneAuditAlertCodes.ChainBroken) : null;
-            var continuing = open?.Occurrence?.StartsWith(basis, StringComparison.Ordinal) == true;
-            var occurrence = continuing ? open!.Occurrence! : basis + Guid.NewGuid().ToString("N");
-            var firstObservedAt = continuing ? open!.OccurredAt ?? detectedAt : detectedAt;
-            ControlPlaneAuditIntegrity Report(string description, bool pending = false)
-                => Failed(problem, sequence, description) with
-                {
-                    Occurrence = occurrence, OccurredAt = firstObservedAt,
-                    RecoveryPending = pending, RecoveryThrough = witnessedThrough, RecoveryMessage = recoveryMessage ?? message,
-                };
-            var evidence = $"{message} Sequence range {sequence} to {Math.Max(sequence, through)}; "
-                + $"detected at {detectedAt:O}; process {ControlPlaneAuditLog.ProcessIdentity}.";
-            if (!establishAnchor) return Report(evidence + " Recovery waits until the sink tail can be established.", pending: true);
-            try
-            {
-                var anchored = log.TryAnchorBreak(chain with
-                {
-                    ProblemSequence = sequence, HighestWritten = Math.Max(chain.HighestWritten, witnessedThrough),
-                }, evidence, occurrence, firstObservedAt);
-                return Report(evidence + (anchored
-                    ? " A new recovery anchor seals the damaged history; subsequent entries can be verified."
-                    : " The file prefix changed during recovery; anchoring will be retried at the next verification."), pending: !anchored);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return Report(evidence + " Recovery anchor could not be written: "
-                    + CredentialRedactor.Redact(exception.Message), pending: true);
-            }
-        }
-        async Task<ControlPlaneAuditIntegrity> RecoverAsync(string problem, long sequence, string message, long knownThrough = 0)
-        {
-            var through = Math.Max(Math.Max(knownThrough, sequence),
-                Math.Max(chain.ObservedThrough, Math.Max(chain.HighestWritten, chain.ForwardPosition.Sequence)));
-            if (sink is not null)
-            {
-                var pending = LocalBreak(problem, sequence, message, through, establishAnchor: false);
-                monitor.RecordIntegrity(pending);
-                await monitor.RaiseAsync(ControlPlaneAuditAlertCodes.ChainBroken, pending.Message!, sequence, ct,
-                    pending.Occurrence, pending.OccurredAt);
-                try
-                {
-                    var pages = 0;
-                    while (true)
-                    {
-                        var previousThrough = through;
-                        var tail = await sink.ReadAsync(through + 1, SinkPage, ct);
-                        foreach (var raw in tail)
-                        {
-                            var witness = ControlPlaneAuditLog.Parse(raw);
-                            if (witness is null || !ControlPlaneAuditLog.TrySplit(raw, out var body, out var hash)
-                                || ControlPlaneAuditLog.Sha256Hex(body) != hash)
-                                return LocalBreak(problem, sequence, message + " The sink tail contains an altered entry.",
-                                    through, establishAnchor: false, recoveryMessage: message);
-                            through = Math.Max(through, witness.Sequence);
-                        }
-                        if (tail.Count < SinkPage) break;
-                        if (through <= previousThrough)
-                            return LocalBreak(problem, sequence, message + " The sink tail did not advance.",
-                                through, establishAnchor: false, recoveryMessage: message);
-                        if (++pages >= 64)
-                            return LocalBreak(problem, sequence, message + " The sink tail did not finish within 64 pages.",
-                                through, establishAnchor: false, recoveryMessage: message);
-                    }
-                }
-                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
-                {
-                    if (ct.IsCancellationRequested) throw;
-                    return LocalBreak(problem, sequence,
-                        message + " The sink tail could not be read: " + CredentialRedactor.Redact(exception.Message),
-                        through, establishAnchor: false, recoveryMessage: message);
-                }
-            }
-            return LocalBreak(problem, sequence, message, through);
-        }
+        return await CompareSinkAsync(chain, now, ct);
+    }
 
-        var prior = monitor.Integrity;
+    private static RecoveryRequest? FindLocalBreak(ChainCheck chain, ControlPlaneAuditIntegrity prior)
+    {
         if (prior.RecoveryPending && prior.ProblemSequence is { } pendingSequence)
         {
-            var earlier = chain.ProblemSequence is { } currentSequence && currentSequence < pendingSequence;
-            return await RecoverAsync(earlier ? chain.Problem! : prior.Problem!,
-                earlier ? chain.ProblemSequence!.Value : pendingSequence,
-                earlier ? chain.Message! : prior.RecoveryMessage ?? "Previously detected audit loss remains unresolved.",
-                prior.RecoveryThrough);
+            if (chain.ProblemSequence is { } currentSequence && currentSequence < pendingSequence)
+                return new(chain.Problem!, currentSequence, chain.Message!, prior.RecoveryThrough);
+            return new(prior.Problem!, pendingSequence,
+                prior.RecoveryMessage ?? "Previously detected audit loss remains unresolved.", prior.RecoveryThrough);
         }
-        if (!chain.Ok) return await RecoverAsync(chain.Problem!, chain.ProblemSequence!.Value, chain.Message!);
+        if (!chain.Ok) return new(chain.Problem!, chain.ProblemSequence!.Value, chain.Message!);
         var stored = chain.VerifiedThrough;
         if (chain.HighestWritten > stored)
-            return await RecoverAsync("truncated", stored + 1,
+            return new("truncated", stored + 1,
                 $"The snapshot ends at sequence {stored}; this process previously observed sequence {chain.HighestWritten}.");
         var position = chain.ForwardPosition;
         if (position.Sequence > stored)
-            return await RecoverAsync("truncated", stored + 1,
+            return new("truncated", stored + 1,
                 $"The snapshot ends at sequence {stored}; {position.Sequence} were already forwarded.");
         if (position.Sequence > chain.AnchorSequence && chain.HashAt(position.Sequence) != position.Hash)
-            return await RecoverAsync("modified", position.Sequence, $"Entry {position.Sequence} differs from the one forwarded to the sink.");
+            return new("modified", position.Sequence, $"Entry {position.Sequence} differs from the one forwarded to the sink.");
+        return null;
+    }
 
+    private async Task<ControlPlaneAuditIntegrity> RecoverAsync(
+        ChainCheck chain, DateTime checkedAt, RecoveryRequest request, CancellationToken ct)
+    {
+        var attempt = CreateRecoveryAttempt(chain, request);
+        if (sink is not null)
+        {
+            // Publish the proven local break before attempting fallible sink reads.
+            var pending = RecoveryResult(chain, checkedAt, attempt,
+                " Recovery waits until the sink tail can be established.", pending: true);
+            monitor.RecordIntegrity(pending);
+            await monitor.RaiseAsync(ControlPlaneAuditAlertCodes.ChainBroken, pending.Message!, request.Sequence, ct,
+                attempt.Occurrence, attempt.FirstObservedAt);
+
+            var tail = await ReadSinkTailAsync(sink, attempt.Through, ct);
+            attempt = attempt with { Through = tail.Through };
+            if (tail.Problem is not null)
+                return RecoveryResult(chain, checkedAt, attempt,
+                    tail.Problem + " Recovery waits until the sink tail can be established.", pending: true);
+        }
+        return AnchorRecovery(chain, checkedAt, attempt);
+    }
+
+    private RecoveryAttempt CreateRecoveryAttempt(ChainCheck chain, RecoveryRequest request)
+    {
+        var through = Math.Max(Math.Max(request.KnownThrough, request.Sequence),
+            Math.Max(chain.ObservedThrough, Math.Max(chain.HighestWritten, chain.ForwardPosition.Sequence)));
+        var detectedAt = _clock.GetUtcNow().UtcDateTime;
+        var basis = $"{log.LatestRecoveryAnchor?.Hash ?? ControlPlaneAuditLog.GenesisHash}|{request.Sequence}|";
+        var open = monitor.IsOpen(ControlPlaneAuditAlertCodes.ChainBroken)
+            ? monitor.Raised.LastOrDefault(alert => alert.Code == ControlPlaneAuditAlertCodes.ChainBroken) : null;
+        var continuing = open?.Occurrence?.StartsWith(basis, StringComparison.Ordinal) == true;
+        return new(request, through, detectedAt,
+            continuing ? open!.Occurrence! : basis + Guid.NewGuid().ToString("N"),
+            continuing ? open!.OccurredAt ?? detectedAt : detectedAt);
+    }
+
+    private static async Task<SinkTail> ReadSinkTailAsync(IControlPlaneAuditSink sink, long through, CancellationToken ct)
+    {
+        try
+        {
+            for (var page = 0; page < 64; page++)
+            {
+                var previousThrough = through;
+                var tail = await sink.ReadAsync(through + 1, SinkPage, ct);
+                foreach (var raw in tail)
+                {
+                    var witness = ControlPlaneAuditLog.Parse(raw);
+                    if (witness is null || !ControlPlaneAuditLog.TrySplit(raw, out var body, out var hash)
+                        || ControlPlaneAuditLog.Sha256Hex(body) != hash)
+                        return new(through, " The sink tail contains an altered entry.");
+                    through = Math.Max(through, witness.Sequence);
+                }
+                if (tail.Count < SinkPage) return new(through);
+                if (through <= previousThrough) return new(through, " The sink tail did not advance.");
+            }
+            return new(through, " The sink tail did not finish within 64 pages.");
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            if (ct.IsCancellationRequested) throw;
+            return new(through, " The sink tail could not be read: " + CredentialRedactor.Redact(exception.Message));
+        }
+    }
+
+    private ControlPlaneAuditIntegrity AnchorRecovery(ChainCheck chain, DateTime checkedAt, RecoveryAttempt attempt)
+    {
+        try
+        {
+            var anchored = log.TryAnchorBreak(chain with
+            {
+                ProblemSequence = attempt.Request.Sequence,
+                HighestWritten = Math.Max(chain.HighestWritten, attempt.Through),
+            }, attempt.Evidence, attempt.Occurrence, attempt.FirstObservedAt);
+            return RecoveryResult(chain, checkedAt, attempt, anchored
+                ? " A new recovery anchor seals the damaged history; subsequent entries can be verified."
+                : " The file prefix changed during recovery; anchoring will be retried at the next verification.", pending: !anchored);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return RecoveryResult(chain, checkedAt, attempt,
+                " Recovery anchor could not be written: " + CredentialRedactor.Redact(exception.Message), pending: true);
+        }
+    }
+
+    private static ControlPlaneAuditIntegrity RecoveryResult(
+        ChainCheck chain, DateTime checkedAt, RecoveryAttempt attempt, string outcome, bool pending)
+        => Failed(chain, checkedAt, attempt.Request.Problem, attempt.Request.Sequence, attempt.Evidence + outcome) with
+        {
+            Occurrence = attempt.Occurrence, OccurredAt = attempt.FirstObservedAt,
+            RecoveryPending = pending, RecoveryThrough = attempt.Through, RecoveryMessage = attempt.Request.Message,
+        };
+
+    private static ControlPlaneAuditIntegrity Failed(
+        ChainCheck chain, DateTime checkedAt, string problem, long? sequence, string message, bool sinkCompared = false)
+        => new(ControlPlaneAuditIntegrityStates.Failed, checkedAt, chain.VerifiedThrough, message, true, sinkCompared, problem, sequence);
+
+    private sealed record RecoveryRequest(string Problem, long Sequence, string Message, long KnownThrough = 0);
+
+    private sealed record RecoveryAttempt(
+        RecoveryRequest Request, long Through, DateTime DetectedAt, string Occurrence, DateTime FirstObservedAt)
+    {
+        public string Evidence => $"{Request.Message} Sequence range {Request.Sequence} to {Through}; "
+            + $"detected at {DetectedAt:O}; process {ControlPlaneAuditLog.ProcessIdentity}.";
+    }
+
+    private sealed record SinkTail(long Through, string? Problem = null);
+
+    private async Task<ControlPlaneAuditIntegrity> CompareSinkAsync(ChainCheck chain, DateTime now, CancellationToken ct)
+    {
+        var stored = chain.VerifiedThrough;
+        var position = chain.ForwardPosition;
         var anchorNote = chain.AnchorSequence > 0
             ? $" Verified from recovery anchor {chain.AnchorSequence + 1}; earlier history remains broken."
             : "";
@@ -206,7 +239,7 @@ public sealed class ControlPlaneAuditVerifier(
                     var entry = ControlPlaneAuditLog.Parse(line);
                     if (entry is null || !ControlPlaneAuditLog.TrySplit(line, out var body, out var hash)
                         || ControlPlaneAuditLog.Sha256Hex(body) != hash)
-                        return Failed("sink-mismatch", next, $"The sink holds an unreadable or altered entry after sequence {next - 1}.", true);
+                        return Failed(chain, now, "sink-mismatch", next, $"The sink holds an unreadable or altered entry after sequence {next - 1}.", true);
                     if (entry.Sequence > stored)
                     {
                         // The sink page was read before this local read. A legitimate concurrent
@@ -215,7 +248,7 @@ public sealed class ControlPlaneAuditVerifier(
                         if (current?.Sequence == entry.Sequence)
                         {
                             if (current.Raw != line)
-                                return Failed("sink-mismatch", entry.Sequence,
+                                return Failed(chain, now, "sink-mismatch", entry.Sequence,
                                     $"Entry {entry.Sequence} differs between the current local file and the sink.", true);
                             beyondSnapshot = true;
                             break;
@@ -226,18 +259,18 @@ public sealed class ControlPlaneAuditVerifier(
                             var witness = ControlPlaneAuditLog.Parse(raw);
                             if (witness is null || !ControlPlaneAuditLog.TrySplit(raw, out var witnessBody, out var witnessHash)
                                 || ControlPlaneAuditLog.Sha256Hex(witnessBody) != witnessHash)
-                                return Failed("sink-mismatch", entry.Sequence, "The sink tail contains an unreadable or altered entry.", true);
+                                return Failed(chain, now, "sink-mismatch", entry.Sequence, "The sink tail contains an unreadable or altered entry.", true);
                             sinkThrough = Math.Max(sinkThrough, witness.Sequence);
                         }
-                        return await RecoverAsync("truncated", stored + 1,
+                        return await RecoverAsync(chain, now, new("truncated", stored + 1,
                             $"The sink holds entries through {sinkThrough}; entry {entry.Sequence} was absent from the later local read.",
-                            sinkThrough);
+                            sinkThrough), ct);
                     }
                     if (entry.Sequence > next && entry.Sequence <= position.Sequence)
-                        return Failed("sink-gap", next, $"The sink lacks forwarded entry {next}.", true);
+                        return Failed(chain, now, "sink-gap", next, $"The sink lacks forwarded entry {next}.", true);
                     if (entry.Sequence < next) continue;
                     if (chain.HashAt(entry.Sequence) != hash)
-                        return Failed("sink-mismatch", entry.Sequence, $"Entry {entry.Sequence} differs between the local chain and the sink.", true);
+                        return Failed(chain, now, "sink-mismatch", entry.Sequence, $"Entry {entry.Sequence} differs between the local chain and the sink.", true);
                     next = entry.Sequence + 1;
                 }
                 if (page.Count < SinkPage || beyondSnapshot) break;
@@ -250,7 +283,7 @@ public sealed class ControlPlaneAuditVerifier(
                 "Local chain verified; the sink could not be read: " + CredentialRedactor.Redact(exception.Message) + anchorNote, false);
         }
         if (next <= position.Sequence)
-            return Failed("sink-gap", next, $"The sink lacks forwarded entries from {next} to {position.Sequence}.", true);
+            return Failed(chain, now, "sink-gap", next, $"The sink lacks forwarded entries from {next} to {position.Sequence}.", true);
         var comparison = chain.AnchorSequence == 0
             ? $"Local chain verified and matches the sink through entry {next - 1}."
             : next == chain.AnchorSequence + 1

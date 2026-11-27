@@ -295,7 +295,7 @@ public sealed class ControlPlaneAuditLog
         lock (_gate)
         {
             var bytes = SnapshotBytesLocked();
-            if (bytes.LongLength < check.SnapshotLength
+            if (check.SnapshotLength < 0 || check.SnapshotLength > bytes.LongLength
                 || Convert.ToHexStringLower(SHA256.HashData(bytes.AsSpan(0, checked((int)check.SnapshotLength))))
                     != check.SnapshotHash) return false;
             var lastSequence = Lines(bytes).Select(Parse).OfType<ControlPlaneAuditEntry>()
@@ -484,5 +484,11 @@ public sealed record ChainCheck(
 {
     public long VerifiedThrough => AnchorSequence + Hashes.Count;
 
-    public string HashAt(long sequence) => Hashes[checked((int)(sequence - AnchorSequence - 1))];
+    public string HashAt(long sequence)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sequence, AnchorSequence);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(sequence, VerifiedThrough);
+        // Only the offset within this captured segment becomes an int, after its bounds are checked.
+        return Hashes[checked((int)(sequence - AnchorSequence - 1))];
+    }
 }
