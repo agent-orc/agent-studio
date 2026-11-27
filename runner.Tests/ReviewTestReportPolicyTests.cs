@@ -6,6 +6,33 @@ namespace AgentRunner.Tests;
 
 public sealed class ReviewTestReportPolicyTests
 {
+    [Theory]
+    [InlineData("FullyQualifiedName~.Architecture.|Category=Guard")]
+    [InlineData("(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)")]
+    public void Explicit_empty_guard_selection_is_valid_even_when_delivery_adds_tests(string filter)
+    {
+        var command = new ReviewCommandDto("verify-8", "build-tests", "sh",
+            ["-lc", $"dotnet test engine.Tests.csproj --no-build --filter \"{filter}\""], CompareToBaseline: true);
+        var result = new ProcessResult(0,
+            $"No test matches the given testcase filter `{filter}` in engine.Tests.dll", string.Empty);
+        Assert.False(ReviewTestReportPolicy.Missing(command, result, setupChanged: true));
+        Assert.False(ReviewTestReportPolicy.NeedsSetupCheck(command, result));
+        Assert.True(ReviewTestReportPolicy.Missing(command, result with { ExitCode = 1 }));
+        Assert.True(ReviewTestReportPolicy.Missing(command, result with { StdOut = string.Empty }));
+    }
+
+    [Theory]
+    [InlineData("Category!=MachineBound")]
+    [InlineData("FullyQualifiedName~MachineBlockerPolicyTests")]
+    [InlineData("FullyQualifiedName~.Architecture.|Category=Guard|Category=Acceptance")]
+    public void Empty_ordinary_or_broadened_selection_still_requires_a_completed_test(string filter)
+    {
+        var command = new ReviewCommandDto("verify-9", "build-tests", "dotnet",
+            ["test", "engine.Tests.csproj", "--no-build", "--filter", filter], CompareToBaseline: true);
+        Assert.True(ReviewTestReportPolicy.Missing(command, new ProcessResult(0,
+            $"No test matches the given testcase filter `{filter}` in engine.Tests.dll", string.Empty), setupChanged: true));
+    }
+
     [Fact]
     public void Vitest_test_files_summary_is_a_parseable_report()
     {

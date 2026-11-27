@@ -2176,3 +2176,11 @@ suspected incident: neither its original finding nor its host capability snapsho
 was supplied to AGT-4098. Current plans do not define a general hardware acceptance
 requirement field; synthetic hardware policy fixtures prove the conservative
 boundary, not the occurrence of that incident.
+
+Remote Review's inserted .NET guard commands may legitimately select no tests
+in a project without Architecture or Guard tests. A successful VSTest report
+that explicitly names the canonical guard filter and says it matched no tests
+is a completed empty guard selection, even when the delivery adds test files.
+It records no passing tests. Silent commands, nonzero exits and empty ordinary
+or acceptance test selections still require a completed-test report. Guard
+failures retain the existing failure-name comparison against the baseline.
