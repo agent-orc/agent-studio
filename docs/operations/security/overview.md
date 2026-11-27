@@ -333,6 +333,19 @@ Developer and Operator agent also publish (`magazine.write`). The
 installation and workspace magazines take writes only through a workspace
 binding ([magazine domain](../../system/domains/magazine.md#access)).
 
+Destructive project removal (`DELETE /api/projects/{projId}`) requires
+`workspace.administer`. Routine project settings updates continue to require
+`project.settings.write`; a project Admin cannot delete project storage.
+The DELETE request must carry a JSON body with `confirmation` equal to the
+exact project id and a nonblank `reason` of at most 1000 characters. Missing
+or incorrect confirmation returns 400. Active coding or review work returns
+409 `project-delete-active-work` before previews, storage, WatchPaths or the
+registry are changed. Drain that work before retrying. Accepted deletion
+permanently removes the project's tasks, logs and results; retain any needed
+evidence first. The control-plane audit records the authenticated actor,
+project id, written reason and deletion outcome outside project storage.
+Existing API-token scope limits and Owner-only floors remain in force.
+
 For human users, factor enrollment follows effective permissions from direct
 and group bindings. Any role granting `project.runs.operate`,
 `environment.deploy`, production deployment or approval, `secrets.*`, or
