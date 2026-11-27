@@ -2,13 +2,12 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Threading.Channels;
 using AgentStudio.Docs;
 using AgentStudio.Git;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace AgentStudio.Tests.Architecture;
@@ -27,6 +26,7 @@ namespace AgentStudio.Tests.Architecture;
 [Trait("Category", "Guard")]
 public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
 {
+    private static readonly TimeSpan CompletionTimeout = TimeSpan.FromSeconds(30);
     private const string ProjectName = "IdleGuard";
     private const string Feed = "/api/runner/orchestrator-feed";
     private const string Summary = "/api/git/summary";
@@ -36,15 +36,16 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
     private string WatchPath => Path.Combine(_root, "workspace", "projects", ProjectName.ToLowerInvariant());
     private Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? _factory;
     private HttpClient? _client;
+    private bool _summaryRequested;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         Directory.CreateDirectory(Repo);
         Directory.CreateDirectory(WatchPath);
-        Git("init", "-q", "-b", "main");
-        Git("config", "user.email", "guard@example.invalid");
-        Git("config", "user.name", "Guard");
-        Git("config", "commit.gpgsign", "false");
+        await Git("init", "-q", "-b", "main");
+        await Git("config", "user.email", "guard@example.invalid");
+        await Git("config", "user.name", "Guard");
+        await Git("config", "commit.gpgsign", "false");
         Write("README.md", "# Idle guard\n");
         Write("docs/guide/start.md", "# Start\n\nGuide.\n");
         Write("docs/concepts/dossiers/choice/index.html", "<html><body><h1>Choice</h1></body></html>");
@@ -52,6 +53,9 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
         {
             schemaVersion = 1,
             id = "choice",
+            // Startup catalogue discovery assigns and commits missing keys even
+            // without hosted services. An idle-read fixture must already have one.
+            key = "IDLE-W1",
             title = "Choice",
             summary = "A decided Dossier.",
             entrypoint = "index.html",
@@ -73,8 +77,10 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
                 spawnedTaskKeys = Array.Empty<string>(),
             },
         }));
-        Git("add", "-A");
-        Git("commit", "-q", "-m", "seed");
+        await Git("add", "-A");
+        await Git("commit", "-q", "-m", "seed");
+
+        var seedHead = await Git("rev-parse", "HEAD");
 
         _factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
@@ -89,14 +95,19 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
             builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
             builder.ConfigureTestServices(services =>
             {
-                // A quiet host: the requests below are the only Git readers.
-                services.RemoveAll<IHostedService>();
+                // Disable hosted workers. Direct catalogue startup reads still run.
+                TestHostFactory.RemoveBackgroundHostedServices(services);
                 services.AddSingleton<IGitReadRequestObserver>(_observer);
             });
         });
         _client = _factory.CreateClient();
+        _client.Timeout = CompletionTimeout;
         _client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
-        return Task.CompletedTask;
+        // Exercise the same catalogue discovery as the startup callback. It must
+        // leave both HEAD and the index untouched, regardless of who gets there first.
+        Assert.NotNull(Services.GetRequiredService<WorkbenchCatalogueService>().List(ProjectName, includeHistory: true));
+        Assert.Equal(seedHead, await Git("rev-parse", "HEAD"));
+        Assert.Equal("", await Git("status", "--porcelain=v1"));
     }
 
     [Fact]
@@ -123,7 +134,7 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
     {
         var git = Services.GetRequiredService<GitService>();
         await Get(Summary);
-        await git.RefreshSummariesAsync();
+        await git.RefreshSummariesAsync().WaitAsync(CompletionTimeout);
         var warm = await Get(Summary);
         git.ExpireShortLivedProbesForTesting();
         await Get(Summary);
@@ -139,18 +150,23 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
     public async Task Git_summary_refreshes_after_the_observed_head_moves()
     {
         var git = Services.GetRequiredService<GitService>();
-        await git.RefreshSummariesAsync();
+        await git.RefreshSummariesAsync().WaitAsync(CompletionTimeout);
         Write("src/change.txt", "change\n");
-        Git("add", "-A");
-        Git("commit", "-q", "-m", "move head");
+        await Git("add", "-A");
+        await Git("commit", "-q", "-m", "move head");
         Write("src/dirty.txt", "dirty\n");
-        Git("add", "src/dirty.txt");
+        await Git("add", "src/dirty.txt");
+
+        Assert.Equal("A  src/dirty.txt", await Git("status", "--porcelain=v1"));
+        var movedHead = await Git("rev-parse", "HEAD");
 
         // The request sees the moved ref and index files and queues the refresh.
         await Get(Summary);
-        var refreshed = await git.RefreshSummariesAsync();
+        var refreshed = await git.RefreshSummariesAsync().WaitAsync(CompletionTimeout);
 
         Assert.Equal(1, Assert.Single(refreshed).FilesChanged);
+        Assert.Equal(movedHead, await Git("rev-parse", "HEAD"));
+        Assert.Equal("A  src/dirty.txt", await Git("status", "--porcelain=v1"));
         AssertNoSpawns(Summary, expectedRequests: 1);
     }
 
@@ -158,9 +174,13 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
 
     private async Task<string> Get(string url)
     {
+        if (url == Summary) _summaryRequested = true;
         using var response = await _client!.GetAsync(url);
         var body = await response.Content.ReadAsStringAsync();
         Assert.True(response.StatusCode == HttpStatusCode.OK, $"{url} answered {(int)response.StatusCode}: {body}");
+        // TestServer can deliver the body before the middleware's finally has
+        // published the request evidence. Wait for that evidence, not a delay.
+        await _observer.WaitForCompletionAsync(url);
         return body;
     }
 
@@ -180,7 +200,7 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
         File.WriteAllText(path, content);
     }
 
-    private void Git(params string[] args)
+    private async Task<string> Git(params string[] args)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -191,16 +211,40 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
-        process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit(15_000);
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)}: {error}");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(CompletionTimeout);
+        }
+        catch (TimeoutException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync().WaitAsync(CompletionTimeout);
+            throw;
+        }
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)}: {await error}");
+        return (await output).TrimEnd('\r', '\n');
     }
 
     public async Task DisposeAsync()
     {
         _client?.Dispose();
-        if (_factory is not null) await _factory.DisposeAsync();
+        if (_factory is not null)
+        {
+            try
+            {
+                // A request can queue a refresh even if its assertion fails.
+                // Join it before disposing services or deleting its repository.
+                if (_summaryRequested)
+                    await Services.GetRequiredService<GitService>().RefreshSummariesAsync().WaitAsync(CompletionTimeout);
+            }
+            finally
+            {
+                await _factory.DisposeAsync();
+            }
+        }
+        GitService.InvalidateToplevelCache(_root);
         try { Directory.Delete(_root, recursive: true); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -208,6 +252,18 @@ public sealed class IdleReadRouteGitSpawnGuardTests : IAsyncLifetime
     private sealed class RecordingObserver : IGitReadRequestObserver
     {
         public ConcurrentQueue<GitReadRequestRecord> Records { get; } = new();
-        public void OnCompleted(GitReadRequestRecord record) => Records.Enqueue(record);
+        private readonly Channel<GitReadRequestRecord> _completed = Channel.CreateUnbounded<GitReadRequestRecord>();
+
+        public void OnCompleted(GitReadRequestRecord record)
+        {
+            Records.Enqueue(record);
+            _completed.Writer.TryWrite(record);
+        }
+
+        public async Task WaitForCompletionAsync(string route)
+        {
+            using var timeout = new CancellationTokenSource(CompletionTimeout);
+            while ((await _completed.Reader.ReadAsync(timeout.Token)).RouteTemplate != route) { }
+        }
     }
 }
