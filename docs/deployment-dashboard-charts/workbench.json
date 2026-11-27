@@ -4,10 +4,10 @@
   "title": "Deployment dashboard charts",
   "summary": "Workspace / Deployments as charts on one aggregate: delivery figures, a tile map of projects by environments (drift, last run, health, waiting approvals, not set up, missing backup), a release flow with a virtualised card list, a deploy timeline with a time brush, and an opt-in 3D deploy landscape; filters in the link, cross-filter, keyboard and table alternatives. Measured on 40 projects, 4 environments, 6 tenants, 2,000 runs and 5,000 cards: uPlot plus small own forms (29.9 kB gzip) recommended over Apache ECharts (220.7 kB) and Chart.js with plugins (82.1 kB), in line with the live structure canvas Dossier; 3D on Canvas 2D (2.8 kB) instead of three.js (131.8 kB) or echarts-gl. Persona assessments as validated view specifications on top of facts. Ten decisions, eight slices, first the overview and the release flow on real data with the aggregation API and budget tests.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-26T21:30:00Z",
+  "updatedAt": "2026-11-27T22:55:45Z",
   "sourceTaskKeys": [
     "AGT-3950"
   ],
@@ -373,5 +373,6 @@
       }
     }
   ],
-  "key": "AGT-W3471"
+  "key": "AGT-W3471",
+  "editedBy": "AGT-3950"
 }

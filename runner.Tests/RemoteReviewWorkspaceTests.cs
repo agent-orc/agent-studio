@@ -2114,6 +2114,84 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(0, CandidateVerification(evidence).ExitCode);
     }
 
+    [Theory]
+    [InlineData(ReviewBaselineModes.TestFailures)]
+    [InlineData(ReviewBaselineModes.ExitStatus)]
+    public async Task Declared_variable_regression_uses_pinned_control_environment_with_warm_cache(string mode)
+    {
+        const string definitionPath = ".agent-studio/project.yml";
+        static string Definition(string value) => $"""
+            schemaVersion: 1
+            stack: [dotnet]
+            commands:
+              prepare: .agent-studio/prepare
+              test: [echo test]
+            environment:
+              FEATURE_MODE: {value}
+            """;
+        var baselineSha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            [definitionPath] = Definition("healthy"),
+            [".agent-studio/prepare"] = "#!/bin/sh\nexit 0\n",
+        });
+        var seed = Path.Combine(_root, "seed");
+        Assert.Equal("healthy", ProjectDefinitionReader.ReadWorkspace(seed).Definition!.Environment["FEATURE_MODE"]);
+        var command = BaselineCommand(
+            "printf 'FEATURE_MODE=%s\\n' \"$FEATURE_MODE\"; " +
+            "if [ \"$FEATURE_MODE\" != healthy ]; then " +
+            "printf '  Failed Product.DeclaredMode [1 ms]\\n'; exit 1; fi") with { BaselineMode = mode };
+        var preparation = new ReviewPreparationCommandDto("prepare-env", PosixShell.RequirePath(),
+            ["-c", "printf 'prepare FEATURE_MODE=%s\\n' \"$FEATURE_MODE\""]);
+        var attempts = new List<ReviewExecutionEvidence>();
+        foreach (var value in new[] { "broken", "broken-again" })
+        {
+            await GitAsync(seed, "checkout", "-B", "task/" + value, baselineSha);
+            await File.WriteAllTextAsync(Path.Combine(seed, definitionPath), Definition(value));
+            await GitAsync(seed, "add", definitionPath);
+            await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "commit", "-m", "change only declared environment");
+            await GitAsync(seed, "push", "origin", "task/" + value);
+            var sha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+            var workspace = Workspace("declared-" + value, sha, [command], 26400,
+                resultRef: "refs/heads/task/" + value, integrationRef: "refs/heads/main",
+                preparation: [preparation]).Workspace;
+            await workspace.PrepareAsync(null!, default);
+            attempts.Add(await workspace.ExecutePlanAsync(default));
+            await workspace.CleanupAsync();
+        }
+
+        Assert.All(attempts, evidence => Assert.Equal("ProductFailure", evidence.Outcome));
+        for (var index = 0; index < attempts.Count; index++)
+        {
+            var evidence = attempts[index];
+            Assert.Equal("ProductFailure", evidence.Outcome);
+            var candidate = CandidateVerification(evidence);
+            Assert.Equal(0, candidate.BaselineExitCode);
+            Assert.Equal(index == 1, candidate.BaselineCacheHit);
+            if (!ReviewBaselineModes.IsExitStatus(mode))
+                Assert.Contains("Product.DeclaredMode", candidate.NewFailures!);
+            var baseline = Assert.Single(evidence.Commands, item => item.Phase == "verification"
+                && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+            Assert.Equal(baselineSha, baseline.HeadBefore);
+            var declared = new Dictionary<string, string> { ["FEATURE_MODE"] = "healthy" };
+            var sharedAllowlist = TestEnvelope.NamesDigest(
+                TestEnvelope.BuildEnvironment(declared, "home", "temp").Keys.Append("TEST_ENVELOPE_CGROUP"));
+            Assert.Equal(sharedAllowlist, baseline.Envelope!.AllowlistDigest);
+            Assert.Equal(sharedAllowlist, candidate.Envelope!.AllowlistDigest);
+            Assert.Equal(TestEnvelope.DeclaredDigest(new Dictionary<string, string> { ["FEATURE_MODE"] = "healthy" }),
+                baseline.Envelope!.DeclaredEnvironmentDigest);
+            Assert.Equal(TestEnvelope.DeclaredDigest(new Dictionary<string, string>
+                { ["FEATURE_MODE"] = index == 0 ? "broken" : "broken-again" }),
+                candidate.Envelope!.DeclaredEnvironmentDigest);
+            Assert.Equal(RemoteReviewWorkspace.HashText($"FEATURE_MODE=healthy{Environment.NewLine}Total tests: 1{Environment.NewLine}"),
+                Assert.Single(evidence.Artifacts, artifact => artifact.Name ==
+                    $"{baseline.WorkspaceRole}.{command.StepId}.stdout.log").Sha256);
+            Assert.All(evidence.Commands.Where(item => item.Phase == "preparation"
+                && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)), item =>
+                Assert.Equal(baseline.Envelope.DeclaredEnvironmentDigest, item.Envelope!.DeclaredEnvironmentDigest));
+        }
+    }
+
     [Fact]
     public async Task Baseline_result_is_reused_for_same_repository_sha_and_command()
     {
@@ -2647,6 +2725,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [InlineData("other baseline", false)]
     [InlineData("other command", false)]
     [InlineData("other toolchain", false)]
+    [InlineData("other declaration", false)]
+    [InlineData("old environment contract", false)]
+    [InlineData("other environment contract", false)]
+    [InlineData("missing envelope", false)]
+    [InlineData("wrong measured declaration", false)]
     [InlineData("older parser", false)]
     [InlineData("parser version 3", false)]
     [InlineData("expired", false)]
@@ -2661,7 +2744,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var now = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);
         Assert.Equal(TimeSpan.FromHours(24), ReviewBaselineResultCache.MaximumAge);
-        var key = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain");
+        var key = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain",
+            TestEnvelope.DeclaredDigest(TestEnvelope.EmptyEnvironment), ReviewBaselineResultCache.EnvironmentContractVersion);
         var entry = Entry(key, now.AddHours(-2));
         var mode = ReviewBaselineModes.TestFailures;
         entry = variant switch
@@ -2671,6 +2755,12 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "other baseline" => entry with { BaselineSha = new string('b', 40) },
             "other command" => entry with { CommandHash = "other-command" },
             "other toolchain" => entry with { ToolchainFingerprint = "other-toolchain" },
+            "other declaration" => entry with { DeclaredEnvironmentDigest = "other-declaration" },
+            "old environment contract" => entry with { DeclaredEnvironmentDigest = null, EnvironmentContractVersion = 0 },
+            "other environment contract" => entry with { EnvironmentContractVersion = key.EnvironmentContractVersion + 1 },
+            "missing envelope" => entry with { Envelope = null },
+            "wrong measured declaration" => entry with
+                { Envelope = entry.Envelope! with { DeclaredEnvironmentDigest = "candidate-declaration" } },
             "older parser" => entry with { ParserVersion = 2 },
             "parser version 3" => entry with { ParserVersion = 3 },
             "expired" => entry with { CreatedAt = now.AddHours(-25) },
@@ -2710,11 +2800,25 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Baseline_cache_path_binds_declaration_and_environment_contract()
+    {
+        var key = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain",
+            "healthy-digest", ReviewBaselineResultCache.EnvironmentContractVersion);
+        var path = ReviewBaselineResultCache.EntryPath(_root, key);
+
+        Assert.NotEqual(path, ReviewBaselineResultCache.EntryPath(_root,
+            key with { DeclaredEnvironmentDigest = "broken-digest" }));
+        Assert.NotEqual(path, ReviewBaselineResultCache.EntryPath(_root,
+            key with { EnvironmentContractVersion = 0 }));
+    }
+
+    [Fact]
     public async Task Baseline_cache_prune_drops_results_the_integration_branch_no_longer_contains()
     {
         var now = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);
         var root = Path.Combine(_root, "baseline-cache");
-        var onBranch = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain");
+        var onBranch = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain",
+            TestEnvelope.DeclaredDigest(TestEnvelope.EmptyEnvironment), ReviewBaselineResultCache.EnvironmentContractVersion);
         var rebasedAway = onBranch with { BaselineSha = new string('b', 40) };
         var stale = onBranch with { BaselineSha = new string('c', 40) };
         await ReviewBaselineResultCache.WriteAsync(
@@ -2761,7 +2865,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "baseline stdout",
             "baseline stderr",
             createdAt,
-            ReviewBaselineModes.TestFailures);
+            ReviewBaselineModes.TestFailures,
+            key.DeclaredEnvironmentDigest,
+            key.EnvironmentContractVersion,
+            new PostMergeEnvelopeFingerprint("names", key.DeclaredEnvironmentDigest!, "none", null,
+                TestEnvelope.ProcessorCount, null, "verify", null, null));
 
     /// <summary>
     /// Rewrites every stored baseline entry in place and keeps its CreatedAt,

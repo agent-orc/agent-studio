@@ -6,14 +6,16 @@ namespace AgentRunner;
 /// <summary>
 /// Identity of one cached baseline verify result. These are exactly the inputs
 /// the review grade already records for a baseline-compared command: the
-/// repository, the resolved merge-base SHA, the verify command line, and the
-/// toolchain that executed it.
+/// repository, resolved merge-base SHA, command line, pinned environment
+/// declaration, envelope contract version and toolchain that executed it.
 /// </summary>
 internal sealed record ReviewBaselineCacheKey(
     string RepositoryId,
     string BaselineSha,
     string CommandHash,
-    string ToolchainFingerprint);
+    string ToolchainFingerprint,
+    string? DeclaredEnvironmentDigest = null,
+    int EnvironmentContractVersion = 0);
 
 /// <summary>
 /// One baseline verify result on disk: the parsed failure list used for
@@ -34,7 +36,10 @@ internal sealed record BaselineCacheEntry(
     string StdOut,
     string StdErr,
     DateTime CreatedAt,
-    string? BaselineMode = null);
+    string? BaselineMode = null,
+    string? DeclaredEnvironmentDigest = null,
+    int EnvironmentContractVersion = 0,
+    PostMergeEnvelopeFingerprint? Envelope = null);
 
 internal sealed record ReviewBaselineCachePruneResult(
     int InspectedBaselines,
@@ -55,6 +60,10 @@ internal sealed record ReviewBaselineCachePruneResult(
 /// </summary>
 internal static class ReviewBaselineResultCache
 {
+    // Version 2 resolves declarations per pinned tree. Version 0/1 results may
+    // have measured the candidate declaration on the baseline and are invalid.
+    internal const int EnvironmentContractVersion = 2;
+
     /// <summary>
     /// Bounded lifetime of a cached result. An entry can outlive the facts it
     /// was produced from (host toolchain drift the fingerprint does not see,
@@ -75,7 +84,7 @@ internal static class ReviewBaselineResultCache
     internal static string EntryPath(string root, ReviewBaselineCacheKey key)
         => Path.Combine(
             BaselineDirectory(root, key),
-            $"{key.CommandHash}.{Short(key.ToolchainFingerprint)}.json");
+            $"{key.CommandHash}.env{key.EnvironmentContractVersion}.{key.DeclaredEnvironmentDigest ?? "legacy"}.{Short(key.ToolchainFingerprint)}.json");
 
     /// <summary>
     /// Pure reuse decision. Every key input is re-checked against the stored
@@ -90,7 +99,13 @@ internal static class ReviewBaselineResultCache
         int parserVersion,
         string baselineMode,
         DateTime utcNow)
-        => entry.ParserVersion == parserVersion
+        => entry.EnvironmentContractVersion == EnvironmentContractVersion
+           && entry.EnvironmentContractVersion == key.EnvironmentContractVersion
+           && !string.IsNullOrEmpty(key.DeclaredEnvironmentDigest)
+           && string.Equals(entry.DeclaredEnvironmentDigest, key.DeclaredEnvironmentDigest, StringComparison.Ordinal)
+           && entry.Envelope is not null
+           && string.Equals(entry.Envelope.DeclaredEnvironmentDigest, key.DeclaredEnvironmentDigest, StringComparison.Ordinal)
+           && entry.ParserVersion == parserVersion
            && string.Equals(entry.RepositoryId, key.RepositoryId, StringComparison.Ordinal)
            && string.Equals(entry.BaselineSha, key.BaselineSha, StringComparison.OrdinalIgnoreCase)
            && string.Equals(entry.CommandHash, key.CommandHash, StringComparison.Ordinal)

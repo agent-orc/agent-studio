@@ -465,6 +465,97 @@ public sealed class GateVerificationAuthorityTests
         Assert.Equal(selected.Subject.SubjectId, claim.Subject!.SubjectId);
     }
 
+    [Fact]
+    public async Task Verification_project_is_canonical_immutable_and_independent_of_a_colliding_task_id()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new("Workspace"), "test", default);
+        var alpha = await store.CreateProjectAsync(new(workspace.WorkspaceId, "Alpha", "ALP"), "test", default);
+        var beta = await store.CreateProjectAsync(new(workspace.WorkspaceId, "Beta", "BET"), "test", default);
+        var task = await store.CreateTaskAsync(alpha.ProjectId, new("Collision", "body", "1-backlog"), "test", default);
+        var registered = await store.RegisterProjectRepositoryAsync(new(beta.ProjectId, workspace.WorkspaceId,
+            "Beta", "BET", "https://example.invalid/beta.git", "develop"), "test", default);
+        var plan = Plan();
+        var request = new CreateGateSubjectRequest(task.TaskId, "merge:collision", registered.Registration.RepositoryId,
+            registered.Registration.RepositoryUrl, Sha, Sha, null, null, GateRules.PlanHash(plan), "policy", "1", "audit",
+            plan, clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: GateSubjectKinds.Merge);
+        var subject = await store.CreateGateSubjectAsync(request, "monolith", default);
+        Assert.Equal(beta.ProjectId, subject.Subject.ProjectId);
+        Assert.Equal(subject.Subject.SubjectId,
+            (await store.CreateGateSubjectAsync(request, "monolith", default)).Subject.SubjectId);
+        var mismatch = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CreateGateSubjectAsync(
+            request with { ProjectId = alpha.ProjectId }, "monolith", default));
+        Assert.Equal("gate-project-mismatch", mismatch.Code);
+
+        // A persisted pre-upgrade verification subject has no ProjectId. Its
+        // registered repository, never the colliding card ID, supplies scope.
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE gate_subjects SET subject_json = json_remove(subject_json, '$.projectId');";
+            await command.ExecuteNonQueryAsync();
+        }
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        var claimRequest = new GateClaimRequest("gate-a", "instance-a");
+        Assert.Equal("empty", (await store.ClaimGateAsync(claimRequest, "gate-a", default,
+            new(false, new HashSet<string> { alpha.ProjectId }))).Status);
+        var claim = await store.ClaimGateAsync(claimRequest, "gate-a", default,
+            new(false, new HashSet<string> { beta.ProjectId }));
+        Assert.Equal(subject.Subject.SubjectId, claim.Subject!.SubjectId);
+        Assert.Equal(beta.ProjectId, claim.Subject.ProjectId);
+    }
+
+    [Fact]
+    public async Task Unresolved_verification_project_fails_closed_even_for_an_all_projects_runner()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var subject = await CreateMergeAsync(store, clock, 1);
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        var request = new GateClaimRequest("gate-a", "instance-a");
+        Assert.Equal("empty", (await store.ClaimGateAsync(request, "gate-a", default,
+            new(true, new HashSet<string>()))).Status);
+        Assert.Equal(GateStates.Queued, (await store.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase);
+        Assert.Equal(subject.Subject.SubjectId,
+            (await store.ClaimGateAsync(request, "monolith", default)).Subject!.SubjectId);
+    }
+
+    [Fact]
+    public async Task Explicit_verification_project_is_frozen_and_claimable_beyond_a_forbidden_queue_page()
+    {
+        using var temp = new TempDirectory();
+        var clock = Clock();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new("Workspace"), "test", default);
+        var alpha = await store.CreateProjectAsync(new(workspace.WorkspaceId, "Alpha", "ALP"), "test", default);
+        var beta = await store.CreateProjectAsync(new(workspace.WorkspaceId, "Beta", "BET"), "test", default);
+        var plan = Plan();
+        CreateGateSubjectRequest Request(int i, string project) => new("opaque-job", "merge:" + i, Repository,
+            "https://example.invalid/product.git", Sha, Sha, null, null, GateRules.PlanHash(plan), "policy", "1", "audit",
+            plan, clock.GetUtcNow().UtcDateTime.AddMinutes(15), Kind: GateSubjectKinds.Merge, ProjectId: project);
+        for (var i = 0; i < 33; i++)
+            await store.CreateGateSubjectAsync(Request(i, beta.ProjectId), "monolith", default);
+        var request = Request(33, alpha.ProjectId);
+        var subject = await store.CreateGateSubjectAsync(request, "monolith", default);
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CreateGateSubjectAsync(
+            request with { ProjectId = beta.ProjectId }, "monolith", default));
+        Assert.Equal("gate-subject-conflict", conflict.Code);
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CreateGateSubjectAsync(
+            Request(34, "not-a-project"), "monolith", default));
+        await RegisterGateAsync(store, clock, "gate-a", "instance-a", "host-a");
+        var claim = await store.ClaimGateAsync(new("gate-a", "instance-a"), "gate-a", default,
+            new(false, new HashSet<string> { alpha.ProjectId }));
+        Assert.Equal(subject.Subject.SubjectId, claim.Subject!.SubjectId);
+        Assert.Equal(alpha.ProjectId, claim.Subject.ProjectId);
+    }
+
     private static async Task<(GateClaimResponse Claim, byte[] Content)> ClaimMergeAsync(
         TaskServerStore store, ManualTimeProvider clock, string runner, string host)
     {
