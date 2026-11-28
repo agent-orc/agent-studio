@@ -83,6 +83,8 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
     private readonly TimeProvider _clock;
     private readonly Func<BuildTestGateRequest, CancellationToken, Task<IReadOnlyList<ProjectTestSuite>>> _subjectSuites;
 
+    internal IReadOnlyList<GateShardHost> AdditionalGateHosts => _additional;
+
     public ShardedRemoteGateTransport(
         ConventionalGateTransport primary,
         GateSlotUsageTracker primarySlots,

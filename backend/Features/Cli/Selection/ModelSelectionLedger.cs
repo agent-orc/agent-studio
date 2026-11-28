@@ -60,13 +60,15 @@ public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
             Reason = entry.Reason,
             Quota = quota is null ? null : new ModelSelectionQuota(entry.From.CliType,
                 quota.Window ?? projection?.WindowLabel, quota.UsedPct ?? projection?.CurrentUsedPct, projection?.CapPct, projection?.ProjectedUsedPct,
-                projection?.ResetAt is { } reset ? new DateTimeOffset(DateTime.SpecifyKind(reset, DateTimeKind.Utc)) : null, null, quota.WindowPaces),
+                projection?.ResetAt is { } reset ? new DateTimeOffset(DateTime.SpecifyKind(reset, DateTimeKind.Utc)) : null, null, quota.WindowPaces)
+            { SubscriptionKey = entry.QuotaSubscriptionKey },
             Equivalence = entry.Equivalence is null ? null : new ModelSelectionEquivalence(
                 entry.Equivalence.CapabilityClass, entry.Equivalence.CatalogueVersion, entry.Equivalence.Source),
             ReturnToPrimaryAt = entry.ReturnToPrimaryAt is { } returnAt
                 ? new DateTimeOffset(DateTime.SpecifyKind(returnAt, DateTimeKind.Utc)) : null,
             ClosesId = entry.ClosesId,
             NearbyResetWait = entry.NearbyResetWait,
+            AdmissionOutcome = entry.AdmissionOutcome?.ToString().ToLowerInvariant(),
             PricePerMTok = entry.FromPricePerMTok is null && entry.ToPricePerMTok is null
                 ? null : new ModelSelectionPrice((double?)entry.FromPricePerMTok, (double?)entry.ToPricePerMTok),
         };

@@ -182,7 +182,8 @@ public sealed record HostTelemetrySnapshotDto(
     HostPlacementDto? Placement = null,
     long? NetworkReceiveBytesPerSecond = null,
     long? NetworkTransmitBytesPerSecond = null,
-    double? TaskServerRoundTripMs = null, HostStructureReading? Structure = null, HeartbeatPeer? Peer = null);
+    double? TaskServerRoundTripMs = null, HostStructureReading? Structure = null, HeartbeatPeer? Peer = null,
+    long? SwapUsedBytes = null, long? SwapTotalBytes = null);
 
 /// <summary>
 /// The one-shot claim route as this runner observed it while it answered

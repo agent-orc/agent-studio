@@ -421,7 +421,8 @@ internal static class RunnerCapabilityProbe
                 Filesystems: sample.Filesystems,
                 Placement: sample.Placement,
                 NetworkReceiveBytesPerSecond: sample.NetworkReceiveBytesPerSecond,
-                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond);
+                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond,
+                SwapUsedBytes: sample.SwapUsedBytes, SwapTotalBytes: sample.SwapTotalBytes);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
