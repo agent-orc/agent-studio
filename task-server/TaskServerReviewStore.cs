@@ -1441,6 +1441,20 @@ public sealed partial class TaskServerStore
                                     || !string.Equals(other.TreeBefore, command.TreeBefore, StringComparison.OrdinalIgnoreCase)))
                           : !string.Equals(command.TreeBefore, request.Workspace.TreeHash, StringComparison.OrdinalIgnoreCase)))))
             return ("ReviewInfra", "CommandSubjectMismatch");
+        // The lease and immutable checkout already match. A Codex attempt
+        // stopped during checkout access cannot supply a complete review.
+        if (ReviewCheckoutReadPolicy.IsFailure(request))
+        {
+            var attemptedCodexAspect = request.Commands.Any(command =>
+                command is { Phase: "verification", WorkspaceRole: "candidate" }
+                && ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && string.Equals(command.CliType ?? command.FileName, "codex", StringComparison.OrdinalIgnoreCase)
+                && subject.Plan.Commands.Any(planned => planned.StepId == command.StepId
+                    && planned.Aspect == command.Aspect && ReviewCommandKinds.IsAgent(planned.ExecutionKind)));
+            return ("ReviewInfra", attemptedCodexAspect
+                ? ReviewCheckoutReadPolicy.FailureClassification
+                : "IncompleteCommandEvidence");
+        }
         if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
             return ("ReviewInfra", "ToolUnavailable");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
@@ -1455,13 +1469,8 @@ public sealed partial class TaskServerStore
             && request.FailureClassification == ConceptRemoteReviewPolicy.MaterialUnavailable
             && subject.Plan.Commands.Any(command => command.Aspect == "concept-fit"
                 && ReviewCommandKinds.IsAgent(command.ExecutionKind) && candidateSteps.Contains(command.StepId));
-        var stoppedForCheckout = request.Outcome == "ReviewInfra"
-            && request.FailureClassification == ReviewCheckoutReadPolicy.FailureClassification
-            && subject.Plan.Commands.Any(command => ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                && candidateSteps.Contains(command.StepId));
-        var stoppedForAgentInput = stoppedForMaterial || stoppedForCheckout;
         var verdictAspects = request.Verdicts.Select(verdict => verdict.Aspect).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!stoppedForAgentInput && subject.Plan.RequiredAspects.Any(aspect => !verdictAspects.Contains(aspect)))
+        if (!stoppedForMaterial && subject.Plan.RequiredAspects.Any(aspect => !verdictAspects.Contains(aspect)))
             return ("ReviewInfra", "IncompleteReviewReport");
         var commandKeys = request.Commands
             .Select(command => $"{command.Phase}\0{command.WorkspaceRole}\0{command.StepId}")
@@ -1469,7 +1478,7 @@ public sealed partial class TaskServerStore
         if (commandKeys.Count != request.Commands.Count)
             return ("ReviewInfra", "DuplicateCommandEvidence");
         if (subject.Plan.Commands.Any(command => command.Required && !candidateSteps.Contains(command.StepId)
-                && !(stoppedForAgentInput && ReviewCommandKinds.IsAgent(command.ExecutionKind))))
+                && !(stoppedForMaterial && ReviewCommandKinds.IsAgent(command.ExecutionKind))))
             return ("ReviewInfra", "IncompleteCommandEvidence");
         var candidatePreparation = request.Commands
             .Where(command => command.Phase == "preparation" && command.WorkspaceRole == "candidate")
@@ -1517,8 +1526,6 @@ public sealed partial class TaskServerStore
                 !artifactDigests.Contains(command.StdoutSha256)
                 || !artifactDigests.Contains(command.StderrSha256)))
             return ("ReviewInfra", "ArtifactEvidenceIncomplete");
-        if (stoppedForCheckout)
-            return ("ReviewInfra", ReviewCheckoutReadPolicy.FailureClassification);
         if (request.Commands.Any(command => command.Signal is not null || command.ExitCode is null or < 0))
             return ("ReviewInfra", "CommandTerminated");
         if (request.Verdicts.Any(verdict =>

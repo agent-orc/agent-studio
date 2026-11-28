@@ -357,8 +357,10 @@ A denied bubblewrap namespace setup can fail a tool call while the Codex
 process exits successfully. The runner uses failed command events as evidence
 and reports `ReviewInfra / ReviewerCheckoutReadUnavailable` with the lease's
 host and the command diagnostic. The retry excludes the hosts that failed
-this way earlier in the same chain. The report still includes the command
-and artifact digests even if the aspect stopped before a verdict.
+this way earlier in the same chain. Lease, subject and library-step checks
+still apply. Once the failure is attributed, partial review evidence and
+generic toolchain or verdict classification cannot replace the host diagnosis.
+The report carries the command and artifact digests collected before the stop.
 
 Operator review retry checks the fenced lane change for a review settlement
 park and the current delivery identity. The platform can refresh the result

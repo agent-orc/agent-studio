@@ -249,6 +249,11 @@ public static class ReviewMeasurementPolicy
     public static Contract.ReviewReportRequest NormalizeReport(
         Contract.ReviewReportRequest request, Contract.ReviewPlanDto? plan)
     {
+        // Measurements from a stopped attempt cannot replace the host failure
+        // that keeps its bounded retry off the same host.
+        if (Contract.ReviewCheckoutReadPolicy.IsFailure(request))
+            return request;
+
         var commands = request.Commands.Select(command => IsRedBaseline(
             plan?.Commands.FirstOrDefault(step => step.StepId == command.StepId), command, request.Commands)
             ? command with { Diagnosis = new("IntegrationBranchDefect", 1,

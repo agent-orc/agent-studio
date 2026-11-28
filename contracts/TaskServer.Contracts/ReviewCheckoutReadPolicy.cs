@@ -4,6 +4,9 @@ public static class ReviewCheckoutReadPolicy
 {
     public const string FailureClassification = "ReviewerCheckoutReadUnavailable";
 
+    public static bool IsFailure(ReviewReportRequest report)
+        => report.Outcome == "ReviewInfra" && report.FailureClassification == FailureClassification;
+
     // Older plans have no declaration. Their agent prompts can use the
     // checkout, including legacy concept prompts upgraded by the executor.
     public static bool NeedsSandbox(ReviewCommandDto command, string? provider)

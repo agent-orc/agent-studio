@@ -387,6 +387,13 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-agt-4429-review-report-validation">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-report-validation</span></td>
+          <td>A review report could lose the Codex checkout-read failure while settling an attempt that had stopped without complete review evidence.</td>
+          <td>General toolchain, measurement and evidence checks could overwrite the classification that excludes the failed host from retry placement.</td>
+          <td>The regression fixture settles as <code>ReviewInfra / ReviewerCheckoutReadUnavailable</code>, retries on a different host and reaches Escalated after the bounded attempts are exhausted.</td>
+        </tr>
         <tr id="case-agt-4392-codex-review-checkout-sandbox">
           <td>2026-11-28</td>
           <td><code>AGT-4392</code><br><span class="small">codex-review-checkout-sandbox</span></td>

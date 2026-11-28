@@ -722,7 +722,7 @@ public static class ReviewVerdictCitationPolicy
                 && string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
                     ? "Pass"
                     : request.Outcome,
-            FailureClassification = downgraded && !stillBlocked
+            FailureClassification = downgraded && !stillBlocked && !ReviewCheckoutReadPolicy.IsFailure(request)
                 ? BlockWithoutCitation
                 : request.FailureClassification,
         };

@@ -348,11 +348,25 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
         Assert.True(claim.Status == "claimed", claim.Message ?? claim.Reason);
 
+        var request = ExecutorRestartedReport(claim) with { FailureClassification = classification };
+        if (classification == Contract.ReviewCheckoutReadPolicy.FailureClassification)
+        {
+            request = request with
+            {
+                Summary = "The reviewer could not read the checkout on host 'review-host': bwrap: Operation not permitted",
+                Commands = [new Contract.ReviewCommandEvidenceDto(
+                    "code-quality", "code-quality", "codex", [],
+                    claim.Subject!.ExpectedResultSha, request.Workspace.ActualHead, request.Workspace.TreeHash,
+                    _time.GetUtcNow().UtcDateTime, _time.GetUtcNow().UtcDateTime, 127, null,
+                    new string('a', 64), new string('b', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect)],
+            };
+        }
         var reported = await http.PostAsJsonAsync(
-            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report",
-            ExecutorRestartedReport(claim) with { FailureClassification = classification });
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", request);
         reported.EnsureSuccessStatusCode();
         var report = (await reported.Content.ReadFromJsonAsync<Contract.ReviewReportDto>())!;
+        Assert.Equal(classification, report.FailureClassification);
         Assert.True(report.RetryScheduled);
         Assert.Equal(TaskStates.AutoReview, report.TaskState);
         return claim.Attempt.AttemptId;

@@ -1420,8 +1420,10 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.Equal("host-b", second.Lease!.HostId);
     }
 
-    [Fact]
-    public async Task Checkout_read_failure_keeps_its_host_diagnostic_and_retries_on_another_host()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Checkout_read_failure_keeps_its_host_diagnostic_and_retries_on_another_host(bool partial)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
@@ -1429,7 +1431,8 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         const string brief = "Review the delivered Dossier.";
         var version = Hash(brief);
         await SeedReviewSubjectAsync(store, plan: new ReviewPlanDto(
-            [new ReviewCommandDto("concept-fit", "concept-fit", "codex", [],
+            [new ReviewCommandDto("verify", "build-tests", "review-tool", []),
+             new ReviewCommandDto("concept-fit", "concept-fit", "codex", [],
                 ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: brief, CliType: "codex", Model: "gpt-5.4-mini")],
             ["concept-fit"], IntegrationRef: "refs/heads/develop",
             LibraryVersion: ReviewLibraryStepPolicy.Version, BriefSha256: version),
@@ -1444,13 +1447,19 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         await AdvertiseCheckoutAsync(store, "review-d", "instance-d", "ready");
         var first = await store.ClaimReviewAsync(new("review-a", "instance-a"), "review-a", default);
         const string summary = "The reviewer could not read the checkout on host 'host-a': bwrap: Operation not permitted";
-        ReviewReportRequest Failure(ReviewClaimResponse claim) => PassingReport(claim) with
+        ReviewReportRequest Failure(ReviewClaimResponse claim)
         {
-            Outcome = "ReviewInfra",
-            FailureClassification = ReviewCheckoutReadPolicy.FailureClassification,
-            Summary = summary.Replace("host-a", claim.Lease!.HostId, StringComparison.Ordinal),
-            Verdicts = [],
-        };
+            var report = PassingReport(claim);
+            return report with
+            {
+                Outcome = "ReviewInfra",
+                FailureClassification = ReviewCheckoutReadPolicy.FailureClassification,
+                Summary = summary.Replace("host-a", claim.Lease!.HostId, StringComparison.Ordinal),
+                Verdicts = [],
+                Commands = partial ? report.Commands.Where(command => command.StepId == "concept-fit").ToArray() : report.Commands,
+                Artifacts = partial ? [] : report.Artifacts,
+            };
+        }
         var report = await store.ReportReviewAsync(first.Attempt!.AttemptId, Failure(first), "review-a", default);
 
         Assert.Equal("ReviewInfra", report.Outcome);

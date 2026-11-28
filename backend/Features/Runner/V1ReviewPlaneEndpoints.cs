@@ -1054,9 +1054,9 @@ public static class V1ReviewPlaneEndpoints
                     "Review command evidence does not match the leased library step digest."));
             }
 
-            if (Contract.ReviewToolchainFailurePolicy.IsUnavailable(
-                    request.Commands,
-                    request.Artifacts))
+            if (!Contract.ReviewCheckoutReadPolicy.IsFailure(request)
+                && Contract.ReviewToolchainFailurePolicy.IsUnavailable(
+                    request.Commands, request.Artifacts))
             {
                 request = request with
                 {
@@ -1124,7 +1124,7 @@ public static class V1ReviewPlaneEndpoints
                     string.Equals(verdict.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(verdict.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase))
                     .Select(verdict => verdict.Aspect).ToArray();
-                if (exhaustedAspects.Length > 0)
+                if (exhaustedAspects.Length > 0 && !Contract.ReviewCheckoutReadPolicy.IsFailure(request))
                     request = request with
                     {
                         Outcome = "ReviewInfra",
@@ -1300,7 +1300,8 @@ public static class V1ReviewPlaneEndpoints
                 concernRoundsUsed: 0,
                 maxConcernRounds: 1);
             var aspectRetryExhausted =
-                reviewFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect;
+                reviewFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect
+                && !Contract.ReviewCheckoutReadPolicy.IsFailure(request);
             if (aspectRetryExhausted)
             {
                 // RemoteReviewWorkspace already reran each malformed aspect once.
