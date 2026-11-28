@@ -187,11 +187,12 @@ public static partial class ObservedStructureProjection
         StructureObservedContext context)
     {
         var machine = get(studioId);
-        // Performance: the API's own sample, else a daemon that reports from the same kernel.
-        var performance = studio.Performance ?? hostReports
-            .Where(item => placements.GetValueOrDefault(item.Key)?.KernelId is { } kernel
-                && kernel == studio.Placement?.KernelId)
-            .Select(item => Performance(item.Value)).FirstOrDefault(value => value is not null);
+        var selfPerformance = studio.Performance is { } self
+            ? self with { Sample = new(self.ObservedAt, SelfRef, self.ObservedAt + Fresh) } : null;
+        var kernelReports = hostReports.Where(item => placements.GetValueOrDefault(item.Key)?.KernelId is { } kernel
+            && kernel == studio.Placement?.KernelId).SelectMany(item => item.Value);
+        var performance = NewestPerformance(selfPerformance, machine.Facts?.Performance);
+        performance = NewestPerformance(performance, Performance(kernelReports));
         put(machine with
         {
             // A declared Studio server that no host reports for is still observed: the API runs on it.
@@ -203,7 +204,7 @@ public static partial class ObservedStructureProjection
                     : studio.Placement?.Kind == HostPlacementKinds.Container ? null : studio.Placement?.Kind,
                 Virtualization = studio.Placement?.MachineVirtualization,
                 LastSeenAt = machine.Facts?.LastSeenAt ?? studio.ObservedAt,
-                Performance = machine.Facts?.Performance ?? performance,
+                Performance = performance,
                 DataLocations = context.DataLocations,
                 Sample = new(studio.ObservedAt, SelfRef, studio.ObservedAt + Fresh),
             },
@@ -293,14 +294,16 @@ public static partial class ObservedStructureProjection
             reports.Sum(report => report.ActiveGateCount) + (gate?.Busy ?? 0), verdict.Reason);
     }
 
-    private static StructurePerformanceFacts? Performance(IReadOnlyList<RunnerCapabilitySnapshotDto> reports)
+    private static StructurePerformanceFacts? NewestPerformance(StructurePerformanceFacts? current, StructurePerformanceFacts? candidate)
+        => current is null || candidate?.ObservedAt > current.ObservedAt ? candidate : current;
+
+    private static StructurePerformanceFacts? Performance(IEnumerable<RunnerCapabilitySnapshotDto> reports)
     {
         // A re-adopted slot record carries no machine reading; skip it.
-        var telemetry = reports.Select(report => report.Telemetry)
-            .Where(value => value is not null && (value.CpuCores > 0 || value.MemoryTotalBytes is not null
+        var report = reports.Where(r => r.Telemetry is { } value && (value.CpuCores > 0 || value.MemoryTotalBytes is not null
                 || value.Filesystems is { Count: > 0 }))
-            .OrderByDescending(value => value!.ObservedAt).FirstOrDefault();
-        if (telemetry is null) return null;
+            .OrderByDescending(r => r.Telemetry!.ObservedAt).ThenBy(r => r.RunnerId, StringComparer.Ordinal).FirstOrDefault();
+        if (report?.Telemetry is not { } telemetry) return null;
         var disks = telemetry.Filesystems is { Count: > 0 } filesystems
             ? filesystems.Where(item => item.TotalBytes > 0).Select(item => new StructureDiskFact(item.Path, item.Purpose,
                 Math.Max(0, item.TotalBytes - item.FreeBytes), item.FreeBytes, item.TotalBytes)).ToArray()
@@ -309,7 +312,8 @@ public static partial class ObservedStructureProjection
                 : null;
         return new(telemetry.ObservedAt, telemetry.CpuPercent, telemetry.CpuCores > 0 ? telemetry.CpuCores : null,
             telemetry.Load1, telemetry.Load5, telemetry.Load15, telemetry.MemoryUsedBytes, telemetry.MemoryTotalBytes,
-            disks, telemetry.NetworkReceiveBytesPerSecond, telemetry.NetworkTransmitBytesPerSecond);
+            disks, telemetry.NetworkReceiveBytesPerSecond, telemetry.NetworkTransmitBytesPerSecond,
+            new(telemetry.ObservedAt, report.RunnerId, telemetry.ObservedAt + Fresh));
     }
 
     private static StructureNodeFacts HostFacts(string hostId, IReadOnlyList<RunnerCapabilitySnapshotDto> reports,

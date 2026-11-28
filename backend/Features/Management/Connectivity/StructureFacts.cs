@@ -41,10 +41,12 @@ public sealed record StructurePerformanceFacts(
     long? MemoryTotalBytes = null,
     IReadOnlyList<StructureDiskFact>? Disks = null,
     long? NetworkReceiveBytesPerSecond = null,
-    long? NetworkTransmitBytesPerSecond = null);
+    long? NetworkTransmitBytesPerSecond = null,
+    StructureStamp? Sample = null);
 
 /// <summary>One mounted file system. <c>Purpose</c> names what the installation keeps there.</summary>
-public sealed record StructureDiskFact(string Mount, string Purpose, long UsedBytes, long FreeBytes, long TotalBytes);
+public sealed record StructureDiskFact(string Mount, string Purpose, long UsedBytes, long FreeBytes, long TotalBytes,
+    StructureStamp? Sample = null);
 
 /// <summary>Slots and the cards that run on the node right now.</summary>
 public sealed record StructureCapacityFacts(int BusySlots, int? FreeSlots, int? TotalSlots,

@@ -118,7 +118,12 @@
           "memoryTotalBytes": 52637257728,
           "disks": null,
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:30.7584512Z",
+            "observedBy": "review-runner-2",
+            "freshUntil": "2026-11-28T02:06:00.7584512Z"
+          }
         },
         "capacity": null,
         "release": null,
@@ -194,11 +199,21 @@
               "purpose": "gate work",
               "usedBytes": 153966235648,
               "freeBytes": 110036619264,
-              "totalBytes": 264002854912
+              "totalBytes": 264002854912,
+              "sample": {
+                "observedAt": "2026-11-28T02:04:34.9187597Z",
+                "observedBy": "gate SSH disk probe",
+                "freshUntil": "2026-11-28T02:06:04.9187597Z"
+              }
             }
           ],
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:34.9187597Z",
+            "observedBy": "gate SSH disk probe",
+            "freshUntil": "2026-11-28T02:06:04.9187597Z"
+          }
         },
         "capacity": null,
         "release": null,
@@ -272,7 +287,12 @@
           "memoryTotalBytes": 52637257728,
           "disks": null,
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:10.5568144Z",
+            "observedBy": "review-runner-1",
+            "freshUntil": "2026-11-28T02:05:40.5568144Z"
+          }
         },
         "capacity": {
           "busySlots": 0,
@@ -369,7 +389,12 @@
           "memoryTotalBytes": 52637257728,
           "disks": null,
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:30.7584512Z",
+            "observedBy": "review-runner-2",
+            "freshUntil": "2026-11-28T02:06:00.7584512Z"
+          }
         },
         "capacity": {
           "busySlots": 0,
@@ -466,7 +491,12 @@
           "memoryTotalBytes": 52637257728,
           "disks": null,
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:15.565426Z",
+            "observedBy": "review-runner-3",
+            "freshUntil": "2026-11-28T02:05:45.565426Z"
+          }
         },
         "capacity": {
           "busySlots": 2,
@@ -551,25 +581,31 @@
         "roles": null,
         "lastSeenAt": "2026-11-28T02:05:09.990714Z",
         "performance": {
-          "observedAt": "2026-11-28T02:04:31.7324444Z",
-          "cpuPercent": 99.93,
+          "observedAt": "2026-11-28T02:04:46.1971739Z",
+          "cpuPercent": 99.59,
           "cpuCores": 12,
-          "load1": 108.46,
-          "load5": 96.98,
-          "load15": 104.6,
-          "memoryUsedBytes": 30266519552,
+          "load1": 105.65,
+          "load5": 96.94,
+          "load15": 104.47,
+          "memoryUsedBytes": 26861281280,
           "memoryTotalBytes": 67290382336,
           "disks": [
             {
               "mount": "/",
-              "purpose": "container storage",
-              "usedBytes": 416314585088,
-              "freeBytes": 76960575488,
-              "totalBytes": 493275160576
+              "purpose": "review work",
+              "usedBytes": 416529027072,
+              "freeBytes": 76746133504,
+              "totalBytes": 493275160576,
+              "sample": null
             }
           ],
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:46.1971739Z",
+            "observedBy": "coding-runner",
+            "freshUntil": "2026-11-28T02:06:16.1971739Z"
+          }
         },
         "capacity": null,
         "release": null,
@@ -903,11 +939,17 @@
               "purpose": "review work",
               "usedBytes": 416529027072,
               "freeBytes": 76746133504,
-              "totalBytes": 493275160576
+              "totalBytes": 493275160576,
+              "sample": null
             }
           ],
           "networkReceiveBytesPerSecond": null,
-          "networkTransmitBytesPerSecond": null
+          "networkTransmitBytesPerSecond": null,
+          "sample": {
+            "observedAt": "2026-11-28T02:04:46.1971739Z",
+            "observedBy": "coding-runner",
+            "freshUntil": "2026-11-28T02:06:16.1971739Z"
+          }
         },
         "capacity": {
           "busySlots": 14,

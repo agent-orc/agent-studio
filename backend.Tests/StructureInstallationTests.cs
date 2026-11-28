@@ -52,6 +52,51 @@ public sealed class StructureInstallationTests
         Assert.All(actual.Links, l => Assert.True(ids.Contains(l.From) && ids.Contains(l.To)));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Machine_performance_keeps_its_newest_measurement_and_own_clock(bool reverse, bool selfReports)
+    {
+        var capture = JsonSerializer.Deserialize<Capture>(File.ReadAllText(Path.Combine(Fixture, "observations.json")), Json)!;
+        var hosts = reverse ? capture.Hosts.Reverse().ToArray() : capture.Hosts;
+        var local = hosts.Single(h => h.RunnerId == "coding-runner").Telemetry!;
+        var studio = capture.Context.Studio!;
+        if (selfReports)
+            studio = studio with { Performance = new(capture.At, CpuPercent: 42) };
+        var snapshot = ObservedStructureProjection.Apply(capture.Declared, hosts, [], [], [], null,
+            "not-required", capture.At, context: capture.Context with { Studio = studio });
+        var performance = snapshot.Nodes.Single(n => n.Id == "machine:studio-server").Facts!.Performance!;
+        var measured = selfReports ? capture.At : local.ObservedAt;
+        Assert.Equal(measured, performance.ObservedAt);
+        Assert.Equal(selfReports ? 42 : local.CpuPercent, performance.CpuPercent);
+        Assert.Equal(new StructureStamp(measured, selfReports ? "studio self observation" : "coding-runner",
+            measured.AddSeconds(90)), performance.Sample);
+    }
+
+    [Theory]
+    [InlineData(-30)]
+    [InlineData(30)]
+    public void Gate_disk_probe_uses_its_own_clock_when_the_gate_also_reports(int seconds)
+    {
+        var capture = JsonSerializer.Deserialize<Capture>(File.ReadAllText(Path.Combine(Fixture, "observations.json")), Json)!;
+        var host = capture.Hosts.Single(h => h.RunnerId == "coding-runner") with { HostId = "gate" };
+        var telemetry = host.Telemetry!;
+        var installation = capture.Context.Installation!;
+        var disk = installation.GateDisk! with { ObservedAt = telemetry.ObservedAt.AddSeconds(seconds) };
+        var context = capture.Context with { Installation = installation with { GateDisk = disk } };
+        var result = ObservedStructureProjection.Apply(capture.Declared, [host], [], [], [], null,
+            "not-required", capture.At, context: context);
+        var performance = result.Nodes.Single(n => n.Id == "machine:gate").Facts!.Performance!;
+        Assert.Equal(telemetry.ObservedAt, performance.Sample!.ObservedAt);
+        Assert.Equal(telemetry.CpuPercent, performance.CpuPercent);
+        var mount = performance.Disks!.First();
+        var expected = seconds < 0 ? telemetry.Filesystems![0] : disk.Filesystems[0];
+        Assert.Equal((expected.Path, expected.FreeBytes), (mount.Mount, mount.FreeBytes));
+        Assert.Equal(seconds < 0 ? telemetry.ObservedAt : disk.ObservedAt, (mount.Sample ?? performance.Sample).ObservedAt);
+    }
+
     [Fact]
     public void Drained_service_keeps_running_cards_and_reports_reserved_slots_and_queue()
     {
@@ -107,6 +152,26 @@ public sealed class StructureInstallationTests
         Assert.Equal("studio-server", stale.Telemetry.Placement!.ParentMachineId);
         Assert.Empty(stale.Capabilities);
         Assert.Empty(cache.Merge([], capture.At.AddDays(15), "studio-server", "different-kernel"));
+    }
+
+    [Fact]
+    public void Legacy_reports_survive_disconnect_until_expiry_or_a_successful_empty_read()
+    {
+        var cache = new StructureReportCache(new ConfigurationBuilder().Build(), NullLogger<StructureReportCache>.Instance);
+        var capture = JsonSerializer.Deserialize<Capture>(File.ReadAllText(Path.Combine(Fixture, "observations.json")), Json)!;
+        var legacy = capture.Hosts.First(h => h.Telemetry?.Structure is null);
+        var seen = legacy.LastSeenAt;
+
+        IReadOnlyList<RunnerCapabilitySnapshotDto> Read(RunnerCapabilitySnapshotDto[]? live, DateTime at)
+            => cache.Merge(live, at, "studio-server", null);
+
+        Read([legacy], seen);
+        Assert.Same(legacy, Assert.Single(Read(null, seen.AddDays(14))));
+        Assert.Empty(Read(null, seen.AddDays(14).AddTicks(1)));
+        var returned = legacy with { LastSeenAt = seen.AddDays(15) };
+        Assert.Same(returned, Assert.Single(Read([returned], returned.LastSeenAt)));
+        Assert.Empty(Read([], returned.LastSeenAt.AddSeconds(5)));
+        Assert.Empty(Read(null, returned.LastSeenAt.AddSeconds(10)));
     }
 
     [Fact]

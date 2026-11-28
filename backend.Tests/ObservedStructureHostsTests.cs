@@ -170,6 +170,21 @@ public sealed class ObservedStructureHostsTests
     }
 
     [Fact]
+    public void Receiver_observed_peer_changes_the_control_link_kind_and_preserves_its_id()
+    {
+        var studio = new StudioSelfObservation("studio", "Studio server", null, null, null, "2.0", Now);
+        var telemetry = Telemetry(roundTripMs: 5);
+        var host = Report("runner", "host", telemetry: telemetry);
+        var legacy = Assert.Single(Apply(Undeclared, [host], new(studio)).Links);
+        var upgraded = host with { Telemetry = telemetry with { Peer = new("private", "https", Now) } };
+        var observed = Assert.Single(Apply(Undeclared, [upgraded], new(studio)).Links);
+        Assert.Equal("control", legacy.Kind);
+        Assert.Equal("runner-to-server", observed.Kind);
+        Assert.Equal(legacy.Id, observed.Id);
+        Assert.Equal(("private", 5d), (observed.Facts!.AddressClass, observed.Facts.LatencyMs));
+    }
+
+    [Fact]
     public void Studio_components_without_a_container_report_say_what_the_api_knows()
     {
         var studio = new StudioSelfObservation("studio-server", "Studio server", "cloud-server", null, null, "2.0", Now);

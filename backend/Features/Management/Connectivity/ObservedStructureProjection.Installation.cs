@@ -29,13 +29,14 @@ public static partial class ObservedStructureProjection
                     links.Add(new(id, api.Id, kind, "Runner connection", sample.ObservedBy, observed,
                         StructureLink.IdFor(id, api.Id, kind), facts));
             }
+            var hostPerformance = Performance([host]);
             // A container's /proc counters can describe the enclosing kernel. Its cgroup
             // counters below describe only the container. Preserve the measurement's clock.
             if (reporter.Kind == "container" && reporter.ParentId is { } enclosing &&
                 byId.TryGetValue(enclosing, out var guest) && guest.Kind is "vm" or "physical" &&
-                Performance([host]) is { } performance && !(guest.Facts?.Performance?.ObservedAt >= performance.ObservedAt))
+                hostPerformance is { } performance && !(guest.Facts?.Performance?.ObservedAt >= performance.ObservedAt))
                 Put(guest with { Facts = (guest.Facts ?? new()) with { Performance = performance,
-                    Sample = new(performance.ObservedAt, host.RunnerId, performance.ObservedAt + Fresh) } });
+                    Sample = performance.Sample } });
             if (host.Telemetry?.Structure is not { } reading) continue;
             var stamp = new StructureStamp(reading.ObservedAt, reading.ObservedBy, reading.FreshUntil);
             var obs = new StructureObservation(now > stamp.FreshUntil ? "stale" : "undeclared",
@@ -48,7 +49,7 @@ public static partial class ObservedStructureProjection
             var machineFacts = housing.Facts ?? new();
             Put(housing with { Facts = machineFacts with { DmiProduct = reading.DmiProduct, Sample = stamp,
                 DetectedVm = host.Telemetry.Placement?.DetectedVm, DetectedContainer = host.Telemetry.Placement?.DetectedContainer,
-                Performance = Performance([host]) ?? machineFacts.Performance } });
+                Performance = NewestPerformance(machineFacts.Performance, hostPerformance) } });
             if (host.Telemetry.Placement?.Kind == HostPlacementKinds.Container)
                 Put(byId[id] with { Facts = (byId[id].Facts ?? new()) with { Resources = reading.Service,
                     Sample = stamp, Performance = null } });
@@ -161,10 +162,15 @@ public static partial class ObservedStructureProjection
                 links[link] = links[link] with { Observation = new(status == "stale" ? "stale" : "matched", status, disk.ObservedAt),
                     Facts = new(status, ProbedAt: disk.ObservedAt, Transport: "ssh", Sample: read) };
                 var target = nodes[gate];
-                nodes[gate] = target with { Facts = (target.Facts ?? new()) with { Sample = read,
-                    Performance = (target.Facts?.Performance ?? new(disk.ObservedAt)) with
-                    { Disks = disk.Filesystems.Select(m => new StructureDiskFact(m.Path, m.Purpose,
-                        m.TotalBytes - m.FreeBytes, m.FreeBytes, m.TotalBytes)).ToArray() } } };
+                var facts = target.Facts ?? new();
+                var performance = facts.Performance ?? new(read.ObservedAt, Sample: read);
+                if (performance.Disks is not { Count: > 0 } || read.ObservedAt >= performance.ObservedAt)
+                {
+                    var disks = disk.Filesystems.Select(m => new StructureDiskFact(m.Path, m.Purpose,
+                        m.TotalBytes - m.FreeBytes, m.FreeBytes, m.TotalBytes, read)).ToArray();
+                    nodes[gate] = target with { Facts = facts with { Sample = facts.Sample ?? read,
+                        Performance = performance with { Disks = disks } } };
+                }
             }
             if (installation.GateNetwork == "overlay")
             {

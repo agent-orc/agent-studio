@@ -9,12 +9,18 @@ public sealed class StructureReportCache(IConfiguration configuration, ILogger<S
 {
     private readonly Dictionary<string, RunnerCapabilitySnapshotDto> _last = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan Retention = TimeSpan.FromDays(14);
+    private IReadOnlyList<RunnerCapabilitySnapshotDto> _lastLive = [];
     private bool _loaded;
     private bool _dirty;
 
-    internal IReadOnlyList<RunnerCapabilitySnapshotDto> Merge(IReadOnlyList<RunnerCapabilitySnapshotDto> live, DateTime now, string studioId, string? studioKernel)
+    internal IReadOnlyList<RunnerCapabilitySnapshotDto> Merge(IReadOnlyList<RunnerCapabilitySnapshotDto>? live, DateTime now, string studioId, string? studioKernel)
     {
-        if (configuration["TaskRepository"] is not { Length: > 0 } workspace) return live;
+        // Null means the authority was unavailable. Keep the last successful read (including
+        // older agents without structure telemetry) only within the same retention window.
+        var cutoff = now - Retention;
+        _lastLive = live ?? _lastLive.Where(host => host.LastSeenAt >= cutoff).ToArray();
+        if (configuration["TaskRepository"] is not { Length: > 0 } workspace) return _lastLive;
         var directory = Path.Combine(workspace, "telemetry", "structure");
         var file = Path.Combine(directory, "last-reports.json");
         // Called under the structure sampler's gate, including the first on-demand read.
@@ -30,9 +36,9 @@ public sealed class StructureReportCache(IConfiguration configuration, ILogger<S
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             { logger.LogWarning(ex, "structure-host-cache-read-failed"); _loaded = true; }
         }
-        foreach (var host in live)
+        foreach (var host in live ?? [])
         {
-            if (host.Telemetry?.Structure is not { } reading ||
+            if (host.LastSeenAt < cutoff || host.Telemetry?.Structure is not { } reading ||
                 _last.GetValueOrDefault(host.RunnerId)?.Telemetry?.Structure?.ObservedAt >= reading.ObservedAt) continue;
             var place = host.Telemetry.Placement;
             if (place is { ParentMachineId: null, KernelId: { } kernel } && kernel == studioKernel && host.HostId != studioId)
@@ -46,7 +52,7 @@ public sealed class StructureReportCache(IConfiguration configuration, ILogger<S
                 EffectiveMaxParallelism: host.EffectiveMaxParallelism, Release: host.Release);
             _dirty = true;
         }
-        foreach (var id in _last.Where(p => now - p.Value.LastSeenAt > TimeSpan.FromDays(14)).Select(p => p.Key).ToArray())
+        foreach (var id in _last.Where(p => p.Value.LastSeenAt < cutoff).Select(p => p.Key).ToArray())
             _dirty |= _last.Remove(id);
         if (_dirty)
         {
@@ -61,7 +67,7 @@ public sealed class StructureReportCache(IConfiguration configuration, ILogger<S
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { logger.LogWarning(ex, "structure-host-cache-write-failed"); }
         }
-        var ids = live.Select(host => host.RunnerId).ToHashSet(StringComparer.Ordinal);
-        return [.. live, .. _last.Values.Where(host => !ids.Contains(host.RunnerId))];
+        var ids = _lastLive.Select(host => host.RunnerId).ToHashSet(StringComparer.Ordinal);
+        return [.. _lastLive, .. _last.Values.Where(host => !ids.Contains(host.RunnerId))];
     }
 }

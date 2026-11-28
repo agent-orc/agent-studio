@@ -77,6 +77,7 @@ export interface StructureHistory {
 }
 export interface StructurePerformanceFacts {
   observedAt: string;
+  sample?: StructureStamp | null;
   cpuPercent?: number | null;
   cpuCores?: number | null;
   load1?: number | null;
@@ -88,7 +89,7 @@ export interface StructurePerformanceFacts {
   networkReceiveBytesPerSecond?: number | null;
   networkTransmitBytesPerSecond?: number | null;
 }
-export interface StructureDiskFact { mount: string; purpose: string; usedBytes: number; freeBytes: number; totalBytes: number; }
+export interface StructureDiskFact { mount: string; purpose: string; usedBytes: number; freeBytes: number; totalBytes: number; sample?: StructureStamp | null; }
 export interface StructureCapacityFacts { busySlots: number; freeSlots?: number | null; totalSlots?: number | null; runningCards: string[];
   heldSlots?: number | null; waitingCards?: string[] | null; queueLength?: number | null;
 }
@@ -132,7 +133,7 @@ export interface StructureLink {
   label: string;
   sourceRef: string;
   observation?: StructureObservation | null;
-  /** Stable across reports and restarts: `link:{from}>{to}:{kind}`. */
+  /** Stable across reports and restarts. A runner-to-server link can keep its original control ID. */
   id?: string | null;
   facts?: StructureLinkFacts | null;
 }

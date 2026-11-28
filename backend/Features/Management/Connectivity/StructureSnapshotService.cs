@@ -258,7 +258,7 @@ public sealed class StructureSnapshotService : BackgroundService
         finally { _runtimeGate.Release(); }
     }
 
-    private async Task<IReadOnlyList<RunnerCapabilitySnapshotDto>> HostsAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<RunnerCapabilitySnapshotDto>?> HostsAsync(CancellationToken cancellationToken)
     {
         if (TaskServerPlaneProxy.IsConfigured(_configuration))
         {
@@ -273,8 +273,7 @@ public sealed class StructureSnapshotService : BackgroundService
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable");
-                // The last reports stay visible and turn stale by their own timestamps.
-                return _reading?.Hosts ?? [];
+                return null;
             }
         }
         var snapshots = _hosts.ListCapabilitySnapshots();

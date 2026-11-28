@@ -21,7 +21,7 @@ Source: `backend/Features/Management/Connectivity/` (`StructureProjection`,
 | Studio server | `machine:{Structure:MachineId}`, default `machine:studio-server` | What the API observes about its own machine |
 | API, web, edge, engine | `component:{machineId}:api`, `:web`, `:edge`, `:engine` | The API itself, engine readiness, forwarded requests, and a host container report |
 | Container a host's container runtime lists | `observed-container:{hostId}:{name}` | Host container report |
-| Control connection of a host | `link:machine:{hostId}>component:{machineId}:api:control` | Host telemetry |
+| Control connection of a host | `link:machine:{hostId}>component:{machineId}:api:control` | Host telemetry. A receiver-observed peer can update its kind to `runner-to-server`. |
 | Supervised runner link | `link:machine:{machineId}>machine:{hostId}:{kind}` | `RunnerLinks` state |
 
 A node that reports and is not declared has `provenance: "observed"` and the
@@ -123,7 +123,7 @@ most every 15 minutes; `sizeComplete` is false when the walk stopped early.
 never offered the capability in `reason`, and `parked` when the capability is
 held back for now (stale, not ready, probe undecided).
 
-Links carry `id` (`link:{from}>{to}:{kind}`), `kind` and `facts`: `state`
+A link has a stable `id`, its current `kind` and `facts`. Link facts include `state`
 (`up`, `down`, `stale`, `not observed`), `latencyMs` where the link is probed
 (the round trip of the host's capability advertisement), `probedAt` and
 `transport`.
@@ -142,6 +142,13 @@ device number. The service and each delegated worker report cumulative CPU
 microseconds, mean cores used since the preceding sample, and current memory
 bytes. Slot records associate card keys with workers.
 
+When several observers report machine performance, the newest performance
+measurement wins. Its `facts.performance.sample` gives the observer, measurement
+time and 90-second expiry. A later structure collection has its own
+`facts.sample` and does not extend the lifetime of the performance measurement.
+Disk usage from an independent SSH gate probe carries its own `disks[].sample`.
+It fills a missing disk reading or replaces one of the same age or older.
+
 On the Studio machine the collector reads Docker scopes directly under
 `studio.slice`. The namespace init process identifies the API and engine
 assemblies, or the frontend and edge Caddyfile mounts. The init start tick
@@ -158,7 +165,10 @@ and pull-gate queues, matching the prototype.
 A five-second sampler retains at most 180 points for 15 minutes in memory.
 An API restart or disconnected copy reads the last Linux host observations from
 `telemetry/structure/last-reports.json` under the task repository. They retain
-their original observation times and expire from the cache after 14 days.
+their original observation times and expire from the cache 14 days after the
+last heartbeat. During a Task Server outage, repeated reads respect the same
+deadline. Legacy reports from the last successful read remain available in
+memory until that deadline.
 The activity feed holds the 20 most recent distinct observed events, newest
 first. The API also exposes weekly subscription windows from its quota cache
 with the original fetch time and cache expiry.
@@ -175,7 +185,14 @@ health until a probe or supervisor supplies evidence.
 
 `GET /api/v1/operations/structure?scope=workspace|project:{id}&environment={id}`
 returns `nodes`, `links`, `revision`, `generatedAt` and `schemaVersion` (3). The workspace scope also returns `history`.
-Fields are only ever added; existing fields keep their meaning.
+
+In schema 2 a reported runner control connection has kind `control`. Schema 3
+keeps that kind for legacy reports. When a heartbeat includes receiver-observed
+peer information, the same link has kind `runner-to-server` and keeps its
+existing `link:{from}>{to}:control` ID. A peer observation with no existing
+control link creates a `runner-to-server` link with that kind in its ID.
+Consumers should join snapshots and deltas by the returned `id` and use
+`kind` to classify the connection.
 
 - The projection is cached per scope and refreshed every 5 seconds in the
   background while a view reads or subscribes. A request reads the cache. It

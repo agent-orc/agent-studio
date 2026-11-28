@@ -11,7 +11,7 @@ public sealed record StructureNode(string Id, string Kind, string Label, string?
     string? SystemBoundaryId = null, string? Detail = null, int? Replicas = null,
     string? ProbeObservation = null, string? Probe = null, string? Status = null,
     StructureObservation? Observation = null, StructureNodeFacts? Facts = null);
-/// <param name="Id">Stable across reports and restarts: <c>link:{from}&gt;{to}:{kind}</c> (AGT-3954).</param>
+/// <param name="Id">Stable across reports and restarts. A control link keeps its ID when a heartbeat identifies it as runner-to-server.</param>
 public sealed record StructureLink(string From, string To, string Kind, string Label, string SourceRef,
     StructureObservation? Observation = null, string? Id = null, StructureLinkFacts? Facts = null)
 {
