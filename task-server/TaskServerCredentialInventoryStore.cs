@@ -193,7 +193,8 @@ public sealed partial class TaskServerStore
         }
         var snapshots = await ListRunnerCapabilitySnapshotsAsync(ct);
         var merged = CredentialLifecyclePolicy.MergeProviderLogins(derived, CredentialLifecyclePolicy.ProviderLogins(snapshots));
-        return new(now, merged.Select(item => CredentialLifecyclePolicy.Complete(item, installation.CreatedAt)).ToArray());
+        return new(now, merged.Select(item => CredentialLifecyclePolicy.Complete(item, installation.CreatedAt)).ToArray(),
+            await ReadGitHubWriteObservationsAsync(connection, ct));
     }
 
     private static int? ReportedRotationInterval(CredentialRegistryRecordDto record)

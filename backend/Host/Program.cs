@@ -507,6 +507,9 @@ builder.Services.AddSingleton<AgentStudio.GitHubApp.ICredentialLifecycleNotifier
 builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.CredentialLifecycleMonitor(
     Path.Combine(sp.GetRequiredService<AccessSecurityStore>().SecurityFolder, "credential-lifecycle.json"),
     sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<AgentStudio.GitHubApp.ICredentialLifecycleNotifier>()));
+builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubOperationReceiptStore(
+    Path.Combine(sp.GetRequiredService<AccessSecurityStore>().SecurityFolder, "github-operation-receipts.json"),
+    sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<AgentStudio.GitHubApp.CredentialInventoryService>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.CredentialLifecycleHostedService>();
 builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();

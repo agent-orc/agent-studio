@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer } from 'rxjs';
+import type { GitHubOperationManifest } from './github-operation-manifest';
 import { AuthSessionState } from '../../services/auth.service';
 
 export interface CredentialInventoryItem {
@@ -37,6 +38,7 @@ export interface CredentialInventoryItem {
 export interface CredentialInventory {
   generatedAt: string;
   items: readonly CredentialInventoryItem[];
+  gitHubOperations?: GitHubOperationManifest | null;
 }
 
 @Injectable({ providedIn: 'root' })

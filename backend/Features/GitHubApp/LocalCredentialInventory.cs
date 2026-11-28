@@ -31,9 +31,9 @@ public static class LocalCredentialInventory
     /// <summary>Reads every local source and projects them; the Credentials page and the security view share it.</summary>
     public static async Task<CredentialInventoryDto> ReadAsync(GitHubAppBroker broker, GitHubAppHostKeys hostKeys,
         ISecretProvider secrets, AccessSecurityStore security, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
-        AgentStudio.Clients.ClientIdentityStore clients, DateTime now, CancellationToken ct)
+        AgentStudio.Clients.ClientIdentityStore clients, DateTime now, CancellationToken ct, GitHubAppStatus? app = null)
         => Project(new Sources(
-            await broker.StatusAsync(false, ct),
+            app ?? await broker.StatusAsync(false, ct),
             hostKeys.List(),
             await secrets.ListAsync(null, ct),
             security.ListRunners(),

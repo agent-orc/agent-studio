@@ -96,7 +96,8 @@ public sealed record GitHubAppStatus(
     IReadOnlyList<GitHubAppInstallation> Installations,
     IReadOnlyList<GitHubAppRepositoryCoverage> Repositories,
     IReadOnlyList<GitHubAppHostSync> Hosts,
-    string? Problem);
+    string? Problem,
+    IReadOnlyList<GitHubRepositoryCoverageEntry>? AdoptedRepositories = null);
 
 /// <summary>One step of the browser flow. <see cref="NextUrl"/> is where the page navigates next.</summary>
 public sealed record GitHubAppFlowStep(string? NextUrl, string? Message, GitHubAppStatus Status);

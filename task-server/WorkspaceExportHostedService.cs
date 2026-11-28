@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
@@ -13,7 +14,9 @@ public sealed record WorkspaceExportStatusDto(
     DateTime? LastPushAt,
     bool? LastPushSucceeded,
     int? AheadCommits,
-    string? LastError);
+    string? LastError,
+    DateTime? LastRemoteUpdateAt = null,
+    int? LastPublishedBacklog = null);
 
 /// <summary>Last outcome of the export job, for operators; never read on a board path.</summary>
 public sealed class WorkspaceExportStatus
@@ -46,7 +49,8 @@ public sealed class WorkspaceExportHostedService(
     IOptions<TaskServerOptions> options,
     TimeProvider clock,
     ILogger<WorkspaceExportHostedService> logger,
-    WorkspaceExportGit? git = null) : BackgroundService
+    WorkspaceExportGit? git = null,
+    TaskServerStore? evidence = null) : BackgroundService
 {
     private readonly WorkspaceExportGit _git = git ?? new WorkspaceExportGit(options.Value.GitCommand);
 
@@ -102,6 +106,11 @@ public sealed class WorkspaceExportHostedService(
                 push = await _git.PushAsync(root, branch,
                     TimeSpan.FromSeconds(Math.Clamp(configured.WorkspaceExportPushTimeoutSeconds, 10, 3600)), ct);
         }
+        DateTime? updatedAt = push is { Updated: true, CommitsToPublish: > 0 }
+            ? clock.GetUtcNow().UtcDateTime : null;
+        if (updatedAt is { } succeededAt && evidence is not null && push?.Targets is { Count: > 0 } destinations)
+            await evidence.RecordWorkspacePushAsync(destinations.Select(target =>
+                new GitHubWriteObservation("workspace-export", target, succeededAt, push.Fetch, push.CommitsToPublish)), ct);
         logger.LogInformation(
             "workspace-export root={Root} tasks={Tasks} written={Written} removed={Removed} commit={Commit} push={Push} ahead={Ahead}",
             root, result.Tasks, result.FilesWritten, result.FilesRemoved, commit?.Sha ?? "none",
@@ -114,9 +123,11 @@ public sealed class WorkspaceExportHostedService(
             true, root, branch, configured.WorkspaceExportPush, exportedAt, result,
             commit?.Sha ?? current.LastCommitSha,
             push is { Attempted: true } ? exportedAt : current.LastPushAt,
-            push?.Succeeded ?? current.LastPushSucceeded,
+            push is { Attempted: true } ? push.Succeeded : current.LastPushSucceeded,
             push?.AheadCommits ?? current.AheadCommits,
-            error));
+            error,
+            updatedAt ?? current.LastRemoteUpdateAt,
+            updatedAt is not null ? push?.CommitsToPublish : current.LastPublishedBacklog));
         return status.Current;
     }
 }

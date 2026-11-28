@@ -113,9 +113,13 @@ public sealed class WorkspaceExportTests
         Assert.DoesNotContain("notes.md", committed);
         Assert.Equal((true, 0), (first.LastPushSucceeded, first.AheadCommits));
         Assert.Equal(first.LastCommitSha, Git(remote, "rev-parse", "refs/heads/main").Trim());
+        Assert.NotNull(first.LastRemoteUpdateAt);
+        Assert.Equal(1, first.LastPublishedBacklog);
 
         var second = await job.RunOnceAsync(default);
         Assert.Equal(first.LastCommitSha, second.LastCommitSha);
+        Assert.Equal(first.LastRemoteUpdateAt, second.LastRemoteUpdateAt);
+        Assert.Equal(first.LastPublishedBacklog, second.LastPublishedBacklog);
         Assert.Equal("1", Git(clone, "rev-list", "--count", "HEAD").Trim());
 
         Git(clone, "remote", "set-url", "origin", Path.Combine(temp.Path, "missing-remote.git"));
@@ -124,6 +128,46 @@ public sealed class WorkspaceExportTests
         Assert.False(failed.LastPushSucceeded);
         Assert.Equal(1, failed.AheadCommits);
         Assert.Contains("git push", failed.LastError);
+    }
+
+    [Theory]
+    [InlineData(' ', 0, true)]
+    [InlineData('=', 0, false)]
+    [InlineData(' ', 1, false)]
+    public async Task Inventory_records_only_actual_GitHub_workspace_updates(char flag, int exitCode, bool expected)
+    {
+        using var temp = new TempDirectory();
+        var (store, _, clone, _, _) = await SeedRepositoryAsync(temp.Path);
+        var userInfo = Guid.NewGuid().ToString("N");
+        var git = new WorkspaceExportGit("git", (_, args, _, _) => Task.FromResult(args[0] switch
+        {
+            "diff" => new WorkspaceExportGitResult(1, "", ""),
+            "rev-list" => new WorkspaceExportGitResult(0, "4", ""),
+            "push" => new WorkspaceExportGitResult(exitCode,
+                $"To ssh://git@github.com/example/backup.git\n{flag}\tHEAD:refs/heads/main\tstatus\n",
+                userInfo),
+            "remote" => new WorkspaceExportGitResult(0, $"https://user:{userInfo}@github.com/example/source.git\n", ""),
+            _ => new WorkspaceExportGitResult(0, "test", ""),
+        }));
+        var job = Job(store, new WorkspaceExportStatus(), clone, push: true, git, evidence: true);
+
+        var cycle = await job.RunOnceAsync(default);
+        var reopened = TaskArtifactsContentTests.Store(Path.Combine(temp.Path, "store"));
+        await reopened.InitializeAsync();
+        var inventory = await reopened.GetCredentialInventoryAsync(StudioUserRoles.Owner, default);
+        var writes = inventory.GitHubOperations!.Writes;
+        Assert.Equal(expected, cycle.LastRemoteUpdateAt is not null);
+        Assert.DoesNotContain(userInfo, JsonSerializer.Serialize(inventory.GitHubOperations));
+        Assert.DoesNotContain(userInfo, cycle.LastError ?? "");
+        if (!expected)
+        {
+            Assert.Empty(writes);
+            return;
+        }
+        var write = Assert.Single(writes);
+        Assert.Equal(("workspace-export", "ssh", "github.com/example/backup", 4),
+            (write.Caller, write.Target.Transport, write.Target.Repository, write.CommitsToPublish));
+        Assert.Equal("github.com/example/source", write.Fetch?.Repository);
     }
 
     [Fact]
@@ -235,7 +279,7 @@ public sealed class WorkspaceExportTests
 
     private static WorkspaceExportHostedService Job(
         TaskServerStore store, WorkspaceExportStatus status, string root, bool push,
-        WorkspaceExportGit? git = null, int timeoutSeconds = 60)
+        WorkspaceExportGit? git = null, int timeoutSeconds = 60, bool evidence = false)
         => new(new WorkspaceExportService(store), status, Options.Create(new TaskServerOptions
             {
                 WorkspaceExportRoot = root,
@@ -243,7 +287,7 @@ public sealed class WorkspaceExportTests
                 WorkspaceExportBranch = "main",
                 WorkspaceExportPushTimeoutSeconds = timeoutSeconds,
             }), new ManualTimeProvider(new DateTimeOffset(2026, 10, 27, 9, 0, 0, TimeSpan.Zero)),
-            NullLogger<WorkspaceExportHostedService>.Instance, git);
+            NullLogger<WorkspaceExportHostedService>.Instance, git, evidence ? store : null);
 
     private static async Task<(TaskServerStore Store, string Remote, string Clone, string Project, string TaskKey)> SeedRepositoryAsync(
         string root, int tasks = 1)

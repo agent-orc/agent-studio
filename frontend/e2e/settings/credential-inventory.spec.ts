@@ -39,6 +39,37 @@ async function stub(page: Page) {
   await page.route('**/api/v1/management/links', json([]));
   await page.route('**/api/v1/management/credential-inventory', json({
     generatedAt: '2026-10-16T09:00:00Z',
+    gitHubOperations: {
+      callers: [
+        { id: 'workspace-export', label: 'Workspace export push', source: 'Task Server periodic export service',
+          dependency: 'Host Git on effective push target', noBuiltInGitHub: false },
+        { id: 'promotion', label: 'Product promotion', source: 'Operator checkout',
+          dependency: 'Host Git', noBuiltInGitHub: false },
+        { id: 'review-push', label: 'Review push', source: 'Review executor has no built-in push',
+          dependency: 'Studio result reporting', noBuiltInGitHub: true },
+      ],
+      receipts: [
+        { caller: 'workspace-export', host: 'server-a', slot: 'export', checkoutOwner: 'svc-export',
+          role: 'task-server', binding: 'export-service', state: 'active', observedAt: '2026-10-27T10:02:00Z',
+          receiptId: '8bd30fd1-cb7e-4dd0-a01b-c262c3276422',
+          fetch: { transport: 'https', repository: 'github.com/example/source' },
+          push: { transport: 'ssh', repository: 'github.com/example/backup' },
+          activeCredential: { sourceClass: 'ssh-deploy-key', grantId: '54201' },
+          lastWrite: { succeededAt: '2026-10-27T10:00:00Z', receiptId: '86c5f926-28e1-4a79-82c0-8605c13174a3',
+            credential: { sourceClass: 'ssh-deploy-key', grantId: '54201' }, commitsPublished: 2 } },
+        { caller: 'promotion', host: 'server-b', slot: 'main', checkoutOwner: 'svc-promote',
+          role: 'release', binding: 'promotion-job', state: 'unused', observedAt: '2026-10-27T10:02:00Z',
+          receiptId: '782671d5-652b-4bd9-8a7f-703421628f22',
+          activeCredential: { sourceClass: 'ssh-deploy-key', grantId: '54201' } },
+      ],
+      writes: [{ caller: 'workspace-export', target: { transport: 'ssh', repository: 'github.com/example/backup' },
+        succeededAt: '2026-10-27T10:00:00Z', commitsToPublish: 2 }],
+      serviceStates: { 'workspace-export': 'configured' },
+      appCoverage: [{ broker: 'Task Server', connected: true, repositories: [
+        { repository: 'github.com/example/source', state: 'covered', installationId: 19 },
+        { repository: 'github.com/example/backup', state: 'not-installed', installationId: null },
+      ] }],
+    },
     items: [
       { id: 'missing-review', lifetimeClass: 'long-lived', category: 'repository', hostId: 'review-a', kind: 'review_read_file',
         label: 'Private repository read access', scopes: [], repository: 'forge.example.invalid/team/private',
@@ -134,4 +165,32 @@ test('an open Credentials page shows a new gap after the inventory refreshes', a
   await page.clock.fastForward(60_000);
   await expect(page.getByRole('article')).toHaveCount(1, { timeout: 45_000 });
   await expect(page.getByRole('article')).toContainText('Private repository read access');
+});
+
+
+test('GitHub operations show operation evidence and shared grants', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stub(page);
+  await page.goto('/#/workspace/settings/credentials', { waitUntil: 'domcontentloaded' });
+  const manifest = page.getByTestId('github-operation-manifest');
+  await expect(manifest).toBeVisible({ timeout: 45_000 });
+  await manifest.getByRole('button', { name: 'GitHub operations' }).click();
+  const caller = manifest.getByTestId('github-caller-workspace-export');
+  await expect(caller).toContainText('Checkout owner svc-export');
+  await expect(caller).toContainText('https · github.com/example/source · Task Server App covered (19)');
+  await expect(caller).toContainText('ssh · github.com/example/backup · Task Server App not-installed');
+  await expect(caller).toContainText('2026-10-27 10:00:00 UTC · ssh-deploy-key · 54201');
+  await expect(caller).toContainText('2 commits published');
+  await expect(caller).toContainText('Task Server observed a remote update');
+  await expect(manifest.getByTestId('github-caller-review-push')).toContainText('Unused for GitHub by design');
+  await expect(manifest).toContainText('promotion · server-b · main · promotion-job · unused');
+  await manifest.getByRole('combobox', { name: 'Caller' }).selectOption('workspace-export');
+  await expect(manifest.getByTestId('github-caller-promotion')).toHaveCount(0);
+  await manifest.getByRole('combobox', { name: 'Caller' }).scrollIntoViewIfNeeded();
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `github-operations-${theme}--mocked.png`) });
+  }
 });

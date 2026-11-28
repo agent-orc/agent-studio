@@ -4530,6 +4530,16 @@ public sealed partial class TaskServerStore
                 retain_until TEXT NOT NULL,
                 CHECK ((immutable_remote_ref IS NULL) <> (source_bundle_digest IS NULL))
             );
+            CREATE TABLE IF NOT EXISTS github_write_observations(
+                caller TEXT NOT NULL,
+                repository TEXT NOT NULL,
+                transport TEXT NOT NULL,
+                succeeded_at TEXT NOT NULL,
+                fetch_repository TEXT,
+                fetch_transport TEXT,
+                commits_to_publish INTEGER,
+                PRIMARY KEY (caller, repository, transport)
+            );
             CREATE TABLE IF NOT EXISTS result_ref_gc(
                 run_id TEXT PRIMARY KEY REFERENCES result_handoffs(run_id),
                 immutable_remote_ref TEXT NOT NULL,

@@ -18,6 +18,10 @@ public sealed class CredentialInventoryService(IServiceProvider services, IConfi
         var secrets = services.GetRequiredService<ISecretProvider>();
         var backends = services.GetRequiredService<SecretBackendSettings>();
         CredentialInventoryDto inventory;
+        var broker = services.GetRequiredService<GitHubAppBroker>();
+        var appCoverage = new List<GitHubAppCoverageSnapshot>();
+        var studioApp = await broker.StatusAsync(false, ct);
+        appCoverage.Add(GitHubOperationReceiptStore.Coverage("Studio", studioApp));
         if (TaskServerPlaneProxy.IsConfigured(configuration))
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -27,17 +31,18 @@ public sealed class CredentialInventoryService(IServiceProvider services, IConfi
                 ?? throw new InvalidOperationException("Task Server returned no inventory.");
             var app = await client.GetFromJsonAsync<GitHubAppStatus>("/api/v1/management/github-app", deadline.Token)
                 ?? throw new InvalidOperationException("Task Server returned no App metadata.");
+            appCoverage.Add(GitHubOperationReceiptStore.Coverage("Task Server", app));
             var appItems = LocalCredentialInventory.Project(new(app, [], new SecretListing([], []), [], [], []), now).Items;
             var supplemental = LocalCredentialInventory.Supplemental(await secrets.ListAsync(null, ct),
                 security.ReadIamSnapshot(), backends.All(), now);
-            inventory = new(now, [.. inventory.Items, .. appItems, .. supplemental]);
+            inventory = inventory with { Items = [.. inventory.Items, .. appItems, .. supplemental] };
         }
         else
         {
-            inventory = await LocalCredentialInventory.ReadAsync(services.GetRequiredService<GitHubAppBroker>(),
+            inventory = await LocalCredentialInventory.ReadAsync(broker,
                 services.GetRequiredService<GitHubAppHostKeys>(), secrets, security,
                 services.GetRequiredService<AgentStudio.Runner.V1ReviewExecutorRegistry>(),
-                services.GetRequiredService<AgentStudio.Clients.ClientIdentityStore>(), now, ct);
+                services.GetRequiredService<AgentStudio.Clients.ClientIdentityStore>(), now, ct, studioApp);
             inventory = new(now, [.. inventory.Items,
                 .. LocalCredentialInventory.Supplemental(new SecretListing([], []), security.ReadIamSnapshot(), backends.All(), now)]);
         }
@@ -53,7 +58,20 @@ public sealed class CredentialInventoryService(IServiceProvider services, IConfi
                 RotationBasisAt = source.RotationBasisAt, RotationIntervalDays = source.RotationIntervalDays,
             };
         }
-        return await monitor.CompleteAsync(inventory with { Items = items.Values.ToArray() }, notify, ct);
+        inventory = await monitor.CompleteAsync(inventory with { Items = items.Values.ToArray() }, notify, ct);
+        if (notify) return inventory;
+        var receipts = await services.GetRequiredService<GitHubOperationReceiptStore>().ReadAsync(ct);
+        var operations = inventory.GitHubOperations ?? new GitHubOperationManifest([], [], [], null, []);
+        return inventory with
+        {
+            GitHubOperations = operations with
+            {
+                Callers = GitHubCallerCatalogue.All,
+                Receipts = receipts.OrderBy(value => value.Host, StringComparer.Ordinal)
+                    .ThenBy(value => value.Slot, StringComparer.Ordinal).ToArray(),
+                AppCoverage = appCoverage,
+            },
+        };
     }
 }
 
@@ -68,12 +86,18 @@ public static class CredentialInventoryEndpoints
             context.Response.Headers.CacheControl = "no-store";
             try { return Results.Ok(await inventory.ReadAsync(false, ct)); }
             catch (Exception exception) when (exception is HttpRequestException or SecretBackendException
+                or IOException or System.Text.Json.JsonException
                 or SecretKeyUnavailableException or TaskCanceledException)
             {
                 return Results.Json(new { error = "inventory-unavailable", message = "Credential metadata could not be read." },
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         }).RequireStudioRole(StudioRoles.Owner);
+        app.MapPut("/api/v1/management/credential-inventory/github-receipt", async Task<IResult> (
+            GitHubCallerReceipt receipt, GitHubOperationReceiptStore store, CancellationToken ct)
+            => await store.RecordAsync(receipt, ct) ? Results.NoContent() :
+                Results.BadRequest(new { error = "invalid-github-receipt", message = "Expected a metadata-only GitHub operation receipt." }))
+            .RequireStudioRole(StudioRoles.Owner);
     }
 }
 

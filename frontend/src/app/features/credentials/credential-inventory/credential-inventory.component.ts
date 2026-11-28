@@ -1,3 +1,6 @@
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
+import { githubGrantDependencies, githubGrantLabel, type GitHubOperationTarget } from '../github-operation-manifest';
 import { HostNamePipe } from '../../../components/identity-chip/host-name.pipe';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { CredentialInventoryService } from '../credential-inventory.service';
@@ -30,7 +33,7 @@ const loginTones: Readonly<Record<string, StatusTone>> = {
 @Component({
   selector: 'app-credential-inventory',
   standalone: true,
-  imports: [HostNamePipe, StatusIndicatorComponent],
+  imports: [DatePipe, NgTemplateOutlet, DisclosureMarkerComponent, HostNamePipe, StatusIndicatorComponent],
   templateUrl: './credential-inventory.component.html',
   styleUrl: './credential-inventory.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,6 +54,30 @@ export class CredentialInventoryComponent {
     (this.state() === 'all' || item.state === this.state())));
   readonly attention = computed(() => this.items().filter(item =>
     item.state === 'missing' || item.state === 'expiring' || item.state === 'unexpected').length);
+
+  readonly operationsOpen = signal(false);
+  readonly selectedCaller = signal('all');
+  readonly operations = computed(() => this.service.inventory()?.gitHubOperations);
+  readonly callerRows = computed(() => {
+    const manifest = this.operations();
+    const caller = this.selectedCaller();
+    return (manifest?.callers ?? []).filter(row => caller === 'all' || row.id === caller).map(row => ({
+      ...row,
+      receipts: manifest?.receipts.filter(receipt => receipt.caller === row.id) ?? [],
+      writes: manifest?.writes.filter(write => write.caller === row.id) ?? [],
+      serviceState: manifest?.serviceStates?.[row.id],
+    }));
+  });
+  readonly grantDependencies = computed(() => githubGrantDependencies(this.operations()?.receipts ?? []));
+  readonly grantLabel = githubGrantLabel;
+
+  targetLabel(target: GitHubOperationTarget | null | undefined): string {
+    return target ? [target.transport, target.repository, ...(this.operations()?.appCoverage ?? []).map(broker => {
+      const coverage = broker.repositories.find(row => row.repository === target.repository);
+      return broker.broker + ' App ' + (coverage?.state ?? (broker.connected ? 'coverage unverified' : 'disconnected'))
+        + (coverage?.installationId ? ' (' + coverage.installationId + ')' : '');
+    })].join(' · ') : 'Unreported';
+  }
 
   readonly hasAttempts = computed(() => this.service.inventory()?.items.some(item => item.binding) ?? false);
 

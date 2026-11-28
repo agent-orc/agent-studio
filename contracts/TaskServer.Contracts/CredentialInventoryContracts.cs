@@ -36,7 +36,8 @@ public sealed record CredentialInventoryItemDto(
 
 public sealed record CredentialInventoryDto(
     DateTime GeneratedAt,
-    IReadOnlyList<CredentialInventoryItemDto> Items)
+    IReadOnlyList<CredentialInventoryItemDto> Items,
+    GitHubApp.GitHubOperationManifest? GitHubOperations = null)
 {
     public IReadOnlyList<CredentialLifecycleWarningDto> Warnings => CredentialLifecyclePolicy.Warnings(Items, GeneratedAt);
 }

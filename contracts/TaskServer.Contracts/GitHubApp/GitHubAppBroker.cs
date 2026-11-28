@@ -291,7 +291,18 @@ public sealed class GitHubAppBroker
         }
         return new GitHubAppStatus(true, connection.AppId, connection.Slug, connection.Name, connection.OwnerLogin,
             connection.HtmlUrl, InstallUrl(connection, null), connection.ConnectedAtUtc,
-            connection.Installations, repositories, hosts, problem);
+            connection.Installations, repositories, hosts, problem, AdoptedRepositoryCoverage(connection));
+    }
+
+    private GitHubRepositoryCoverageEntry[] AdoptedRepositoryCoverage(GitHubAppConnection connection)
+    {
+        lock (_cache)
+        {
+            return _visibility.Where(item => connection.Installations.Any(installation => installation.Id == item.Value.InstallationId))
+                .Select(item => new GitHubRepositoryCoverageEntry(item.Key, GitHubAppCoverageStates.Covered,
+                    item.Value.InstallationId))
+                .OrderBy(item => item.Repository, StringComparer.Ordinal).ToArray();
+        }
     }
 
     /// <summary>

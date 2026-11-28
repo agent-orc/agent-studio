@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
@@ -29,7 +30,8 @@ public sealed record ResultRefGcSweepResult(
     public int Failed => Decisions.Count(item => item.Action == ResultRefGcAction.Failed);
 }
 
-public sealed record ResultRefDeleteResult(bool Success, string? Error = null);
+public sealed record ResultRefDeleteResult(bool Success, string? Error = null,
+    IReadOnlyList<GitHubOperationTarget>? UpdatedTargets = null);
 
 public interface IResultRefDeleter
 {
@@ -84,15 +86,18 @@ public sealed class GitResultRefDeleter(
             stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
             stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
             await process.WaitForExitAsync(timeout.Token);
-            var output = OneLine(await stdoutTask);
+            var stdout = await stdoutTask;
             var error = OneLine(await stderrTask);
             if (process.ExitCode == 0)
-                return new ResultRefDeleteResult(true);
+            {
+                GitHubPushPorcelain.TryFindUpdate(stdout, immutableRemoteRef, ['-'], out var targets);
+                return new ResultRefDeleteResult(true, UpdatedTargets: targets);
+            }
 
             return new ResultRefDeleteResult(
                 false,
                 $"git exited {process.ExitCode}: {RedactRepositoryUrl(
-                    FirstNonBlank(error, output, "no diagnostic output"),
+                    FirstNonBlank(error, OneLine(stdout), "no diagnostic output"),
                     repositoryUrl)}");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -212,7 +217,10 @@ public sealed partial class TaskServerStore
             var reason = deleted.Success
                 ? "retention-expired"
                 : NormalizeGcError(deleted.Error);
-            await RecordResultRefGcAttemptAsync(item, action, reason, sweptAt, ct);
+            var completedAt = UtcNow;
+            var observations = deleted.Success ? (deleted.UpdatedTargets ?? []).Select(target =>
+                new GitHubWriteObservation("task-server-ref-gc", target, completedAt)) : [];
+            await RecordResultRefGcAttemptAsync(item, action, reason, sweptAt, observations, ct);
             decisions.Add(ToDecision(item, action, reason));
         }
 
@@ -301,6 +309,7 @@ public sealed partial class TaskServerStore
         ResultRefGcAction action,
         string reason,
         DateTime attemptedAt,
+        IEnumerable<GitHubWriteObservation> observations,
         CancellationToken ct)
     {
         await InWriteTransactionAsync(async (connection, transaction) =>
@@ -329,6 +338,7 @@ public sealed partial class TaskServerStore
                 ("$error", action == ResultRefGcAction.Failed
                     ? reason
                     : null));
+            await RecordGitHubWritesAsync(connection, transaction, observations, ct);
             await AuditAsync(
                 connection,
                 transaction,

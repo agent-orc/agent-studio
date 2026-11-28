@@ -44,8 +44,12 @@ public sealed class CredentialLifecycleMonitor(string path, TimeProvider clock, 
                 }, first);
             }).ToArray();
             var dueIds = CredentialLifecyclePolicy.Warnings(items, now).Select(warning => warning.CredentialId).ToHashSet(StringComparer.Ordinal);
-            var result = new CredentialInventoryDto(now, items.Select(item => dueIds.Contains(item.Id) && item.State is "ok" or "unused"
-                ? item with { State = "expiring" } : item).ToArray());
+            var result = inventory with
+            {
+                GeneratedAt = now,
+                Items = items.Select(item => dueIds.Contains(item.Id) && item.State is "ok" or "unused"
+                    ? item with { State = "expiring" } : item).ToArray(),
+            };
             if (notify)
             {
                 foreach (var warning in result.Warnings)

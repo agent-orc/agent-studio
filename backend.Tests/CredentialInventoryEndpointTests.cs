@@ -1,8 +1,10 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Host;
 using AgentStudio.Secrets;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -58,6 +60,27 @@ public sealed class CredentialInventoryEndpointTests
             await settings.SaveAsync(new SecretBackendBinding("workspace", "vault", "https://vault.example.invalid", "secret",
                 null, null, "WI_TEST_UNSET_TOKEN_" + Guid.NewGuid().ToString("N")), default);
 
+            var fetch = new GitHubOperationTarget("https", "github.com/example/source");
+            var push = new GitHubOperationTarget("ssh", "github.com/example/backup");
+            var grant = new GitHubGrantReference("ssh-deploy-key", "54201");
+            var observedAt = clock.GetUtcNow();
+            var proof = new GitHubOperationSuccess(observedAt.AddMinutes(-1), Guid.NewGuid(),
+                grant, 2, new string('a', 40));
+            var receipt = new GitHubCallerReceipt("workspace-export", "server-a", "export", "svc-export",
+                "task-server", "workspace-job", "active", observedAt, Guid.NewGuid(), fetch, push, grant, null, proof);
+            const string receiptRoute = "/api/v1/management/credential-inventory/github-receipt";
+            using var accepted = await client.PutAsJsonAsync(receiptRoute, receipt);
+            Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+            using var rejected = await client.PutAsJsonAsync(receiptRoute,
+                receipt with { LastWrite = proof with { CommitsPublished = 0 } });
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            using var unsafeReceipt = await client.PutAsJsonAsync(receiptRoute,
+                receipt with { Push = push with { Repository = $"https://user:{value}@github.com/example/backup" } });
+            Assert.Equal(HttpStatusCode.BadRequest, unsafeReceipt.StatusCode);
+            using var stale = await client.PutAsJsonAsync(receiptRoute,
+                receipt with { State = "disabled", ObservedAt = observedAt.AddMinutes(-2), LastWrite = null });
+            Assert.Equal(HttpStatusCode.NoContent, stale.StatusCode);
+
             using var response = await client.GetAsync("/api/v1/management/credential-inventory");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
@@ -75,7 +98,20 @@ public sealed class CredentialInventoryEndpointTests
             Assert.Contains(items, item => item.GetProperty("kind").GetString() == "service_account_token");
             Assert.Contains(items, item => item.GetProperty("label").GetString() == "DEPLOY_ACCESS");
             Assert.All(items, item => Assert.True(item.TryGetProperty("lifetimeClass", out _)));
-            if (proxied) Assert.Contains(items, item => item.GetProperty("id").GetString() == "remote-registry");
+            var operations = document.RootElement.GetProperty("gitHubOperations");
+            var recorded = Assert.Single(operations.GetProperty("receipts").EnumerateArray());
+            Assert.Equal("active", recorded.GetProperty("state").GetString());
+            Assert.Equal("github.com/example/source", recorded.GetProperty("fetch").GetProperty("repository").GetString());
+            Assert.Equal("github.com/example/backup", recorded.GetProperty("push").GetProperty("repository").GetString());
+            Assert.Equal("54201", recorded.GetProperty("lastWrite").GetProperty("credential").GetProperty("grantId").GetString());
+            if (proxied)
+            {
+                Assert.Contains(items, item => item.GetProperty("id").GetString() == "remote-registry");
+                Assert.Single(operations.GetProperty("writes").EnumerateArray());
+                var taskServerApp = operations.GetProperty("appCoverage")[1];
+                Assert.Contains(taskServerApp.GetProperty("repositories").EnumerateArray(), value =>
+                    value.GetProperty("repository").GetString() == "github.com/example/backup");
+            }
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -85,9 +121,16 @@ public sealed class CredentialInventoryEndpointTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             object body = request.RequestUri!.AbsolutePath.EndsWith("github-app", StringComparison.Ordinal)
-                ? new { connected = false, installations = Array.Empty<object>(), repositories = Array.Empty<object>(), hosts = Array.Empty<object>() }
+                ? new { connected = true, installations = Array.Empty<object>(), repositories = Array.Empty<object>(),
+                    hosts = Array.Empty<object>(), adoptedRepositories = new[] { new {
+                        repository = "github.com/example/backup", state = "covered", installationId = 19 } } }
                 : new
                 {
+                    gitHubOperations = new { callers = Array.Empty<object>(), receipts = Array.Empty<object>(),
+                        writes = new[] { new { caller = "workspace-export", target = new {
+                            transport = "ssh", repository = "github.com/example/backup" },
+                            succeededAt = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc), commitsToPublish = 2 } },
+                        appCoverage = Array.Empty<object>() },
                     generatedAt = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc),
                     items = new[] { new { id = "remote-registry", category = "repository", hostId = "host-a", kind = "github_deploy_key",
                         label = "Repository fallback", scopes = Array.Empty<string>(), state = "ok", detail = "Metadata only", affectedCards = Array.Empty<string>() } },

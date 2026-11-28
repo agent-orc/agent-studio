@@ -185,3 +185,39 @@ that names people or teams in its bypass list needs the App added as well.
 | No hosts listed | The list is kept in memory; it fills again within five minutes of a restart. |
 | The private key reads as revoked | It was revoked in **Settings > Secrets**. Reconnect with a new key. |
 | `operator-listener-required` | The request did not come through the browser path. Use the page on the Studio machine. |
+
+## GitHub operation receipts
+
+The owner's **Credentials → GitHub operations** view lists the installation's
+GitHub callers. App coverage is listed independently for the fetch and push
+repositories and for each broker. Coverage describes the broker's latest
+repository information. It does not establish the transport, effective role
+binding, or credential that completed an operation.
+
+Record one metadata receipt per host or container and checkout or job using the
+owner-authenticated `PUT /api/v1/management/credential-inventory/github-receipt`
+endpoint. Use the caller ID returned by the Credentials inventory GET, and
+stable metadata aliases for the host, slot, checkout owner, role, and binding.
+Use a separate slot for each job, checkout, or independent credential copy.
+An observation identifies the current binding. Each read or write proof has
+its own success time, receipt ID and credential reference. Leave unknown
+targets and missing proofs null. For an intentionally unused or disabled
+instance, use `unused` or `disabled` with the ID of an owner record documenting
+the observed state.
+
+Use `https`, `ssh`, `api` or `ghcr` as transport and
+`github.com/owner/repository` in lowercase as the repository identity. Record
+a GitHub numeric grant ID, a UUID assigned in the owner's receipt inventory,
+or a public SSH SHA-256 fingerprint. Reuse the same UUID or fingerprint across
+copies of the same grant, and retain the owner receipt behind each binding.
+Use `anonymous` or `unknown` with no credential identifier when appropriate.
+The API accepts no credential values, URLs with credentials, raw configuration,
+or command output.
+
+Task Server also records acknowledged ref updates for workspace export and
+result-ref garbage collection. These show the GitHub destination and time even
+when the effective host grant requires a separate owner attestation. A
+workspace export receipt requires commits published and the resulting remote
+commit ID. Use an export with pending changes, verify the destination branch
+advanced to the expected commit, then record the effective grant from owner
+records. A status check with zero commits ahead does not establish a write.

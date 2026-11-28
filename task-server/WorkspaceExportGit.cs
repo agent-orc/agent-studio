@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentStudio.TaskServer;
 
@@ -6,7 +7,9 @@ public sealed record WorkspaceExportGitResult(int Code, string Output, string Er
 
 public sealed record WorkspaceExportCommit(bool Committed, string? Sha, string? Error);
 
-public sealed record WorkspaceExportPush(bool Attempted, bool Succeeded, int? AheadCommits, string? Error);
+public sealed record WorkspaceExportPush(bool Attempted, bool Succeeded, int? AheadCommits, string? Error,
+    int? CommitsToPublish = null, bool Updated = false, GitHubOperationTarget? Fetch = null,
+    IReadOnlyList<GitHubOperationTarget>? Targets = null);
 
 /// <summary>
 /// Git steps of the workspace export: stage only export-owned paths
@@ -53,9 +56,20 @@ public sealed class WorkspaceExportGit(
     {
         var ahead = await AheadAsync(root, branch, ct);
         if (ahead == 0) return new WorkspaceExportPush(false, true, 0, null);
-        var push = await _run(root, ["push", "origin", $"HEAD:refs/heads/{branch}"], timeout, ct);
-        if (push.Code == 0) return new WorkspaceExportPush(true, true, 0, null);
-        var error = push.TimedOut ? $"git push timed out after {timeout.TotalSeconds:0} s" : "git push: " + push.Error;
+        var destination = $"refs/heads/{branch}";
+        var push = await _run(root, ["push", "--porcelain", "origin", $"HEAD:{destination}"], timeout, ct);
+        if (push.Code == 0)
+        {
+            var updated = GitHubPushPorcelain.TryFindUpdate(push.Output, destination, [' ', '*'], out var targets);
+            GitHubOperationTarget? fetch = null;
+            if (updated && targets.Count > 0)
+            {
+                var remote = await _run(root, ["remote", "get-url", "origin"], LocalTimeout, ct);
+                if (remote.Code == 0) fetch = GitHubOperationTarget.FromGitRemote(remote.Output);
+            }
+            return new WorkspaceExportPush(true, true, 0, null, ahead, updated, fetch, targets);
+        }
+        var error = push.TimedOut ? $"git push timed out after {timeout.TotalSeconds:0} s" : $"git push exited {push.Code}.";
         return new WorkspaceExportPush(true, false, ahead, error);
     }
 
