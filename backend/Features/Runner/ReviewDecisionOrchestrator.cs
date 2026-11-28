@@ -3388,8 +3388,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // current set is empty. See the "concern tags bleiben kleben" bug.
         ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
-        if (!CompletionContentEvidence.TryWriteLocalAdmission(current.FolderPath, localAttemptId,
-                aspectSubject.Sha, roundBudget.ContentAdmissions, localReviewEvidence, _logger)) return;
+        var admissions = roundBudget.ContentAdmissions;
+        var hasLocalDelivery = !aspectSubject.IsRemote && !string.IsNullOrWhiteSpace(aspectSubject.Sha);
+        // A literal pass can stand on its own. An accepted concern or a transfer needs its receipt.
+        var requiresReceipt = admissions?.Any(item => item.Disposition != "passed" || item.RequiresFollowUp) == true;
+        if ((requiresReceipt || hasLocalDelivery && admissions is { Count: > 0 })
+            && !CompletionContentEvidence.TryWriteLocalAdmission(current.FolderPath, localAttemptId,
+                aspectSubject.Sha, admissions, localReviewEvidence, _logger)) return;
 
         // Promote to 5-human-review with or without concern tags. ADR-0025:
         // accept-as-done routes to human-review, never directly to completed.
