@@ -705,14 +705,22 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(changeMetadata ? new[] { "build" } : new[] { "build", "suite" }, executed);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("owned", false)]
     [InlineData("owned", true)]
     [InlineData("external-gitdir", true)]
     [InlineData("external-commondir", true)]
     [InlineData("checkout-gitdir", true)]
+    [InlineData("covered-config-link", false)]
+    [InlineData("covered-config-link", true)]
+    [InlineData("checkout-git-config-link", true)]
+    [InlineData("checkout-bookkeeping-config-link", true)]
+    [InlineData("checkout-bookkeeping-link-chain", true)]
     public async Task RestartChecksLinkedWorktreeMetadata(string location, bool changeMetadata)
     {
+        var linkedConfig = location.Contains("link", StringComparison.Ordinal);
+        Skip.If(linkedConfig && OperatingSystem.IsWindows(), "The fixture creates Unix symlinks.");
+
         var fixture = DurableFixture();
         using var http = fixture.Http;
         var checkout = Path.Combine(_root, "durable");
@@ -726,7 +734,13 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             _ => Path.Combine(temp, "main", ".git"),
         };
         var gitDir = Path.Combine(location == "external-commondir" ? temp : common, "worktrees", "linked");
-        var branch = Path.Combine(common, "refs", "heads", "linked");
+        var metadata = location switch
+        {
+            "covered-config-link" or "checkout-bookkeeping-link-chain" => Path.Combine(temp, "config"),
+            "checkout-git-config-link" => Path.Combine(checkout, ".git", "config"),
+            "checkout-bookkeeping-config-link" => Path.Combine(checkout, ".post-merge-evidence", "config"),
+            _ => Path.Combine(common, "refs", "heads", "linked"),
+        };
         var executed = new List<string>();
         var worker = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart(),
             executor: (command, _) =>
@@ -734,18 +748,31 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
                 executed.Add(command);
                 Directory.CreateDirectory(worktree);
                 Directory.CreateDirectory(gitDir);
-                Directory.CreateDirectory(Path.GetDirectoryName(branch)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(metadata)!);
                 var pointer = location == "external-gitdir" ? gitDir : Path.GetRelativePath(worktree, gitDir);
                 File.WriteAllText(Path.Combine(worktree, ".git"), $"gitdir: {pointer}\n");
                 File.WriteAllText(Path.Combine(gitDir, "commondir"), Path.GetRelativePath(gitDir, common) + "\n");
                 File.WriteAllText(Path.Combine(gitDir, "HEAD"), "ref: refs/heads/linked\n");
-                File.WriteAllText(branch, new string('a', 40) + "\n");
+                File.WriteAllText(metadata, linkedConfig ? "[core]\n\tbare = false\n" : new string('a', 40) + "\n");
+                if (linkedConfig)
+                {
+                    var target = metadata;
+                    if (location == "checkout-bookkeeping-link-chain")
+                    {
+                        var evidence = Directory.CreateDirectory(Path.Combine(checkout, ".post-merge-evidence"));
+                        target = Path.Combine(evidence.FullName, "config");
+                        File.CreateSymbolicLink(target, metadata);
+                    }
+                    File.CreateSymbolicLink(Path.Combine(common, "config"), target);
+                }
                 return Task.FromResult((0, false, ""));
             });
 
         await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, default));
-        Assert.Equal(location == "owned", worker.ReadJournal().WorkspaceDigest is not null);
-        if (changeMetadata) File.WriteAllText(branch, new string('b', 40) + "\n");
+        var covered = location is "owned" or "covered-config-link";
+        Assert.Equal(covered, worker.ReadJournal().WorkspaceDigest is not null);
+        if (changeMetadata)
+            File.WriteAllText(metadata, linkedConfig ? "[core]\n\tbare = true\n" : new string('b', 40) + "\n");
 
         var exit = await DurableWorker(http, executed).ExecuteJournalAsync(null, default);
         var receipt = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
