@@ -554,8 +554,13 @@ public sealed class RemoteReviewWorkspace
                 var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                     ? VisualReviewScreenshotBundle.PromptSection(_visualScreenshotEvidence, RepositoryPath)
                     : string.Empty;
+                var authored = command.Prompt!;
+                // Leased plans from older servers can still explicitly forbid tools.
+                if (command.Aspect == "concept-fit"
+                    && !authored.Contains(ConceptRemoteReviewPolicy.WorkspaceInstructions, StringComparison.Ordinal))
+                    authored += "\n\n## Delivery checkout instructions\n\n" + ConceptRemoteReviewPolicy.WorkspaceInstructions;
                 var input = ReviewAspectInputBudget.Compose(
-                    command.Prompt!,
+                    authored,
                     reviewMaterial ??= await BuildReviewMaterialAsync(
                         ReviewMaterialMaximumFiles, ReviewMaterialMaximumLines, ct),
                     screenshots);
@@ -1202,6 +1207,10 @@ public sealed class RemoteReviewWorkspace
             var verdict = comparison is null
                 ? ParseVerdict(command, execution.Process)
                 : BaselineVerdict(command, comparison);
+            if (ConceptRemoteReviewPolicy.IsMaterialUnavailable(verdict))
+                throw await InfrastructureFailureAsync(
+                    ConceptRemoteReviewPolicy.MaterialUnavailable, ConceptRemoteReviewPolicy.MaterialFailureSummary(verdict),
+                    commands, artifacts, ct);
             if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
             {
                 verdict = VisualReviewEvidence.EnforceMissingScreenshots(verdict,

@@ -337,6 +337,20 @@ public sealed class CompletionContentAdmissionTests : IDisposable
     }
 
     [Fact]
+    public void Historical_material_concern_requires_review_recovery_without_a_content_gap()
+    {
+        Settle("concerns", "The published Dossier snapshot is incomplete.", aspect: "concept-fit");
+        var card = _task with { Mode = TaskModes.Concept };
+        var facts = CompletionContentEvidence.Read(card, _authority);
+        var refusal = CompletionContentPolicy.Decide(facts);
+
+        Assert.Null(facts.ContentStatus);
+        Assert.False(refusal.Accepted);
+        Assert.Contains("review infrastructure", refusal.Message);
+        Assert.DoesNotContain("verdict was concerns", refusal.Message);
+    }
+
+    [Fact]
     public void Wrong_content_aspect_in_settled_report_is_not_admitted()
     {
         Settle("concerns", "A wording suggestion.", aspect: "concept-fit");

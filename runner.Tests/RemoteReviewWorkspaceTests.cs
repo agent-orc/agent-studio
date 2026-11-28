@@ -451,21 +451,40 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.False(evidence.Workspace.DirtyAfter);
     }
 
-    [Fact]
-    public async Task Concept_dossier_that_contradicts_brief_is_blocked_by_remote_aspect()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Concept_fit_reads_large_delivery_files_or_reports_infrastructure(bool canRead)
     {
         if (OperatingSystem.IsWindows()) return;
-        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
-            "task/concept-mismatch",
-            "docs/concept/workbench.json",
-            "{\"implementationTasks\":[{\"title\":\"Combine every slice into one card\"}]}");
+        const string branch = "task/concept-mismatch";
+        var largeIndex = new string('x', 520_000) + "<a href='cards.md'>Implementation cards</a>";
+        const string cardText = "Combine every slice into one card";
+        await SeedSubjectBranchWithFileAsync(branch, "docs/concept/cards.md", cardText);
+        var seed = Path.Combine(_root, "seed");
+        // This linked file is unchanged relative to the reviewed merge base.
+        await GitAsync(seed, "push", "origin", "HEAD:refs/heads/main");
+        await File.WriteAllTextAsync(Path.Combine(seed, "docs/concept/index.html"), largeIndex);
+        await File.WriteAllTextAsync(Path.Combine(seed, "docs/concept/workbench.json"), "{\"implementationTasks\":[\"cards.md\"]}");
+        await GitAsync(seed, "add", "docs/concept");
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "add linked data");
+        await GitAsync(seed, "push", "origin", branch);
+        var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
         var capturedPrompt = Path.Combine(_root, "concept-review-prompt.txt");
         var fakeCodex = Path.Combine(_root, "fake-concept-review.sh");
+        // A read failure uses the same marker a live review CLI returns when its sandbox cannot open a file.
+        var denied = canRead ? "" : "Read denied";
         await File.WriteAllTextAsync(fakeCodex, $$$"""
             #!/bin/sh
             cat > '{{{capturedPrompt}}}'
-            if grep -q 'one card per independently reviewable slice' '{{{capturedPrompt}}}' &&
-               grep -q 'Combine every slice into one card' '{{{capturedPrompt}}}'; then
+            if [ -n '{{{denied}}}' ]; then
+              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=concerns; classification=ReviewMaterialUnavailable; summary=Read denied.; missing=docs/concept/index.html]]"}}'
+            elif grep -q 'one card per independently reviewable slice' '{{{capturedPrompt}}}' &&
+               test "$(wc -c < docs/concept/index.html)" -eq {{{largeIndex.Length}}} &&
+               grep -q "href='cards.md'" docs/concept/index.html &&
+               grep -q 'cards.md' docs/concept/workbench.json &&
+               grep -q 'Combine every slice into one card' docs/concept/cards.md; then
               printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"The Dossier contradicts the brief.\n[[ASPECT_VERDICT: status=block; summary=Implementation cards contradict the brief.; evidence_checked=docs/concept/workbench.json and prompt.md; missing=one card per independently reviewable slice]]"}}'
             else
               printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=pass; summary=No contradiction found.]]"}}'
@@ -488,11 +507,24 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             codexCliBin: fakeCodex);
 
         await workspace.PrepareAsync(null!, default);
+        if (!canRead)
+        {
+            var failure = await Assert.ThrowsAsync<ReviewInfrastructureException>(() => workspace.ExecutePlanAsync(default));
+            Assert.Equal("ReviewMaterialUnavailable", failure.Classification);
+            Assert.Contains("docs/concept/index.html", failure.Message);
+            Assert.Equal("ReviewInfra", failure.Evidence!.Outcome);
+            Assert.Empty(failure.Evidence.Verdicts);
+            return;
+        }
         var evidence = await workspace.ExecutePlanAsync(default);
 
         Assert.Equal("ProductFailure", evidence.Outcome);
         Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
-        Assert.Contains("Combine every slice into one card", await File.ReadAllTextAsync(capturedPrompt));
+        var prompt = await File.ReadAllTextAsync(capturedPrompt);
+        Assert.DoesNotContain(cardText, prompt);
+        Assert.DoesNotContain(largeIndex, prompt);
+        Assert.Contains("docs/concept/index.html:", prompt);
+        Assert.Contains("diff characters omitted", prompt);
     }
 
     [Fact]

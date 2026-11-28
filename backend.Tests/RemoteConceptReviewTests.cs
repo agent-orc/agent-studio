@@ -105,36 +105,58 @@ public sealed class RemoteConceptReviewTests : IDisposable
     }
 
     [Fact]
-    public void Follow_up_concept_fit_reads_published_index_and_linked_files()
+    public void Concept_fit_names_delivery_files_before_the_dossier_is_published()
     {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Review the whole Dossier.");
-        var version = BriefVersionStore.Record(_folder, "Review the whole Dossier.");
-        var repo = Path.Combine(_folder, "repository");
-        var dossier = Path.Combine(repo, "docs", "persona-team");
-        Directory.CreateDirectory(dossier);
-        File.WriteAllText(Path.Combine(dossier, "index.html"),
-            "<h1>Persona team decisions</h1><a href=\"cards.md\">Cards</a>");
-        File.WriteAllText(Path.Combine(dossier, "cards.md"), "# Implementation cards\nOne independently reviewable card.");
-        File.WriteAllText(Path.Combine(dossier, "workbench.json"), "{\"implementationTasks\":[\"AGT-3573-A\"]}");
-        ConceptWorkbenchStore.Write(_folder, new ConceptWorkbenchRecord
-        {
-            RepoRelativeDirectory = "docs/persona-team",
-            RepoRelativeEntrypoint = "docs/persona-team/index.html",
-        });
-        File.AppendAllText(Path.Combine(_folder, "prompt.md"), "\nFollow-up: improve summary only.");
-
-        var plan = BuildPlan(repositoryPath: repo);
+        var repo = NodeRepository();
+        var plan = BuildPlan(repositoryPath: repo, changedFiles: ["docs/topic/cards.md"]);
         var prompt = Assert.Single(plan.Commands, command => command.Aspect == "concept-fit").Prompt!;
-        Assert.Equal(version, plan.BriefSha256);
-        Assert.Contains("docs/persona-team/index.html", prompt);
-        Assert.Contains("Persona team decisions", prompt);
-        Assert.Contains("docs/persona-team/cards.md", prompt);
-        Assert.Contains("independently reviewable card", prompt);
-        Assert.Contains("implementationTasks", prompt);
-        Assert.True(ConceptDossierSnapshotSpan.TrySplit(prompt, out _, out var span, out _));
-        Assert.Contains("Persona team decisions", span);
-        Assert.Contains("implementationTasks", span);
+
+        Assert.Contains("docs/topic/index.html", prompt);
+        Assert.Contains("docs/topic/workbench.json", prompt);
+        Assert.Contains("read-only", prompt);
+        Assert.Contains("ReviewMaterialUnavailable", prompt);
+        Assert.DoesNotContain("linked file is missing", prompt);
+        Assert.False(Directory.Exists(Path.Combine(repo, "docs")));
+    }
+
+    [Theory]
+    [InlineData("ReviewMaterialUnavailable", "Cannot read the linked file.", "docs/topic/cards.md")]
+    [InlineData("RemoteAspectVerdict", "The published Dossier snapshot is incomplete.", "Full index.html")]
+    [InlineData("RemoteAspectVerdict", "The supplied diff is insufficient for a full concept-fit review.", "Full Dossier content")]
+    [InlineData("RemoteAspectVerdict", "The files could not be reviewed.", "Published Dossier files are marked missing, and their diffs are truncated.")]
+    [InlineData("RemoteAspectVerdict", "Required Dossier content and the complete card sequence cannot be verified.", "Complete published index.html and workbench.json")]
+    public void Missing_review_material_reaches_infrastructure_settlement(string classification, string summary, string missing)
+    {
+        var plan = BuildPlan(repositoryPath: NodeRepository());
+        var report = EmptyPassingReport() with
+        {
+            Verdicts = [new("concept-fit", "concerns", classification, summary, "diff", missing)],
+        };
+
+        var settled = ConceptRemoteReviewPolicy.Enforce(plan, plan.BriefSha256, plan.BriefSha256, report);
+
+        Assert.Equal("ReviewInfra", settled.Outcome);
+        Assert.Equal("ReviewMaterialUnavailable", settled.FailureClassification);
+        Assert.Contains(missing, settled.Summary);
+        Assert.Empty(settled.Verdicts);
+    }
+
+    [Theory]
+    [InlineData("Decision D3 has no recommendation.")]
+    [InlineData("Two required Dossier files are missing from the delivery tree.")]
+    public void Missing_content_in_an_inspected_file_remains_a_content_concern(string finding)
+    {
+        var plan = BuildPlan(repositoryPath: NodeRepository());
+        var report = EmptyPassingReport() with
+        {
+            Verdicts = [new("concept-fit", "concerns", "RemoteAspectVerdict",
+                finding, "docs/topic/index.html", "Named deliverable in section D3")],
+        };
+
+        var settled = ConceptRemoteReviewPolicy.Enforce(plan, plan.BriefSha256, plan.BriefSha256, report);
+
+        Assert.Equal("concerns", Assert.Single(settled.Verdicts).Status);
+        Assert.Equal("Pass", settled.Outcome);
     }
 
     [Fact]
