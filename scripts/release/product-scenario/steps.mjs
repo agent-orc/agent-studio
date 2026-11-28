@@ -174,8 +174,8 @@ async function writeWish(ctx, record) {
   record.screenshot(await page.screenshot('preview'), 'Live stage beside the product controls');
 
   // The chat beside the preview answers in product language (observedSurface "URL preview").
-  const chat = await pm.api.productChat(state.project.id, config.wish);
-  record.note('productChat', { status: chat.status, reply: excerpt(chat.body?.reply?.text ?? chat.body?.error ?? chat.body?.message) });
+  const chat = await pm.api.productChat(state.project.name, config.wish);
+  record.note('productChat', { status: chat.status, reply: excerpt(chat.body?.reply?.text || chat.body?.reply?.errorDetail || chat.body?.reply?.errorMessage || chat.body?.error || chat.body?.message) });
 
   await page.click('product-start-change');
   await page.fill('product-wish', config.wish);
@@ -198,7 +198,7 @@ async function writeWish(ctx, record) {
   expect(proposal.visible && /token/i.test(proposal.text ?? ''), 'The proposal shows no quota estimate.', { proposal: proposal.text });
 
   const title = cardTitle(config.wish);
-  const early = (await owner.tasks(state.project.id)).filter(card => !state.initialCardIds.includes(card.id));
+  const early = (await owner.tasks(state.project.id)).filter(card => card.title === title && !state.initialCardIds.includes(card.id));
   expect(early.length === 0, 'A card exists before the product manager confirmed the proposal.', { cards: early.map(card => card.key) });
 
   const created = await page.captureRequest('POST', '/api/tasks', () => page.click('product-confirm-change'));
