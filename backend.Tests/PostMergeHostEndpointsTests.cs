@@ -206,5 +206,70 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Null(legacy.Verdicts[0].DurationMs);
     }
 
+    [Fact]
+    public async Task TerminalCoverageConflictsLeaveTheClaimAvailableForAnExactLegacyReceipt()
+    {
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root, ["Security:Profile"] = "local", ["AllowedHosts"] = "*" }));
+            builder.ConfigureServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.Replace(ServiceDescriptor.Singleton(new PostMergeRunStore(Path.Combine(_root, "post-merge"))));
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var path = Path.Combine(_root, "one");
+        Directory.CreateDirectory(path);
+        var project = factory.Services.GetRequiredService<ProjectRegistry>()
+            .EnsureProjectForStorage(path, "one", DefaultWorkspace.Id, _clock);
+        var store = factory.Services.GetRequiredService<PostMergeRunStore>();
+        const string route = "/api/runner/post-merge/projects/one/runs";
+        var running = new PostMergeRunRecord("coverage", "one", "window", new string('a', 40), null,
+            null, null, 1, ["build", "test"], [], "running", _clock.GetUtcNow(), null);
+        using (var started = await client.PostAsJsonAsync(route, running)) started.EnsureSuccessStatusCode();
+        var terminal = running with { Status = "green", FinishedAtUtc = _clock.GetUtcNow(),
+            Verdicts = [new("build", 0, false), new("test", 0, false)] };
+        foreach (var bad in new[]
+                 {
+                     terminal with { Commands = ["build"], Verdicts = [terminal.Verdicts[0]] },
+                     terminal with { Verdicts = [terminal.Verdicts[0], terminal.Verdicts[0]] },
+                     terminal with { Verdicts = [terminal.Verdicts[0], new("other", 0, false)] },
+                     terminal with { Verdicts = [terminal.Verdicts[0]] },
+                 })
+        {
+            using var response = await client.PostAsJsonAsync(route, bad);
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Null(store.Read(project.Id).LastGreenSha);
+            Assert.Equal(running.Id, store.Read(project.Id).ActiveRun!.Id);
+        }
+        foreach (var bad in new[]
+                 {
+                     running with { Commands = ["build", "build"] },
+                     running with { Commands = [" "] },
+                     terminal with { Verdicts = [new(" ", 0, false)] },
+                     running with { Commands = Enumerable.Range(0, 65).Select(index => "command-" + index).ToArray() },
+                 })
+        {
+            using var response = await client.PostAsJsonAsync(route, bad);
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        var malformed = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(terminal))!;
+        malformed["Verdicts"] = new System.Text.Json.Nodes.JsonArray((System.Text.Json.Nodes.JsonNode?)null);
+        using (var content = new StringContent(malformed.ToJsonString(), System.Text.Encoding.UTF8, "application/json"))
+        using (var response = await client.PostAsync(route, content))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        using (var accepted = await client.PostAsJsonAsync(route, terminal)) accepted.EnsureSuccessStatusCode();
+        using (var replay = await client.PostAsJsonAsync(route, terminal)) replay.EnsureSuccessStatusCode();
+        Assert.Equal(terminal.TipSha, store.Read(project.Id).LastGreenSha);
+        Assert.Single(store.Read(project.Id).Runs);
+        using var conflict = await client.PostAsJsonAsync(route, terminal with { Reason = "changed receipt" });
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }
