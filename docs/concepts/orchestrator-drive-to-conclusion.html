@@ -3661,6 +3661,18 @@
           <td>The executor replaces the obsolete instructions before the CLI runs. An inaccessible file
             reaches <code>ReviewInfra / ReviewMaterialUnavailable</code>. A cited content finding keeps its verdict.</td>
         </tr>
+        <tr id="case-integration-fresh-empty-checkout">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353 / AGT-4018</code><br><span class="small">integration-fresh-empty-checkout</span></td>
+          <td>A resumed conflict round hit its 300-second watchdog under CPU contention.
+            Its fresh successor started without the reviewed delivery or preparation record.</td>
+          <td>The Engine completion return skipped fallback-base persistence. Claims consumed
+            the recovery pin, and later result discovery selected an empty NeedsInput result.</td>
+          <td>Recovery pins now survive until integration. Both authorities receive persisted
+            fallback custody before Ready; failed writes hold Progress. Failed or commitless
+            attempts cannot replace the delivery. CPU full stall is excluded when available.
+            The original run escalated as missing-integration-preparation.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3732,7 +3744,7 @@
       is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
       receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
 
-    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
+    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 charged seconds. On Linux workers with cgroup CPU pressure accounting, the duration excludes the worker group's full CPU stall intervals; unavailable counters retain a logged wall-clock fallback. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
        session is genuinely gone. That fallback consumes one attempt; it does not reset the budget. The current defect is the

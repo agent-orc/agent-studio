@@ -231,10 +231,19 @@ internal static class CarWorkerExecution
 
             var timedOut = false;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stopToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(spec.TimeoutSeconds));
-            var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeout.Token)
-                .ContinueWith(_ => { }, TaskScheduler.Default);
+            Task deadline;
+            if (spec.ResumeSessionId is not null && spec.TokenCeiling is not null)
+                deadline = MechanicalRoundDeadline.WaitAsync(spec.TimeoutSeconds, workerDirectory, append, timeout.Token)
+                    .ContinueWith(_ => { }, TaskScheduler.Default);
+            else
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(spec.TimeoutSeconds));
+                deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeout.Token)
+                    .ContinueWith(_ => { }, TaskScheduler.Default);
+            }
             var completed = await Task.WhenAny(finished.Task, deadline);
+            timeout.Cancel();
+            await deadline;
             if (!ReferenceEquals(completed, finished.Task))
             {
                 timedOut = true;

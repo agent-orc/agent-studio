@@ -80,7 +80,8 @@ public static class LostWorkerContinuationPolicy
 /// so the next claim can hand it to the runner. Single use: the claim that reads
 /// it clears it, because a later round of the same card must not silently start
 /// on a stale generation's salvage. A review fix-round base lives until its run
-/// completes (<see cref="ContinuationBaseStore.ConsumeForClaim"/>).
+/// completes (<see cref="ContinuationBaseStore.ConsumeForClaim"/>). Integration
+/// recovery pins remain until successful integration retires them.
 /// </summary>
 /// <param name="Ref">Full <c>refs/heads/...</c> name of the salvage ref.</param>
 public sealed record ContinuationBaseRecord(
@@ -88,7 +89,8 @@ public sealed record ContinuationBaseRecord(
     string CommitSha,
     string Reason,
     string AttemptId,
-    DateTime SavedAtUtc);
+    DateTime SavedAtUtc,
+    bool RetainUntilIntegrated = false);
 
 /// <summary>
 /// File boundary for <see cref="ContinuationBaseRecord"/>
@@ -121,6 +123,13 @@ public static class ContinuationBaseStore
         {
             return false;
         }
+    }
+
+    /// <summary>A failed attempt cannot replace an outstanding reviewed delivery with incidental salvage.</summary>
+    public static bool SaveAttemptResult(string folderPath, ContinuationBaseRecord record)
+    {
+        lock (Sync)
+            return Read(folderPath) is { RetainUntilIntegrated: true } || Save(folderPath, record);
     }
 
     /// <summary>Compare the live base and lane under the same lock used by base writers and consumers.</summary>
@@ -169,17 +178,18 @@ public static class ContinuationBaseStore
 
     /// <summary>
     /// The claim path's read. Every base is single use and cleared by the claim
-    /// that reads it, except a review fix round's (AGT-3056): a claim that fails
-    /// before the agent starts must not leave the retry to begin silently on the
-    /// integration branch, so that base stays until a run of the card completes
-    /// (<see cref="ClearAfterCompletion"/>) or a later round replaces it.
+    /// that reads it, except an outstanding integration delivery or a review
+    /// fix round's (AGT-3056). Preparation retries keep the same delivery. A
+    /// review base stays until completion; an integration pin stays until the
+    /// delivery integrates or a newer delivery explicitly replaces it.
     /// </summary>
     public static ContinuationBaseRecord? ConsumeForClaim(string folderPath)
     {
         lock (Sync)
         {
             var record = Read(folderPath);
-            if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
+            if (record is not null && !record.RetainUntilIntegrated
+                && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
             return record;
         }
     }
@@ -191,7 +201,11 @@ public static class ContinuationBaseStore
     /// </summary>
     public static void ClearAfterCompletion(string folderPath)
     {
-        if (ReviewFixRoundBase.IsFixRound(Read(folderPath)?.Reason)) Clear(folderPath);
+        lock (Sync)
+        {
+            if (Read(folderPath) is { RetainUntilIntegrated: false } record
+                && ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
+        }
     }
 
     public static void Clear(string folderPath)

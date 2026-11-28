@@ -71,7 +71,12 @@ public sealed class IntegrationConflictRecovery
             // A hold or infrastructure error retains priority. A landed result releases it.
             if (result.Outcome.IsSuccessfulIntegration())
             {
-                try { File.Delete(Path.Combine(request.JobFolderPath, FileName)); }
+                try
+                {
+                    File.Delete(Path.Combine(request.JobFolderPath, FileName));
+                    if (ContinuationBaseStore.Read(request.JobFolderPath) is { RetainUntilIntegrated: true } pin)
+                        ContinuationBaseStore.TryClearWhen(request.JobFolderPath, pin);
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // Publication already happened. Receipt cleanup cannot reverse it.

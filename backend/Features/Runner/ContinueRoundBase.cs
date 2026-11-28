@@ -124,10 +124,17 @@ public static class ContinueRoundBasePolicy
         ReviewSubjectRecord? folderSubject)
     {
         var refs = new List<CardResultRef>();
+        var hasReviewedDelivery = folderSubject is not null
+            || projection?.ReviewAttempts.Any(review => review.Outcome == ReviewTerminalOutcome.Pass) == true;
         if (projection is not null)
         {
             foreach (var run in projection.RunAttempts)
-                if (run.ResultEnvelope is { ImmutableRemoteRef: { } reference } envelope)
+                if (run.ResultEnvelope is { ImmutableRemoteRef: { } reference } envelope
+                    && (!hasReviewedDelivery
+                        || run.TerminalOutcome is not null
+                            && (run.TerminalOutcome.Equals("done", StringComparison.OrdinalIgnoreCase)
+                                || run.TerminalOutcome.Equals("noop", StringComparison.OrdinalIgnoreCase))
+                            && !string.Equals(envelope.BaseSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase)))
                     refs.Add(new CardResultRef(reference, envelope.ResultSha, run.AttemptId,
                         run.TerminalAt ?? run.CreatedAt));
             var subjects = projection.ReviewAttempts.Select(attempt => attempt.Subject);

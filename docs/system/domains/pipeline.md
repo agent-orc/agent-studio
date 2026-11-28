@@ -5073,6 +5073,18 @@ lifecycle remain platform-owned. Teardown refuses untouched text conflict marker
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
 
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. Mechanical fallback cannot replace
+it with incidental salvage. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a reviewed delivery exists, continue-base discovery excludes failed runs
+and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery.
+
+
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic
 handoffs record the exact saved prompt digest and save timestamp. The existing

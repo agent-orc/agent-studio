@@ -125,6 +125,30 @@ public sealed class ContinueRoundBasePolicyTests
         Assert.Equal(OlderRef, decision.Base!.Ref);
     }
 
+    [Theory]
+    [InlineData("NeedsInput", false)]
+    [InlineData("Blocked", false)]
+    [InlineData("Done", true)]
+    [InlineData("NoOp", true)]
+    public void FailedOrCommitlessRunsNeverDisplaceTheReviewedDelivery(string outcome, bool noCommits)
+    {
+        var run = new RunAttemptDto("empty", "AGT-1", "repo", null, AttemptLifecycleState.Completed, null, 2, 1,
+            Saved, Saved, LatestSha, outcome, null, [],
+            new ImmutableResultEnvelope("repo", "empty", noCommits ? LatestSha : OlderSha,
+                LatestSha, LatestRef, null, new string('c', 64)));
+        var projection = new AttemptAuthorityProjection("AGT-1", 1, run, null, null, [run], [], false);
+        var reviewed = new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-1", RunAttemptId = "reviewed", ResultSha = OlderSha,
+            ImmutableResultRef = OlderRef, CompletedAtUtc = new DateTimeOffset(Saved.AddMinutes(-10)),
+        };
+        Assert.Contains(ContinueRoundBasePolicy.Collect(projection, null), item => item.Ref == LatestRef);
+        var refs = ContinueRoundBasePolicy.Collect(projection, reviewed);
+        var decision = ContinueRoundBasePolicy.Decide(null, refs, null, true, Saved);
+        Assert.Equal(OlderSha, decision.Base!.CommitSha);
+        Assert.Equal(OlderRef, decision.Base.Ref);
+    }
+
     [Fact]
     public void Collect_reads_run_envelopes_review_subjects_and_the_folder_subject()
     {
