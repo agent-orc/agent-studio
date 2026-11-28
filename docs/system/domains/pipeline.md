@@ -874,7 +874,9 @@ error lines. The runner repeats that lint command once at the same tip. Only
 tests reported failing again receive a confirmed failure. A failure first seen
 on the repeat carries its own name and diagnostic. An explicit TAP pass clears
 an initial failure when the point can be matched across attempts. Nested tests
-include their parent names. For duplicate names, the receipt uses source
+include their parent names. When a suite summarizes failed children, the receipt
+records the children's results. A suite's own failure, such as a failing
+teardown hook, gets a separate verdict. For duplicate names, the receipt uses source
 locations where they identify individual tests. Where TAP leaves the match
 ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
 A skipped, TODO or absent test stays unresolved even when the repeat exits

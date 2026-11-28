@@ -3587,6 +3587,13 @@
           <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
           <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
         </tr>
+        <tr id="case-nested-tap-summary">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">nested-tap-summary</span></td>
+          <td>Different children failed on successive post-merge lint attempts. The receipt showed a confirmed failure for their enclosing suite.</td>
+          <td>Each attempt counted the suite's TAP summary as another failing test.</td>
+          <td>The regression fixture ends with a red lint receipt. It records the first child's recovery and the second child's new failure. A suite hook with its own error retains its verdict.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>

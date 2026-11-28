@@ -8,7 +8,12 @@ namespace AgentRunner;
 /// <summary>Node TAP points and their first diagnostic, read before truncating command output.</summary>
 internal sealed partial class PostMergeTap(string output)
 {
-    private sealed record Point(string Name, string Result, int Document, string Number, string? Error = null, string? Location = null);
+    private sealed record Point(string Name, string Result, int Document, string Number,
+        bool IsFailureSummary, string? Error = null, string? Location = null);
+    private sealed record Subtest(int Indent, string Name)
+    {
+        public bool HasFailedChild { get; set; }
+    }
     internal sealed record Test(string Name, string Initial, string Repeat, string? Error);
 
     [GeneratedRegex(@"^\s*(?<result>not ok|ok)\s+(?<number>\d+)\s+-\s+(?<name>.+?)\s*$")]
@@ -16,7 +21,7 @@ internal sealed partial class PostMergeTap(string output)
     [GeneratedRegex(@"\s+#\s*(?:SKIP|TODO)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Directive();
 
-    private readonly Point[] _points = Read(output).ToArray();
+    private readonly Point[] _points = Read(output).Where(point => !point.IsFailureSummary).ToArray();
     internal bool HasFailures => _points.Any(point => point.Result == PostMergeTestResults.Fail);
 
     // Node emits a source location on failure, but normally omits it for passes and skips.
@@ -94,7 +99,7 @@ internal sealed partial class PostMergeTap(string output)
     private static IEnumerable<Point> Read(string output)
     {
         using var reader = new StringReader(output);
-        var parents = new List<(int Indent, string Name)>();
+        var parents = new List<Subtest>();
         Point? point = null;
         var document = 0;
         int? diagnosticIndent = null;
@@ -106,6 +111,13 @@ internal sealed partial class PostMergeTap(string output)
             if (diagnosticIndent is { } depth)
             {
                 if (indent == depth && field == "...") diagnosticIndent = null;
+                if (indent == depth && point is { Result: PostMergeTestResults.Fail }
+                    && field.StartsWith("failureType:", StringComparison.Ordinal))
+                {
+                    // A suite can report its own failure (for example, a teardown hook) alongside a failed child.
+                    var failureType = field["failureType:".Length..].Trim().Trim('\'', '"');
+                    point = point with { IsFailureSummary = failureType == "subtestsFailed" };
+                }
                 if (indent == depth && point is not null && field.StartsWith("location:", StringComparison.Ordinal))
                 {
                     var location = field[9..].Trim().Trim('\'', '"');
@@ -133,7 +145,7 @@ internal sealed partial class PostMergeTap(string output)
             if (field.StartsWith("# Subtest: ", StringComparison.Ordinal))
             {
                 parents.RemoveAll(parent => parent.Indent >= indent);
-                parents.Add((indent, field[11..]));
+                parents.Add(new(indent, field[11..]));
                 continue;
             }
             if (field.StartsWith("TAP version ", StringComparison.Ordinal))
@@ -145,13 +157,18 @@ internal sealed partial class PostMergeTap(string output)
             if (!match.Success) continue;
             if (point is not null) yield return point;
             pointIndent = indent;
-            parents.RemoveAll(parent => parent.Indent >= indent);
             var title = match.Groups["name"].Value;
             var directive = Directive().Match(title);
             var name = directive.Success ? title[..directive.Index] : title;
             var result = directive.Success ? PostMergeTestResults.Unknown :
                 match.Groups["result"].Value == "ok" ? PostMergeTestResults.Pass : PostMergeTestResults.Fail;
-            point = new(string.Join(" > ", parents.Select(parent => parent.Name).Append(name)), result, document, match.Groups["number"].Value);
+            var failed = result == PostMergeTestResults.Fail;
+            var isFailureSummary = failed && parents.Any(parent =>
+                parent.Indent == indent && parent.Name == name && parent.HasFailedChild);
+            parents.RemoveAll(parent => parent.Indent >= indent);
+            if (failed && parents.Count > 0) parents[^1].HasFailedChild = true;
+            point = new(string.Join(" > ", parents.Select(parent => parent.Name).Append(name)), result,
+                document, match.Groups["number"].Value, isFailureSummary);
         }
         if (point is not null) yield return point;
     }
