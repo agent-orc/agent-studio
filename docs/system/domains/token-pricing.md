@@ -14,7 +14,7 @@
 All historical cost callers use injectable `ITokenPricing`, implemented by
 `TokenPricingService` in `backend/Features/Tokens/Pricing/TokenPricing.cs`.
 The package-specific implementation in
-`backend/Features/Tokens/Pricing/TokenEconomyPriceProvider.cs` adapts
+[`TokenEconomyPriceProvider.cs`](../../../task-server/Pricing/TokenEconomyPriceProvider.cs) adapts
 `TokenEconomy.ModelPriceCatalog.Default` and its historical pricing API.
 
 Fable 5.2 uses the published catalogue entry when present. With 0.3.7,
@@ -46,7 +46,7 @@ list price x `TokenEconomyPriceProvider.CodexCreditsPerUsd` (25). Studio has no
 Codex credit meter, so the rate is carried on the price basis only. Calls
 before 2026-11-17 stay `NoPriceForDate`.
 
-The adapter is exposed through `ITokenPriceProvider`. `AddTokenUsage` registers
+The adapter is exposed through `ITokenPriceProvider` and the scalar `ITokenPricing` contract. `AddTokenUsage` registers
 one singleton provider and one singleton `ITokenPricing` service. There is no
 static pricing facade or independently constructed runtime pricing instance.
 `TokenEconomyPriceProvider` is the only production class that reads the price

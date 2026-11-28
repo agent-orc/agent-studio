@@ -7,7 +7,7 @@ namespace AgentStudio.Tokens;
 /// contract. Package-specific types and cost projection stay behind
 /// <see cref="ITokenPriceProvider"/>.
 /// </summary>
-public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
+public sealed class TokenEconomyPriceProvider : ITokenPriceProvider, ITokenPricing
 {
     // Declared before Source: static initializers run in textual order and
     // CreateCatalog reads this date.
@@ -88,7 +88,7 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
     public static string Version { get; } =
         $"TokenEconomy/{typeof(EconomyPricing.ModelPriceCatalog).Assembly.GetName().Version}+studio-2026-11-18";
 
-    internal static EconomyPricing.ModelListing? FindListing(string modelId) => Source.Find(modelId);
+    public static EconomyPricing.ModelListing? FindListing(string modelId) => Source.Find(modelId);
 
     public TokenCostEstimate Estimate(
         string? modelId,

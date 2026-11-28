@@ -11,7 +11,8 @@ public sealed class TokenPricingOwnershipTests
     public void HistoricalPricing_HasOneProviderAdapterAndNoStaticFacade()
     {
         var root = BackendRoot();
-        var files = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+        var files = new[] { root, Path.Combine(root, "..", "task-server") }
+            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
             .Where(path => !path.Contains("/obj/") && !path.Contains("/bin/"))
             .Select(path => (Path: path, Source: File.ReadAllText(path)))
             .ToList();

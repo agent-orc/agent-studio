@@ -42,7 +42,7 @@
 
 .token-usage__tree button:hover { background: var(--studio-bg-hover); }
 .token-usage__tree button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
-.token-usage__tree .token-usage__tree-item--active {
+.token-usage__tree :is(.token-usage__tree-item--active, [aria-current='page']) {
   background: var(--studio-nav-active-bg);
   color: var(--studio-nav-active-fg);
   box-shadow: inset 3px 0 0 0 var(--studio-nav-active-bar);

@@ -9,7 +9,8 @@ import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/workspace-token-timeline';
 import { UnpricedModelsComponent } from '../unpriced-models/unpriced-models.component';
 
-type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
+import type { WorkspaceTokenUsagePage } from '../../../shell/state/workspace-overlays.service';
+import { ModelCallExplorerComponent } from '../model-call-explorer/model-call-explorer.component';
 
 /**
  * AGT-2035 — the single "Token usage" area of the consolidated Workspace
@@ -29,7 +30,7 @@ type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
 @Component({
   selector: 'app-token-usage-section',
   standalone: true,
-  imports: [WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent, TokenAnalysisViewComponent, UnpricedModelsComponent],
+  imports: [ModelCallExplorerComponent, WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent, TokenAnalysisViewComponent, UnpricedModelsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-usage-section.component.html',
   styleUrl: './token-usage-section.component.scss',

@@ -502,6 +502,7 @@
 /api/v1/orchestration/runs	free	-	-	-
 /api/v1/orchestration/runs/{runId}	free	-	-	-
 /api/v1/orchestration/runs/{runId}/grounds-input	free	-	-	-
+/api/v1/projects/{project}/model-calls/{segment}	free	-	-	-
 /api/v1/protocol	free	-	-	-
 /api/v1/reviews/attempts/{attemptId}	free	-	-	-
 /api/v1/runners/{runnerId}/device-login/{handle}	free	-	-	-

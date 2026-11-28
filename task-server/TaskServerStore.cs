@@ -5189,7 +5189,7 @@ public sealed partial class TaskServerStore
         }
     }
 
-    private void RequireWritable()
+    internal void RequireWritable()
     {
         if (!AuthorityReady) throw new InvalidOperationException("Lease and fence authority is not ready.");
         if (_mode is TaskServerMode.ReadOnly or TaskServerMode.Maintenance)

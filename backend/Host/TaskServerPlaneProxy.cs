@@ -61,6 +61,10 @@ public static class TaskServerPlaneProxy
     {
         if (!IsConfigured(app.Configuration)) return false;
 
+        app.MapGet("/api/v1/projects/{project}/model-calls/{segment}", ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance)
+            .RequirePermission(IamPermissions.ProjectRead);
+
         if (SecurityProfiles.IsPublicDemo(app.Configuration))
         {
             app.MapMethods(

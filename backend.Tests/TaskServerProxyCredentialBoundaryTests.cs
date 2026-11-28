@@ -264,7 +264,8 @@ public sealed class TaskServerProxyCredentialBoundaryTests : IAsyncLifetime
         string? session = null, string method = "GET", bool localIdentity = false, bool callerProof = false,
         string path = ManagementStatusPath)
     {
-        var endpoint = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints).Single();
+        var endpoint = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>().Single(route => route.RoutePattern.RawText == "/api/v1/{**path}");
         var context = new DefaultHttpContext { RequestServices = app.Services };
         context.SetEndpoint(endpoint);
         context.Request.Scheme = "https";

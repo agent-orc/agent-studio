@@ -9,6 +9,7 @@
     "(covered by the rule, not yet migrated). A template in neither list fails the check."
   ],
   "enforced": [
+    "src/app/features/tokens/components/model-call-explorer/model-call-explorer.component.html",
     "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.html",
     "src/app/features/github-app/github-app-panel/github-app-panel.component.html", "projects/studio-ui/src/components/section-header/section-header.component.html",
     "projects/studio-ui/src/components/error-dialog/error-dialog.component.html",

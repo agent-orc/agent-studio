@@ -1,0 +1,157 @@
+<section class="model-calls" aria-labelledby="model-calls-title" data-testid="model-call-explorer">
+  <header>
+    <h2 id="model-calls-title">Model Calls</h2>
+    <p>Historical Codex coding responses. All times are UTC.</p>
+  </header>
+
+  <form class="scope" (submit)="$event.preventDefault(); apply()">
+    <label>Project
+      <select #projectField required [value]="project()" (change)="project.set(projectField.value)">
+        <option value="">Select project</option>
+        @for (item of projects(); track item.id) {
+          <option [value]="item.id" [selected]="item.id === project()">{{ item.label }}</option>
+        }
+      </select>
+    </label>
+    <label>From (UTC)
+      <input type="datetime-local" step="0.001" required #fromField [value]="from()" (input)="from.set(fromField.value)" />
+    </label>
+    <label>Until (UTC)
+      <input type="datetime-local" step="0.001" required #untilField [value]="until()" (input)="until.set(untilField.value)" />
+    </label>
+    <label>Card key
+      <input type="search" maxlength="24" placeholder="All cards" #cardField [value]="cardFilter()" (input)="cardFilter.set(cardField.value)" />
+    </label>
+    <button type="submit" class="apply">Apply filters</button>
+  </form>
+
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (loading()) { <p role="status">Loading model calls…</p> }
+  @if (result(); as window) {
+    <dl class="metrics" aria-label="Window totals">
+      <div><dt>Responses</dt><dd>{{ window.totals.calls | number }}</dd></div>
+      <div><dt>Tokens</dt><dd>{{ window.totals.tokens | number }}</dd></div>
+      <div><dt>Waits</dt><dd>{{ window.totals.waits | number }}</dd></div>
+      <div><dt>Status checks</dt><dd>{{ window.totals.statusChecks | number }}</dd></div>
+      <div><dt>Priced subtotal</dt>
+        <dd>{{ window.totals.listUsd === null ? 'Unavailable' : '$' + (window.totals.listUsd | number:'1.2-6') }}</dd>
+      </div>
+    </dl>
+    <dl class="token-classes" aria-label="Token composition">
+      <div><dt>Fresh input</dt><dd>{{ window.totals.freshInput | number }}</dd></div>
+      <div><dt>Cached input</dt><dd>{{ window.totals.cachedInput | number }}</dd></div>
+      <div><dt>Output</dt><dd>{{ window.totals.output | number }}</dd></div>
+    </dl>
+    <p class="coverage">{{ window.totals.pricedCalls | number }} of {{ window.totals.calls | number }} responses priced
+      · {{ window.totals.unpricedTokens | number }} unpriced tokens · {{ window.totals.missingUsage | number }} missing usage</p>
+
+    @if (window.totals.calls === 0) {
+      <p>No coding responses in this window.</p>
+    } @else {
+      <div class="drill">
+        <section class="outline" aria-label="Cards and runs">
+          <h3>Cards</h3>
+          <ul>
+            @for (item of visibleCards(); track item.key) {
+              <li>
+                <button type="button" class="row" [attr.aria-expanded]="card() === item.key"
+                  (click)="card() === item.key ? clearSelection() : openCard(item.key)">
+                  <strong><app-disclosure-marker [open]="card() === item.key" /> {{ item.key }}</strong><span>{{ item.totals.calls | number }} responses</span>
+                  <span>{{ item.totals.tokens | number }} tokens</span>
+                </button>
+                @if (card() === item.key) {
+                  @if (runs(); as cardWindow) {
+                    <ul class="runs" aria-label="Runs">
+                      @for (itemRun of cardWindow.groups; track itemRun.key) {
+                        <li>
+                          <button type="button" class="row" [attr.aria-current]="run() === itemRun.key ? 'true' : null" (click)="openRun(itemRun.key)">
+                            <strong>Run {{ itemRun.key }}</strong><span>{{ itemRun.totals.calls | number }} responses</span>
+                            <span>{{ itemRun.totals.tokens | number }} tokens</span>
+                          </button>
+                        </li>
+                      }
+                      @if (cardWindow.other; as other) {
+                        <li class="coverage">Other runs · {{ other.calls | number }} responses · {{ other.tokens | number }} tokens</li>
+                      }
+                    </ul>
+                  }
+                }
+              </li>
+            }
+            @if (!appliedCard() && window.other; as other) {
+              <li class="coverage">Other cards · {{ other.calls | number }} responses · {{ other.tokens | number }} tokens</li>
+            }
+          </ul>
+        </section>
+
+        @if (responses(); as page) {
+          <section aria-label="Run responses" class="responses">
+            <h3>{{ card() }} / Run {{ run() }}</h3>
+            @if (detail(); as response) {
+              <section class="detail" aria-label="Response detail">
+                <h4>Response {{ response.ordinal }}</h4>
+                <dl>
+                  <div><dt>Happened at</dt><dd>{{ response.happenedAtMs | date:'yyyy-MM-dd HH:mm:ss.SSS':'UTC' }} UTC</dd></div>
+                  <div><dt>Timestamp basis</dt><dd>{{ label(response.timestampBasis) }}</dd></div>
+                  <div><dt>Usage basis</dt><dd>{{ label(response.usageBasis) }}</dd></div>
+                  <div><dt>Card and run link</dt><dd>{{ label(response.linkBasis) }}</dd></div>
+                  <div><dt>Call kind</dt><dd>{{ label(response.kind) }}
+                    @if (response.classifier) { <span> · inferred ({{ response.classifier }})</span> }
+                  </dd></div>
+                  <div><dt>Model / reasoning level</dt><dd>{{ response.model ?? 'Unknown' }} / {{ response.reasoningLevel ?? 'Unknown' }}
+                    @if (response.model || response.reasoningLevel) { <span> · run context</span> }
+                  </dd></div>
+                  <div><dt>Prompt tokens</dt><dd>{{ (response.promptTokens | number) ?? 'Unknown' }}</dd></div>
+                  <div><dt>Fresh input</dt><dd>{{ (response.freshInput | number) ?? 'Unknown' }}</dd></div>
+                  <div><dt>Cached input</dt><dd>{{ (response.cachedInput | number) ?? 'Unknown' }}</dd></div>
+                  <div><dt>Output</dt><dd>{{ (response.output | number) ?? 'Unknown' }}</dd></div>
+                  <div><dt>Reasoning within output</dt><dd>{{ (response.reasoning | number) ?? 'Unknown' }}</dd></div>
+                  <div><dt>List price</dt><dd>
+                    @if (response.listUsd !== null) { ${{ response.listUsd | number:'1.2-9' }} }
+                    @else { Unpriced · {{ label(response.priceStatus) }} }
+                  </dd></div>
+                  <div><dt>Service tier</dt><dd>{{ response.serviceTier ?? 'Unknown' }}</dd></div>
+                  <div><dt>Provider points</dt><dd>Unknown</dd></div>
+                  <div><dt>Request duration</dt><dd>Unknown</dd></div>
+                  <div><dt>Usage revision</dt><dd>{{ response.usageRevision }}</dd></div>
+                </dl>
+                @if (response.price; as price) {
+                  <details>
+                    <summary>Tariff evidence</summary>
+                    <dl>
+                      <div><dt>Catalog revision</dt><dd>{{ price.catalogRevision }}</dd></div>
+                      <div><dt>Effective from</dt><dd>{{ price.validFrom | date:'yyyy-MM-dd':'UTC' }} UTC</dd></div>
+                      <div><dt>Tariff timestamp</dt><dd>{{ label(price.dateBasis) }}</dd></div>
+                      <div><dt>USD per million fresh input</dt><dd>{{ price.inputPerMillion }}</dd></div>
+                      <div><dt>USD per million cached input</dt><dd>{{ price.cacheReadPerMillion }}</dd></div>
+                      <div><dt>USD per million output</dt><dd>{{ price.outputPerMillion }}</dd></div>
+                    </dl>
+                    @if (price.source; as source) { <a [href]="source" target="_blank" rel="noopener">Catalog source</a> }
+                  </details>
+                }
+                @if (response.sourceCardUrl; as url) {
+                  <a [href]="url" target="_blank" rel="noopener">Source card evidence</a>
+                } @else {
+                  <p>Source card evidence unavailable.</p>
+                }
+              </section>
+            }
+            <ul>
+              @for (row of page.responses; track row.id) {
+                <li>
+                  <button type="button" class="row" (click)="openResponse(row.id)">
+                    <strong>Response {{ row.ordinal }}</strong><span>{{ label(row.kind) }}</span>
+                    <span>{{ (row.tokens | number) ?? 'Unknown' }} tokens</span>
+                  </button>
+                </li>
+              }
+            </ul>
+            @if (page.nextCursor) {
+              <button type="button" class="row" (click)="more()">Load more responses</button>
+            }
+          </section>
+        }
+      </div>
+    }
+  }
+</section>

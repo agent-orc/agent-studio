@@ -11,6 +11,10 @@
             data-testid="token-usage-nav-analysis" (click)="pageChange.emit('analysis')">
       <strong>Card analysis</strong><span>Spend per card</span>
     </button>
+    <button type="button" [attr.aria-current]="activePage() === 'model-calls' ? 'page' : null"
+            data-testid="token-usage-nav-model-calls" (click)="pageChange.emit('model-calls')">
+      <strong>Model Calls</strong><span>Response ledger</span>
+    </button>
     <div class="token-usage__tree-group">CLI accounts</div>
     <button type="button" [class.token-usage__tree-item--active]="activePage() === 'claude'"
             [attr.aria-current]="activePage() === 'claude' ? 'page' : null"
@@ -28,7 +32,9 @@
   @if (ledgerScopeLabel(); as scope) {
     <p class="token-usage__scope" data-testid="token-usage-ledger-scope">Opened from usage. {{ scope }}</p>
   }
-  @if (page() === 'analysis') {
+  @if (page() === 'model-calls') {
+      <app-model-call-explorer />
+    } @else if (page() === 'analysis') {
     @defer {
       <app-token-analysis-view />
     }

@@ -1,6 +1,7 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Recovery;
+using AgentStudio.Tokens;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 
@@ -72,6 +73,8 @@ builder.Services.AddSignalR();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false);
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
+builder.Services.AddSingleton<ITokenPricing, TokenEconomyPriceProvider>();
+builder.Services.AddSingleton<ModelCallStore>();
 builder.Services.AddSingleton<ArtifactChunkStore>();
 builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttemptRootSecretStore>(services =>
 {
@@ -357,6 +360,7 @@ app.MapStudioWorkspaceEndpoints();
 // (docs/studio-route-ownership/index.html).
 app.MapStudioOperationsEndpoints();
 app.MapStudioP2Endpoints();
+app.MapModelCallEndpoints();
 // Studio route-ownership P3 "administration and long tail" bundle
 // (docs/studio-route-ownership/index.html). No new migration - every route
 // reads a table a P0-P2 bundle already owns.

@@ -6,6 +6,29 @@ Project and workspace model totals use the same `ModelUsageFold` bucket. `Pipeli
 
 The fixed receipts and bus fixture in [`TokenUsageCharacterizationTests`](../../../backend.Tests/TokenUsageCharacterizationTests.cs) locks project, workspace, pipeline, ad-hoc, and timeline numbers across the refactor. [`TokenPricingOwnershipTests`](../../../backend.Tests/Architecture/TokenPricingOwnershipTests.cs) guards the sole TokenEconomy owner and the injected pricing path.
 
+## Model Calls
+
+Token Usage also contains a project-scoped Model Calls explorer for response
+records. It reads a separate Task Server SQLite store through
+`GET /api/v1/projects/{project}/model-calls/query` and
+`GET /api/v1/projects/{project}/model-calls/{id}`.
+Windows are half-open UTC intervals, bounded to 31 days. Queries group by
+card, then run, and page responses when both card and run are supplied. The
+priced subtotal covers only calls with a resolved dated tariff and sufficient
+evidence. Missing usage and unpriced usage are counted separately.
+
+A Task Server management principal can post a validated historical batch to
+`POST /api/v1/management/model-calls/{project}/historical-import`. Use
+[`scripts/import-model-call-night.py`](../../../scripts/import-model-call-night.py)
+for the approved AGT-4375 reference with a project that already contains the
+source cards. It validates the export pair, reconciles per-run counters and
+can corroborate response aliases against authorized Codex sources. It uploads
+bounded usage and metadata and returns the commit acknowledgement. Run the
+script with `--help` for preparation and upload options. Set
+`MODEL_CALL_IMPORT_TOKEN` through the existing credential handling path for
+upload. The project must be writable. An older batch can be replayed after
+a correction without rolling the correction back.
+
 ## Source and precedence
 
 `ProjectTokenLedger.LoadSnapshot` merges project bus history, durable `task.json.tokenSummary` calls, and chat fallback receipts. `ProjectTokenReceiptReader` reads both legacy lane folders and bucketed task folders, including archived tasks. `TokenLedgerMerge` removes bus/receipt overlap; `TokenLedgerDuplicates` collapses duplicate calls within a source. Receipt calls are authoritative for a task's coding run. A task without a coding receipt keeps its historical `pipeline-execution.json` cost record. A failed source is represented in `ProjectTokenDataFreshness` as partial or unavailable instead of silently becoming a zero.

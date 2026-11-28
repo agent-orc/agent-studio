@@ -1629,6 +1629,10 @@ public sealed class AccessSecurityMiddleware
             // so the query is part of the task address and is mandatory.
             return ProjectRouteAddress.Addressed(request.Query["project"].FirstOrDefault());
         }
+        if (path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase)
+            && path.Split('/', StringSplitOptions.RemoveEmptyEntries) is [_, _, _, var ledgerProject, var ledgerRoute, _]
+            && ledgerRoute.Equals("model-calls", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(ledgerProject));
         if (path.StartsWith("/api/projects/", StringComparison.OrdinalIgnoreCase))
         {
             var segment = path["/api/projects/".Length..].Split('/', 2)[0];

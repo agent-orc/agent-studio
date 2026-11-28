@@ -77,7 +77,7 @@ public sealed class Gpt6TokenPricingTests
             model, 1, 0, 0, 0, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc));
 
         Assert.Contains(credits, estimate.PriceBasis!.Note);
-        Assert.Equal(25m, AgentStudio.Tokens.TokenEconomyPriceProvider.CodexCreditsPerUsd);
+        Assert.Equal(25m, TokenEconomyPriceProvider.CodexCreditsPerUsd);
     }
 
     [Fact]

@@ -65,7 +65,7 @@ public sealed class TaskServerPlaneProxyTests
     }
 
     [Fact]
-    public void Proxy_maps_one_catch_all_v1_surface()
+    public void Proxy_maps_the_project_scoped_ledger_and_v1_fallback()
     {
         var builder = WebApplication.CreateBuilder();
         builder.Configuration["TaskServer:BaseUrl"] = "http://127.0.0.1:5071";
@@ -79,7 +79,7 @@ public sealed class TaskServerPlaneProxyTests
             .OfType<RouteEndpoint>()
             .Select(endpoint => endpoint.RoutePattern.RawText)
             .ToList();
-        Assert.Equal(["/api/v1/{**path}"], routes);
+        Assert.Equal(["/api/v1/projects/{project}/model-calls/{segment}", "/api/v1/{**path}"], routes);
     }
 
     [Fact]

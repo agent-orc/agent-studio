@@ -1390,6 +1390,15 @@ deployment and migration/backup recovery:
 [`docs/operations/setup/task-server.md`](../../../operations/setup/task-server.md).
 Acceptance suite: [`task-server.Tests/`](../../../../task-server.Tests/).
 
+**Model Calls (AGT-4435).** Task Server owns a separate local SQLite WAL
+database for response-level usage. The versioned Model Calls routes read this
+database. The existing `studio_token_usage` table and ingest retain their
+run-level grain. Admission and legacy usage reports keep their original inputs.
+The historical import responds after commit and preserves dataset-scoped IDs
+across replay and corrected usage. The live producer will use host-local
+persistent outboxes with durable acknowledgement. See the
+[Model Calls dossier](../../../model-call-ledger/index.html#recommendation).
+
 **Status.** Accepted. The separated service boundary, versioned contracts,
 durable authority store, local compatibility profile, Runner client, migration
 rehearsal, backup/restore, and independent-process topology proof ship in

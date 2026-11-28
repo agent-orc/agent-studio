@@ -44,9 +44,9 @@ export type WorkspaceSettingsSection =
 
 /** Card token analysis page (AGT-3267); written once so the route never drifts. */
 const TOKEN_ANALYSIS_ROUTE = '/workspace/settings/tokens/analysis';
-const TOKEN_USAGE_ROUTE = /^\/workspace(?:\/settings)?\/tokens(?:\/(?:claude|codex))?$/;
+const TOKEN_USAGE_ROUTE = /^\/workspace(?:\/settings)?\/tokens(?:\/(?:claude|codex|model-calls))?$/;
 
-export type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
+export type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex' | 'model-calls';
 
 /**
  * Shell-feature service: open/close state + URL-hash sync for the consolidated
@@ -251,6 +251,7 @@ export class WorkspaceOverlaysService {
     // Only routes accepted by sectionForRoute reach this method.
     if (route === TOKEN_ANALYSIS_ROUTE) return 'analysis';
     if (route.endsWith('/claude')) return 'claude';
+    if (route.endsWith('/model-calls')) return 'model-calls';
     if (route.endsWith('/codex')) return 'codex';
     return 'workspace';
   }
