@@ -233,6 +233,12 @@ freezing the prompt. If `results/` or its `status.md` is a symbolic link, the
 plan withholds the agent report and says so in the status text. The review
 inventory excludes the report excerpt when the status text carries it.
 
+Local and remote coding prompts share the
+[code quality checklist](../../../prompts/runtime/code-quality-checklist.md)
+with the stock code-quality aspect. Authors check the intended merge-base diff
+and record brief citations for applicable checks in existing delivery evidence.
+The review applies the same severity criteria to its supplied material.
+
 ### Where the shared prefix reaches Claude (AGT-3971)
 
 Claude Code sets prompt-cache breakpoints only at the end of its system prompt

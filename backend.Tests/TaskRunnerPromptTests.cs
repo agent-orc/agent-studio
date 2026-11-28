@@ -1,3 +1,5 @@
+extern alias Runner;
+
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -722,6 +724,51 @@ public class TaskRunnerPromptTests
 
     // ---- Per-mode prompt framing (planning/research read-only + web hint) ----
 
+    [Theory]
+    [InlineData("claude", "claude-opus-5")]
+    [InlineData("codex", "gpt-5.4-mini")]
+    public void FreshLocalAndRemoteCodingAndStockReviewCarryTheSameChecklist(string cli, string model)
+    {
+        var prompts = Prompts();
+        const string taskBody = "Implement the change.";
+        const string heading = "## Code quality checklist";
+        var task = new TaskInfo { Id = "coding", Key = "AGT-4412", Mode = TaskModes.Coding };
+        var local = prompts.Render(RuntimePromptService.RunnerFreshStart, new Dictionary<string, string?>
+        {
+            ["prompt_text"] = taskBody,
+            ["mode_framing"] = prompts.RenderModeFraming(task.Mode, allowWebAccess: false),
+        });
+        var remote = Runner::AgentRunner.RemoteRunPrompt.Build(taskBody,
+            LeaseEndpoints.BuildModeFraming(task, prompts, dossierMaintenance: null), "/tmp/results");
+        var aspects = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        var inputs = new AspectRunInputs("Project", task.Id, "Review", "/tmp", taskBody, "Log", "Diff", "Status");
+        const string aspect = "code-quality";
+        var review = ReviewAspectCachePrompt.ComposeStock(
+            aspects.BuildAspectPrompt(AspectRunnerService.Catalogue[aspect], inputs, model),
+            inputs, cli, aspect, null);
+
+        var checklist = prompts.Render("code-quality-checklist.md", new Dictionary<string, string?>()).Trim();
+        Assert.StartsWith(heading, checklist);
+        foreach (var prompt in new[] { local, remote, review })
+        {
+            Assert.Contains(checklist, prompt);
+            Assert.Equal(2, prompt.Split(heading).Length);
+            Assert.DoesNotContain("{{code_quality_checklist}}", prompt);
+        }
+
+        foreach (var prompt in new[] { local, remote })
+        {
+            Assert.Contains("Before delivery, apply the code quality checklist", prompt);
+            Assert.Contains("existing delivery evidence", prompt);
+            Assert.Contains(AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter, prompt);
+        }
+
+        Assert.Contains("Do not modify any file.", review);
+        Assert.Contains("Do not run shell commands or tools.", review);
+        Assert.Contains("block-without-citation", review);
+        Assert.DoesNotContain("Before delivery, apply the code quality checklist", review);
+    }
+
     [Fact]
     public void RenderModeFraming_CodingWithoutWeb_ExplainsApprovalModel()
     {
@@ -765,6 +812,7 @@ public class TaskRunnerPromptTests
         var framing = Prompts().RenderModeFraming(mode, allowWebAccess: true);
 
         Assert.DoesNotContain("Verification scope", framing);
+        Assert.DoesNotContain("## Code quality checklist", framing);
         Assert.DoesNotContain(AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter, framing);
     }
 

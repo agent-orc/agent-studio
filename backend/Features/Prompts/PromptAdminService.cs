@@ -528,6 +528,8 @@ internal static class PromptDescriptionCatalog
             "Docs-only Dossier contract injected for concept-mode runs.", "Runner"),
         ["mode-framing-verification-scope.md"] = new("Mode framing: verification scope",
             "Coding-mode test and lint scope for the run: covering classes, guard tests, and lint; whole suites stay with the gates.", "Runner"),
+        ["code-quality-checklist.md"] = new("Code quality checklist",
+            "Shared delivery checks and severity criteria for coding runs and the code-quality review aspect.", "Review"),
         ["mode-framing-dossier-maintenance.md"] = new("Mode framing: Dossier maintenance",
             "Append-only implementation-log contract injected for cards linked to a living Dossier.", "Runner"),
         ["mode-framing-web.md"] = new("Mode framing: web access",

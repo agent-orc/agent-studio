@@ -678,10 +678,14 @@ public sealed class AspectRunnerService
                 values[key] = value;
         try
         {
+            var context = new PromptCallContext(inputs.Project, $"aspect-{def.Id}", model);
+            if (string.Equals(def.Id, "code-quality", StringComparison.OrdinalIgnoreCase))
+                values["code_quality_checklist"] = _prompts.RenderCodeQualityChecklist(context);
+
             return _prompts.Render(
                 def.PromptTemplate,
                 values,
-                new PromptCallContext(inputs.Project, $"aspect-{def.Id}", model));
+                context);
         }
         catch (Exception ex)
         {
