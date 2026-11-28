@@ -406,7 +406,7 @@ public sealed partial class TaskServerStore
                 : throw new ArgumentException("Runner id is valid only for runner principals.");
         var role = string.IsNullOrWhiteSpace(request.Role) ? null : request.Role.Trim().ToLowerInvariant();
         if (role is not null && (kind != TaskServerPrincipalKinds.Runner || !RunnerCredentialRoles.IsValid(role)))
-            throw new ArgumentException("Role is valid only for runner principals and must be coding or review.");
+            throw new ArgumentException("Role is valid only for runner principals and must be coding, review or gate.");
         var ttl = request.TimeToLiveSeconds ?? DefaultEnrolmentTimeToLiveSeconds;
         if (ttl < 30 || ttl > MaximumEnrolmentTimeToLiveSeconds)
             throw new ArgumentException($"TimeToLiveSeconds must be between 30 and {MaximumEnrolmentTimeToLiveSeconds}.");

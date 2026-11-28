@@ -154,8 +154,8 @@ Selected working decision: dynamic placement D2 option A, one supervised host
 agent per physical machine with coding and review adapters. The AGT-3019 D5
 option A allocation remains the single host budget; this slice consumes the
 DP-S1 shadow admission contract and does not activate a new placement policy.
-The host agent starts with both roles disabled. A role is enabled only after
-its old daemon has acknowledged a claim barrier, every persisted attempt has
+The host agent starts with its roles disabled. Coding and review are enabled
+after their old daemon has acknowledged a claim barrier, every persisted attempt has
 reached a fenced terminal or cleanup state, and that daemon process has exited.
 The role adapter runs the existing `RemoteRunnerDaemon` or
 `RemoteReviewDaemon` in a child process with its original runner identity,
@@ -169,6 +169,25 @@ or protocol mismatch holds that adapter until a host-agent restart. See the
 for the canary, drain, and rollback sequence. Linux per-attempt containers are
 the subsequent DP-S3 executor slice; DP-S2 retains the current process and
 cgroup executor.
+
+### Gate adapter
+
+The optional `gate` block starts the existing `RemoteGateDaemon` in its own
+child process after `host-agent enable-role <config> gate`. It uses a separate
+gate runner ID and state directory on the same physical host and Task Server
+as the coding and review adapters. The installation owner issues a one-time
+gate join token. The credential is bound to the gate role and its host's
+project policy. The gate daemon uses the same capability registry as the other
+roles and publishes `gate-executor`, `gate:post-merge`, `gate:git`, and
+`gate:source-bundle`.
+
+The host inventory projects both durable gate claims, including the post-merge
+lane. A role drain closes new admission after any request already in flight,
+lets leased work and cleanup finish, then disables the role after the child
+exits with a matching zero-attempt acknowledgement. Use the
+[gate enrollment and canary runbook](../../operations/remote-hosts.md#enrol-a-gate-adapter-and-run-a-merge-canary)
+to try one project's merge gate under `RemoteGate:Transport=canary` and return
+to the bridge. The bridge remains the default.
 
 ## Dynamic placement work container executor, DP-S3
 

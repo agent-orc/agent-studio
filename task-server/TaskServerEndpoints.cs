@@ -867,6 +867,8 @@ public static class TaskServerEndpoints
         {
             if (!GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.ExecutorId))
                 return GateRunnerPrincipalPolicy.Denied();
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Gate) is { } refused)
+                return refused;
             var binding = await RunnerRouteAuthorization.RunnerBindingAsync(context, store);
             return await InvokeAsync(() => store.ClaimGateAsync(request, Actor(context), ct, binding?.Projects));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)

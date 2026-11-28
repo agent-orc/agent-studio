@@ -411,7 +411,7 @@ try
     // A host supervisor can restart after a crash while its prior child is
     // still alive. The role-local lock keeps the replacement from registering
     // or reattaching until that exact executor process has exited.
-    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review" or "post"
+    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review" or "post" or "gate"
         ? AcquireHostAdapterLock(options)
         : null;
     // IP-1: a run target talks to Studio's deploy routes only, never to Task

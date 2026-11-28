@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Contracts.GitHubApp;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
@@ -23,11 +24,182 @@ namespace TaskServer.Tests;
 /// SM-9: a runner credential is bound to its host, its role and the projects of
 /// its host. Each test drives one route family with a real authenticated runner.
 /// </summary>
+[Trait("ProcessReference", "AgentRunner")]
 public sealed class RunnerCredentialBindingTests
 {
     private static readonly DateTimeOffset Start = new(2026, 11, 2, 9, 0, 0, TimeSpan.Zero);
     private const string ResultSha = "589c462f589c462f589c462f589c462f589c462f";
     private const string RepositoryId = "repo_sm9binding0001";
+
+    [Fact]
+    public async Task Only_the_owner_can_issue_a_gate_token_and_the_code_redeems_once_for_the_gate_role()
+    {
+        using var temp = new TempDirectory();
+        await using var server = new BoundServer(temp.Path);
+        const string path = "/api/v1/management/host-join-tokens";
+        var request = new CreateHostJoinTokenRequest("https://tasks.example.test", "host-a", "gate");
+        using var anonymous = server.Client(null);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync(path, request)).StatusCode);
+        using var studio = server.Client(server.StudioToken);
+        await AssertRefusedAsync(await studio.PostAsJsonAsync(path, request), "owner-role-required");
+        studio.DefaultRequestHeaders.Add(CredentialViewProtocol.ActingRoleHeader, StudioUserRoles.Operator);
+        await AssertRefusedAsync(await studio.PostAsJsonAsync(path, request), "owner-role-required");
+
+        var (issued, exchange) = await server.IssueGateJoinTokenAsync("host-a");
+        Assert.Equal("host-a-gate", issued.RunnerId);
+        Assert.Equal(Start.UtcDateTime.AddMinutes(15), issued.ExpiresAt);
+        var credential = await server.ExchangeJoinTokenAsync(exchange);
+        Assert.Equal(issued.RunnerId, credential.Principal.RunnerId);
+        Assert.Equal(RunnerCredentialRoles.Gate, credential.Principal.Role);
+        Assert.DoesNotContain(TaskServerScopes.RepositoriesWrite, credential.Principal.Scopes);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange", exchange)).StatusCode);
+
+        using var gate = server.Client(credential.Credential);
+        await RegisterGateAsync(server, gate, issued.RunnerId, "host-a");
+        await AssertRefusedAsync(await gate.PostAsJsonAsync($"/api/v1/runners/{issued.RunnerId}/review-claims",
+            new ReviewClaimRequest(issued.RunnerId, issued.RunnerId + ":1")), "runner-role-mismatch");
+        await AssertRefusedAsync(await gate.PostAsJsonAsync($"/api/v1/runners/{issued.RunnerId}/claims",
+            new ClaimRequest(issued.RunnerId, issued.RunnerId + ":1")), "runner-role-mismatch");
+
+        var review = await server.EnrolRunnerAsync("review", RunnerCredentialRoles.Review);
+        using var reviewer = server.Client(review.Credential);
+        await RegisterGateAsync(server, reviewer, "review", "host-a");
+        await AssertRefusedAsync(await reviewer.PostAsJsonAsync("/api/v1/gates/claims",
+            new GateClaimRequest("review", "review:1")), "runner-role-mismatch");
+    }
+
+    [Fact]
+    public async Task Supervised_gate_advertises_claims_and_drains_a_merge_verification()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var temp = new TempDirectory();
+        using var hostFiles = new TempDirectory();
+        await using var server = new BoundServer(temp.Path, useKestrel: true);
+        var (issued, exchange) = await server.IssueGateJoinTokenAsync("gate-host");
+        var credential = await server.ExchangeJoinTokenAsync(exchange);
+        using var gate = server.Client(credential.Credential);
+        var (alpha, _) = await server.SeedProjectsAsync();
+        await server.RegisterRepositoryProjectAsync(alpha.WorkspaceId, alpha.ProjectId, alpha.Name,
+            "ALP", "https://example.invalid/alpha.git");
+        const string hostname = "gate-host";
+        await server.SetPolicyAsync(hostname, alpha.ProjectId);
+
+        var root = Directory.CreateDirectory(hostFiles.Path).FullName;
+        var tokenPath = Path.Combine(root, "gate.token");
+        await using (var tokenFile = new FileStream(tokenPath, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew, Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        }))
+        await using (var writer = new StreamWriter(tokenFile))
+            await writer.WriteLineAsync(credential.Credential);
+        object Role(string role, string runnerId)
+        {
+            var environmentFile = Path.Combine(root, role + ".env");
+            var homeDirectory = Directory.CreateDirectory(Path.Combine(root, role + "-home")).FullName;
+            File.WriteAllLines(environmentFile,
+            [
+                $"RUNNER_SERVER_URL={gate.BaseAddress}",
+                $"RUNNER_ID={runnerId}",
+                $"RUNNER_NAME={runnerId}",
+                $"RUNNER_HOSTNAME={hostname}",
+                $"RUNNER_WORKDIR={Path.Combine(root, role + "-work")}",
+                $"RUNNER_REVIEW_WORKDIR={Path.Combine(root, role + "-review-work")}",
+                $"RUNNER_STATE_DIR={Path.Combine(root, role + "-state")}",
+                "RUNNER_POLL_SECONDS=1",
+                "RUNNER_DRAIN_TIMEOUT_SECONDS=30",
+                .. role == "gate" ? new[] { $"RUNNER_AUTH_TOKEN_FILE={tokenPath}" } : [],
+            ]);
+            return new { environmentFile, homeDirectory };
+        }
+        var stateDirectory = Path.Combine(root, "supervisor");
+        var config = Path.Combine(root, "host-agent.json");
+        await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new
+        {
+            stateDirectory, coding = Role("coding", "gate-host"), review = Role("review", "gate-host-review"),
+            gate = Role("gate", issued.RunnerId),
+        }));
+
+        var projectDirectory = Directory.CreateDirectory(Path.Combine(root, "source")).FullName;
+        await BuiltProcessLauncher.RunAsync("git", ["init", "--quiet", "--initial-branch=develop"], projectDirectory);
+        await BuiltProcessLauncher.RunAsync("git",
+            ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "--allow-empty", "-m", "Fixture"],
+            projectDirectory);
+        var shaFile = Path.Combine(root, "sha");
+        await BuiltProcessLauncher.RunAsync("sh", ["-c", "git rev-parse HEAD > \"$1\"", "sh", shaFile], projectDirectory);
+        var sha = (await File.ReadAllTextAsync(shaFile)).Trim();
+        var bundlePath = Path.Combine(root, "source.bundle");
+        await BuiltProcessLauncher.RunAsync("git", ["bundle", "create", bundlePath, "refs/heads/develop"], projectDirectory);
+        await using var bundleFile = File.OpenRead(bundlePath);
+        var digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(bundleFile));
+        bundleFile.Position = 0;
+        var bundle = await server.Store.PutGateBundleAsync(digest, bundleFile.Length, alpha.ProjectId, bundleFile, "test", default);
+
+        var release = Path.Combine(root, "finish-gate");
+        var plan = new GatePlan("post-build-test-gate", 1,
+            [new("verify", "sh", ["-c", "while [ ! -f \"$1\" ]; do sleep 0.1; done", "sh", release], 180, "")],
+            "", 180, [], 1024, "always");
+        var subject = await server.Store.CreateGateSubjectAsync(new CreateGateSubjectRequest(
+            "merge-card", "candidate-1", alpha.ProjectId, null, sha, null, null, null,
+            GateRules.PlanHash(plan), "policy", "1", "selection", plan, server.UtcNow.AddMinutes(10),
+            Kind: GateSubjectKinds.Merge, Bundle: bundle), "test", default);
+        var repoRoot = ProtocolTests.RepositoryRoot();
+        var childEnvironment = new Dictionary<string, string?>
+        {
+            ["XDG_CACHE_HOME"] = Path.Combine(root, "cache"),
+            ["AGENT_STUDIO_LOCAL_STATE_ROOT"] = Path.Combine(root, "local-state"),
+        };
+        ManagedProcess Start(string operation, params string[] role)
+            => BuiltProcessLauncher.StartBuiltIn(repoRoot, root, "runner", "agent-host.dll", childEnvironment,
+                ["host-agent", operation, config, .. role]);
+        var timeout = ProcessWaiters.DefaultReadinessTimeout;
+        using var supervisor = Start("run");
+        await ProcessWaiters.WaitForFileAsync(Path.Combine(stateDirectory, "attempt-inventory.json"), supervisor, timeout);
+        Assert.Equal(GateStates.Queued, (await server.Store.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase);
+        Assert.False(supervisor.Contains("adapter started"));
+        Assert.False(File.Exists(Path.Combine(stateDirectory, "roles.json")));
+
+        using var enable = Start("enable-role", "gate");
+        await enable.WaitForExitAsync(timeout);
+        Assert.True(enable.Process.ExitCode == 0, enable.ToString());
+        await ProcessWaiters.WaitForConditionAsync(async () =>
+            (await server.Store.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase == GateStates.Running,
+            supervisor, timeout, "supervised gate executing the merge");
+        Assert.True(supervisor.Contains("role=gate adapter started"));
+        var running = (await server.Store.GetGateStatusAsync(subject.Subject.SubjectId, default))!;
+        Assert.Equal(issued.RunnerId, Assert.Single(running.Attempts).ExecutorId);
+        Assert.Equal(hostname, running.Attempts[0].HostId);
+        var readiness = Assert.Single(await server.Store.ListRunnerCapabilitySnapshotsAsync(default),
+            runner => runner.RunnerId == issued.RunnerId);
+        foreach (var key in new[] { GateCapabilities.Executor, GateCapabilities.PostMerge,
+                     GateCapabilities.GitMaterialization, GateCapabilities.BundleMaterialization })
+            Assert.Contains(readiness.Capabilities, item => item.Key == key && item.IsFresh
+                && item.AdvertisedStatus == "ready");
+        Assert.True((await server.Store.PostMergeHostsAsync(default)).Gate);
+        await ProcessWaiters.WaitForConditionAsync(async () =>
+            (await File.ReadAllTextAsync(Path.Combine(stateDirectory, "attempt-inventory.json")))
+                .Contains(running.Attempts[0].AttemptId, StringComparison.Ordinal),
+            supervisor, timeout, "gate attempt in host inventory");
+
+        using var drain = Start("drain-role", "gate");
+        var gateState = Path.Combine(root, "gate-state");
+        await ProcessWaiters.WaitForFileAsync(Path.Combine(gateState, "host-gate-drain-acknowledged.json"), drain, timeout);
+        using (var acknowledgement = JsonDocument.Parse(await File.ReadAllTextAsync(
+                   Path.Combine(gateState, "host-gate-drain-acknowledged.json"))))
+            Assert.Equal(1, acknowledgement.RootElement.GetProperty("activeSlots").GetInt32());
+        Assert.False(drain.Process.HasExited);
+
+        await File.WriteAllTextAsync(release, "");
+        await drain.WaitForExitAsync(timeout);
+        Assert.True(drain.Process.ExitCode == 0, drain.ToString());
+        var passed = (await server.Store.GetGateStatusAsync(subject.Subject.SubjectId, default))!;
+        Assert.Equal(GateStates.Passed, passed.Phase);
+        Assert.Equal(sha, passed.Report!.TestedSha);
+        Assert.False(File.Exists(Path.Combine(gateState, "gate-claim.json")));
+        using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(stateDirectory, "roles.json")));
+        Assert.False(state.RootElement.GetProperty("roles").GetProperty("gate").GetProperty("enabled").GetBoolean());
+    }
 
     [Fact]
     public async Task A_new_runner_credential_expires_after_thirty_days_and_names_its_end_on_every_answer()
@@ -553,16 +725,18 @@ public sealed class RunnerCredentialBindingTests
         private readonly Factory _factory;
         private readonly HttpClient _manager;
 
-        public BoundServer(string dataDirectory, FakeGitHub? github = null)
+        public BoundServer(string dataDirectory, FakeGitHub? github = null, bool useKestrel = false)
         {
             StudioToken = "studio-" + RandomNumberGenerator.GetHexString(48).ToLowerInvariant();
             _factory = new Factory(dataDirectory, StudioToken, "engine-" + RandomNumberGenerator.GetHexString(48).ToLowerInvariant(),
-                Clock, github);
+                useKestrel ? null : Clock, github);
+            if (useKestrel) _factory.UseKestrel(0);
             _manager = Client(StudioToken);
             Store = _factory.Services.GetRequiredService<TaskServerStore>();
         }
 
         public ManualTimeProvider Clock { get; } = new(Start);
+        public DateTime UtcNow => _factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
         public string StudioToken { get; }
         public TaskServerStore Store { get; }
 
@@ -573,6 +747,30 @@ public sealed class RunnerCredentialBindingTests
             if (credential is not null)
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", credential);
             return client;
+        }
+
+        public async Task<(IssuedHostJoinToken Issued, ExchangeEnrolmentRequest Exchange)> IssueGateJoinTokenAsync(string host)
+        {
+            using var owner = Client(StudioToken);
+            owner.DefaultRequestHeaders.Add(CredentialViewProtocol.ActingRoleHeader, StudioUserRoles.Owner);
+            using var response = await owner.PostAsJsonAsync("/api/v1/management/host-join-tokens",
+                new CreateHostJoinTokenRequest("https://tasks.example.test", host, "gate"));
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.True(response.Headers.CacheControl!.NoStore);
+            var issued = (await response.Content.ReadFromJsonAsync<IssuedHostJoinToken>())!;
+            var body = issued.JoinToken.Split('.')[1].Replace('-', '+').Replace('_', '/');
+            using var payload = JsonDocument.Parse(Convert.FromBase64String(
+                body.PadRight(body.Length + (4 - body.Length % 4) % 4, '=')));
+            return (issued, new ExchangeEnrolmentRequest(payload.RootElement.GetProperty("enrolmentCode").GetString()!,
+                payload.RootElement.GetProperty("installationId").GetString()!));
+        }
+
+        public async Task<IssuedPrincipalCredential> ExchangeJoinTokenAsync(ExchangeEnrolmentRequest exchange)
+        {
+            using var anonymous = Client(null);
+            using var response = await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange", exchange);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<ExchangedEnrolment>())!.Issued;
         }
 
         public async Task<IssuedPrincipalCredential> CreateRunnerAsync(string runnerId, string? role)
@@ -701,7 +899,7 @@ public sealed class RunnerCredentialBindingTests
     }
 
     private sealed class Factory(
-        string dataDirectory, string studioToken, string engineToken, TimeProvider clock, FakeGitHub? github)
+        string dataDirectory, string studioToken, string engineToken, TimeProvider? clock, FakeGitHub? github)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -719,17 +917,20 @@ public sealed class RunnerCredentialBindingTests
                 }));
             builder.ConfigureServices(services =>
             {
-                services.RemoveAll<TimeProvider>();
-                services.AddSingleton(clock);
+                if (clock is not null)
+                {
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton(clock);
+                }
                 if (github is null) return;
                 services.RemoveAll<IGitHubAppVault>();
                 services.AddSingleton<IGitHubAppVault>(github.Vault);
                 services.RemoveAll<GitHubAppBroker>();
                 services.AddSingleton(provider => new GitHubAppBroker(
-                    new GitHubAppClient(new HttpClient(github), clock),
+                    new GitHubAppClient(new HttpClient(github), provider.GetRequiredService<TimeProvider>()),
                     github.Vault,
                     provider.GetRequiredService<IRegisteredRepositoryCatalog>(),
-                    clock));
+                    provider.GetRequiredService<TimeProvider>()));
             });
         }
     }

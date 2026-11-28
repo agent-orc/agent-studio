@@ -94,7 +94,25 @@ public sealed class HostAgentSupervisorTests : IDisposable
         Assert.False(state.Roles.ContainsKey("coding"));
     }
 
-    private string CreateConfiguration(bool withPost = false)
+    [Theory]
+    [InlineData("RUNNER_ID=coding-id")]
+    [InlineData("RUNNER_STATE_DIR=coding-state")]
+    [InlineData("RUNNER_HOSTNAME=another-host")]
+    [InlineData("RUNNER_SERVER_URL=http://127.0.0.1:5031")]
+    public async Task Gate_requires_a_distinct_identity_and_state_on_the_same_host_and_server(string overrideSetting)
+    {
+        var config = CreateConfiguration(withGate: true);
+        if (overrideSetting.StartsWith("RUNNER_STATE_DIR=", StringComparison.Ordinal))
+            overrideSetting = $"RUNNER_STATE_DIR={Path.Combine(_root, "coding-state")}";
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [overrideSetting]);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["enable-role", config, "gate"], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "host-state", "roles.json")));
+    }
+
+    private string CreateConfiguration(bool withPost = false, bool withGate = false)
     {
         Directory.CreateDirectory(_root);
         var codingFile = Path.Combine(_root, "coding.env");
@@ -128,11 +146,23 @@ public sealed class HostAgentSupervisorTests : IDisposable
             $"RUNNER_STATE_DIR={Path.Combine(_root, "post-state")}",
         ]);
         var config = Path.Combine(_root, "host-agent.json");
+        var gateFile = Path.Combine(_root, "gate.env");
+        if (withGate)
+            File.WriteAllLines(gateFile,
+            [
+                "RUNNER_SERVER_URL=http://127.0.0.1:5030",
+                "RUNNER_ID=gate-id",
+                "RUNNER_HOSTNAME=one-host",
+                $"RUNNER_WORKDIR={Path.Combine(_root, "gate-work")}",
+                $"RUNNER_REVIEW_WORKDIR={Path.Combine(_root, "gate-review-work")}",
+                $"RUNNER_STATE_DIR={Path.Combine(_root, "gate-state")}",
+            ]);
         File.WriteAllText(config, JsonSerializer.Serialize(new HostAgentConfiguration(
             Path.Combine(_root, "host-state"),
             new HostAgentRoleConfiguration(codingFile, Path.Combine(_root, "coding-home")),
             new HostAgentRoleConfiguration(reviewFile, Path.Combine(_root, "review-home")),
-            withPost ? new HostAgentRoleConfiguration(postFile, Path.Combine(_root, "post-home")) : null)));
+            withPost ? new HostAgentRoleConfiguration(postFile, Path.Combine(_root, "post-home")) : null,
+            withGate ? new HostAgentRoleConfiguration(gateFile, Path.Combine(_root, "gate-home")) : null)));
         return config;
     }
 }

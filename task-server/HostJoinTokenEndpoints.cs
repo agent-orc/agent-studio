@@ -39,16 +39,22 @@ public static class HostJoinTokenEndpoints
     {
         app.MapPost("/api/v1/management/host-join-tokens", async (
             HttpContext context, CreateHostJoinTokenRequest request, TaskServerStore store,
-            TimeProvider clock, CancellationToken ct) =>
+            TaskServerBootstrapOptions bootstrap, TimeProvider clock, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!Valid(request)) return Results.BadRequest(new { error = "invalid-host-join-request" });
-            var runnerId = request.Role == "review" ? request.RunnerName + "-review" : request.RunnerName;
             try
             {
+                if (request.Role == RunnerCredentialRoles.Gate
+                    && await StudioRoleGate.ResolveAsync(context, store, bootstrap, ct) != StudioUserRoles.Owner)
+                    return TaskServerEndpoints.MapError(new StudioAuthorizationException(
+                        "owner-role-required", "An installation owner must issue a gate join token."));
+                var runnerId = request.Role == RunnerCredentialRoles.Coding
+                    ? request.RunnerName
+                    : $"{request.RunnerName}-{request.Role}";
                 var enrolment = await store.CreateEnrolmentAsync(
                     new CreateEnrolmentRequest("runner:" + runnerId,
-                        TaskServerPrincipalKinds.Runner, runnerId, RepositoryWrite: request.Role == "coding",
+                        TaskServerPrincipalKinds.Runner, runnerId, RepositoryWrite: request.Role == RunnerCredentialRoles.Coding,
                         Role: request.Role),
                     TaskServerEndpoints.Actor(context), ct);
                 return Results.Json(new IssuedHostJoinToken(
@@ -65,7 +71,7 @@ public static class HostJoinTokenEndpoints
     }
 
     private static bool Valid(CreateHostJoinTokenRequest request)
-        => request.Role is "coding" or "review"
+        => RunnerCredentialRoles.IsValid(request.Role)
             && request.RunnerName is { Length: > 0 and <= 80 }
             && request.RunnerName.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
             && Uri.TryCreate(request.ServerUrl, UriKind.Absolute, out var uri)
