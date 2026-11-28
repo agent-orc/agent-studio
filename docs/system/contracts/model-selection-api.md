@@ -41,7 +41,12 @@ acceptance evidence takes precedence over that host's CLI model list.
 If no qualifying host advertises a known model, or the host inventory cannot
 be read, the API returns HTTP 200 with the relevant registry entries marked
 `available: false`. `isDefault` identifies the policy default independently
-of `available`. Pickers use both fields when preselecting a model.
+of `available`. Pickers use both fields when preselecting a model. The create
+form also reevaluates its automatic selection when a refreshed catalogue
+marks the selected model unavailable. If no available policy default is
+listed, the form delegates the selection to the server and omits the model
+and thinking level from the create request. Explicit selections remain
+visible with their availability status.
 
 ## Reserve setting
 

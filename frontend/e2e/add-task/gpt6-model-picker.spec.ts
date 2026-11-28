@@ -214,6 +214,38 @@ test.describe('GPT-6 model picker', () => {
     }
   });
 
+  test('clears a previously available automatic route after the picker refreshes', async ({ page }, testInfo) => {
+    await page.route('**/api/cli/codex/models?refresh=true', (route) => route.fulfill({ json: {
+      models: codexModels.map((model) => model.isDefault ? { ...model, available: false } : model),
+      source: 'execution-hosts',
+      fetchedAt: new Date().toISOString(),
+    } }));
+    await page.route('**/api/tasks', (route) => route.fulfill({ json: { id: 'AGT-created' } }));
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.getByRole('region', { name: 'Ready cards' }).getByTestId('lane-add-task').click({ timeout: 45_000 });
+    await page.getByTestId('create-title').fill('Create using policy');
+    const agent = page.getByTestId('create-agent');
+    await expect(agent).toHaveAttribute('data-model', 'gpt-6.2-sol');
+    await agent.click();
+    const sol = page.getByTestId('create-agent-picker-model-gpt-6.2-sol');
+    await expect(sol).toBeDisabled();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await expect(page.getByTestId('create-agent-picker-model-default')).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('create-agent-picker-cancel').click();
+    await expect(agent).toContainText('Policy default');
+
+    const path = join(process.env.JOB_RESULTS_DIR ?? '../results', 'gpt62-refresh-policy-default--mocked.png');
+    await agent.screenshot({ path });
+    await testInfo.attach('gpt62-refresh-policy-default', { path, contentType: 'image/png' });
+    const submitted = page.waitForRequest((req) =>
+      req.method() === 'POST' && new URL(req.url()).pathname === '/api/tasks');
+    await page.getByTestId('create-submit').click();
+    const body = (await submitted).postDataJSON();
+    expect(body).toMatchObject({ cliType: 'codex', modelExplicit: false, thinkingLevelExplicit: false });
+    expect(body).not.toHaveProperty('model');
+    expect(body).not.toHaveProperty('thinkingLevel');
+  });
+
   test('reports a project migration that failed every pinned card update', async ({ page }, testInfo) => {
     const id = 'AGT-fail';
     const card = {

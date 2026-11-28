@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Observable, Subject, TimeoutError, defaultIfEmpty, map, tap, throwIfEmpty, timeout } from 'rxjs';
 import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
@@ -70,7 +70,7 @@ export class CreateTaskFormService {
   /** Allowed manual-create lanes (everything before 3-progress). */
   static readonly ALLOWED_TARGET_STATES = [TaskState.Backlog, TaskState.Preparation, TaskState.Ready] as const;
 
-  readonly availableModels = signal<CliModelInfo[]>([]);
+  readonly availableModels = computed(() => this.catalogStore.modelsFor(this.newCliType()));
   readonly policySuggestion = signal<ModelRoutingRecommendation | null>(null);
   /** A policy suggestion is in flight; it may still replace the chip's model. */
   readonly suggestionPending = signal(false);
@@ -86,6 +86,14 @@ export class CreateTaskFormService {
   /** Fired after a successful createJob; shell listens to refresh the board. */
   private readonly submittedSubject = new Subject<{ jobId: string; watchPath: string; title: string }>();
   readonly submitted$: Observable<{ jobId: string; watchPath: string; title: string }> = this.submittedSubject.asObservable();
+
+  constructor() {
+    effect(() => {
+      if (!this.visible()) return;
+      const models = this.availableModels();
+      untracked(() => this.applyCatalogueDefaults(models));
+    });
+  }
 
   /**
    * Whether a "+ Add task" button is allowed in the named lane. Lanes
@@ -307,9 +315,7 @@ export class CreateTaskFormService {
     if (this.newCliType() === t) return;
     this.projectDefaultsRequest++;
     this.defaultsPending.set(false);
-    this.newCliType.set(t);
-    this.newModel.set(readDefaultModelPref(t));
-    this.newThinkingLevel.set(readDefaultThinkingLevelPref(t));
+    this.applyStoredRoute(t);
     this.modelSelectionExplicit.set(false);
     this.loadCreateModels(t);
     this.refreshPolicySuggestion();
@@ -339,8 +345,9 @@ export class CreateTaskFormService {
         this.defaultsPending.set(false);
         const project = projects.find(p => p.storageLocation === watchPath);
         if (!project) return;
-        if (project.cliDefault && (CLI_TYPES as readonly string[]).includes(project.cliDefault)) {
-          this.newCliType.set(project.cliDefault as CliType);
+        if (project.cliDefault && (CLI_TYPES as readonly string[]).includes(project.cliDefault)
+          && project.cliDefault !== this.newCliType()) {
+          this.applyStoredRoute(project.cliDefault as CliType);
         }
         if (project.modelDefault) {
           this.newModel.set(project.modelDefault);
@@ -389,15 +396,13 @@ export class CreateTaskFormService {
     if (ev.cliType === this.newCliType()) {
       this.newModel.set(ev.model);
       this.newThinkingLevel.set(ev.thinkingLevel);
+      if (this.visible()) this.applyCatalogueDefaults(this.availableModels());
     }
   }
 
   /** Apply user's stored CLI default before showing the dialog. */
   applyStoredCliDefault(): void {
-    const t = readDefaultCliPref();
-    this.newCliType.set(t);
-    this.newModel.set(readDefaultModelPref(t));
-    this.newThinkingLevel.set(readDefaultThinkingLevelPref(t));
+    this.applyStoredRoute(readDefaultCliPref());
   }
 
   // ---------- close + submit ----------
@@ -419,7 +424,6 @@ export class CreateTaskFormService {
     this.newModel.set(readDefaultModelPref(this.newCliType()));
     this.newThinkingLevel.set(readDefaultThinkingLevelPref(this.newCliType()));
     this.modelSelectionExplicit.set(false);
-    this.availableModels.set([]);
     this.policySuggestion.set(null);
     this.suggestionPending.set(false);
     this.suggestionRequest++;
@@ -446,6 +450,7 @@ export class CreateTaskFormService {
       });
       return;
     }
+    this.applyCatalogueDefaults(this.availableModels());
     const attachments = this.newAttachments;
     const title = this.newTitle.trim();
     const promptDraft = this.newPrompt.trim();
@@ -502,26 +507,17 @@ export class CreateTaskFormService {
 
   // ---------- internal ----------
 
+  private applyStoredRoute(cliType: CliType): void {
+    this.newCliType.set(cliType);
+    this.newModel.set(readDefaultModelPref(cliType));
+    this.newThinkingLevel.set(readDefaultThinkingLevelPref(cliType));
+  }
+
   private loadCreateModels(cliType: CliType): void {
-    // ADR-0046: prefer the shared cache so the Create dialog renders the
-    // model dropdown synchronously when the user opens it.
-    if (this.catalogStore.hasFresh(cliType)) {
-      const models = [...this.catalogStore.modelsFor(cliType)];
-      this.availableModels.set(models);
-      this.applyCatalogueDefaults(models);
-      return;
+    this.applyCatalogueDefaults(this.availableModels());
+    if (!this.catalogStore.hasFresh(cliType)) {
+      this.catalogStore.ensure(cliType).subscribe({ error: () => void 0 });
     }
-    this.catalogStore.ensure(cliType).subscribe({
-      next: (models) => {
-        if (cliType !== this.newCliType()) return;
-        const list = [...models];
-        this.availableModels.set(list);
-        this.applyCatalogueDefaults(list);
-      },
-      error: () => {
-        if (cliType === this.newCliType()) this.availableModels.set([]);
-      },
-    });
   }
 
   /**
@@ -529,9 +525,9 @@ export class CreateTaskFormService {
    * sends. An empty field let the server pick one the chip never showed.
    */
   private applyCatalogueDefaults(models: readonly CliModelInfo[]): void {
-    const suggested = this.policySuggestion()?.model;
-    if (!this.modelSelectionExplicit() && this.newModel() === suggested
-      && models.some((model) => model.id === suggested && model.available === false)) {
+    if (this.modelSelectionExplicit() && !this.newModel()) return;
+    if (!this.modelSelectionExplicit()
+      && models.some((model) => model.id === this.newModel() && model.available === false)) {
       this.newModel.set('');
       this.newThinkingLevel.set(null);
     }

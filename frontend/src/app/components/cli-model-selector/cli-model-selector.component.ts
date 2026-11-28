@@ -56,6 +56,7 @@ export class CliModelSelectorComponent {
   readonly thinkingLevel = input<string | null>(null);
   readonly betterCandidates = input<BetterCandidateNote | null>(null);
   readonly availableModels = input<readonly CliModelInfo[]>([]);
+  readonly preserveUnavailableModel = input(true);
   readonly disabled = input<boolean>(false);
   readonly disabledReason = input<string | null>(null);
   /** Optional eyebrow shown above the current value in the popover header. */
@@ -178,7 +179,8 @@ export class CliModelSelectorComponent {
       const models = this.effectiveModels();
       const cli = this.draftCliType();
       if (!this.pickerOpen()) return;
-      untracked(() => this.applyCatalog(models, cli));
+      const preserveUnavailableModel = this.preserveUnavailableModel();
+      untracked(() => this.applyCatalog(models, cli, preserveUnavailableModel));
     });
   }
 
@@ -362,10 +364,10 @@ export class CliModelSelectorComponent {
   readonly olderModelNote = olderModelNote;
   readonly olderModelNoteTone = olderModelNoteTone;
   readonly olderModelAriaLabel = olderModelAriaLabel;
-  private applyCatalog(models: readonly CliModelInfo[], cli: CliType | null): void {
+  private applyCatalog(models: readonly CliModelInfo[], cli: CliType | null, preserveUnavailableModel: boolean): void {
     this.draftModels.set(models);
     const current = this.draftModel();
-    const existingPin = cli === this.cliType() && current === (this.model() ?? '').trim();
+    const existingPin = preserveUnavailableModel && cli === this.cliType() && current === (this.model() ?? '').trim();
     const stillValid = current === '' || models.some(
       (model) => model.id === current && (model.available !== false || existingPin),
     );
