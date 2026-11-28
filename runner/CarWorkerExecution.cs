@@ -48,6 +48,13 @@ internal static class CarWorkerExecution
     /// <summary>Grace the worker allows CAR to classify and report after a stop request.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(30);
 
+    private const string CodexUnattendedInstructions =
+        "This coding session runs unattended. Nobody can be reached while a command runs. " +
+        "For commands that may take longer than 30 seconds, use one exec tool script with a " +
+        "long yield_time_ms and a write_stdin loop inside it, as shown in AGENTS.md. " +
+        "Waiting for many minutes inside that script is expected. Give the shell command a timeout. " +
+        "Do not use separate sleep, wait, or empty write_stdin calls to check a running command.";
+
     /// <summary>
     /// Drive one CLI run for <paramref name="spec"/> through CAR and return the
     /// same shape the legacy engine produced, so <c>result.json</c> and the
@@ -67,7 +74,8 @@ internal static class CarWorkerExecution
         Func<CliOptions, CliOptions>? optionsCustomizer = null,
         string? cleanContextRoot = null,
         IReadOnlyList<string>? extraCliArguments = null,
-        CancellationToken stopToken = default)
+        CancellationToken stopToken = default,
+        bool unattendedCoding = false)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
@@ -86,7 +94,7 @@ internal static class CarWorkerExecution
         options = options with
         {
             Spawner = new CodingWorkerSpawner(cliType, options.Spawner,
-                optionsCustomizer is null ? null : options.EnvironmentOverrides),
+                optionsCustomizer is null ? null : options.EnvironmentOverrides, unattendedCoding),
         };
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
@@ -377,10 +385,19 @@ internal static class CarWorkerExecution
     internal sealed class CodingWorkerSpawner(
         string cliType,
         ICliProcessSpawner? inner = null,
-        IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null) : ICliProcessSpawner
+    IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null,
+    bool unattendedCoding = false) : ICliProcessSpawner
     {
         public CliSpawn Spawn(ProcessStartInfo startInfo)
         {
+            if (unattendedCoding && cliType == CliSelection.CodexCli)
+            {
+                // Codex accepts global config overrides before exec, including exec resume.
+                startInfo.ArgumentList.Insert(0, "-c");
+                startInfo.ArgumentList.Insert(1, $"developer_instructions=\"{CodexUnattendedInstructions}\"");
+                startInfo.ArgumentList.Insert(2, "-c");
+                startInfo.ArgumentList.Insert(3, "background_terminal_max_timeout=300000");
+            }
             WorkerEdgeCredentialBoundary.ApplyCodingEnvironment(startInfo.Environment, cliType);
             if (testEnvironmentOverrides is not null)
                 foreach (var pair in testEnvironmentOverrides) startInfo.Environment[pair.Key] = pair.Value;

@@ -132,14 +132,30 @@ apply only under `frontend/`.
 
 ## Verification
 
-- Run builds and tests in the foreground with a timeout appropriate to the
-  command, or start them in the background and use one blocking command to wait
-  (for example, `wait <pid>` in the launching shell or
-  `timeout 20m tail --pid=<pid> -f /dev/null`), then read the end of the log once.
-- Do not poll logs in a loop of separate commands. If a command can outlast the
-  tool's per-call limit, wait in blocks of at least five minutes.
-- Each check re-sends the whole conversation, and builds on the shared host take
-  minutes.
+- Under Codex, run every command that may take longer than 30 seconds in one
+  `exec` tool script. Keep the `write_stdin` loop inside that script so the model
+  receives control when the command finishes. Give the shell command its own
+  timeout shorter than the script's yield and print only the output tail.
+  Use `scripts/agent-check.sh` for builds and tests when it exists in the checkout.
+
+  ```js
+  // @exec: {"yield_time_ms": 1800000}
+  let r = await tools.exec_command({cmd: "timeout 1500 <your build or test command>", yield_time_ms: 1000});
+  let out = r.output;
+  while (r.exit_code == null) {
+    r = await tools.write_stdin({session_id: r.session_id, chars: "", yield_time_ms: 60000});
+    out += r.output;
+  }
+  text(out.slice(-6000));
+  text(`Exit code: ${r.exit_code}`);
+  ```
+
+- Under Claude Code, run the command in the foreground in one Bash call and set
+  its `timeout` to fit the command. Claude Code 2.1.327 defaults to 120,000 ms with
+  a 600,000 ms maximum by default. For longer commands the host can raise the
+  maximum with `BASH_MAX_TIMEOUT_MS`.
+- Keep waits in the original tool call. Separate `sleep`, `wait`, empty
+  `write_stdin`, and repeated status calls resend the conversation.
 - Regression reports need data first: reproduce, measure, find the test gap,
   write the failing regression test, fix, then repeat the original measurement.
 - Prompt changes under `prompts/runtime/` are CLI behavior changes. Run the
