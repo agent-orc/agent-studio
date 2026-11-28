@@ -132,6 +132,14 @@ apply only under `frontend/`.
 
 ## Verification
 
+- Run builds and tests in the foreground with a timeout appropriate to the
+  command, or start them in the background and use one blocking command to wait
+  (for example, `wait <pid>` in the launching shell or
+  `timeout 20m tail --pid=<pid> -f /dev/null`), then read the end of the log once.
+- Do not poll logs in a loop of separate commands. If a command can outlast the
+  tool's per-call limit, wait in blocks of at least five minutes.
+- Each check re-sends the whole conversation, and builds on the shared host take
+  minutes.
 - Regression reports need data first: reproduce, measure, find the test gap,
   write the failing regression test, fix, then repeat the original measurement.
 - Prompt changes under `prompts/runtime/` are CLI behavior changes. Run the
