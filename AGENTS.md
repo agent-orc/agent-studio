@@ -115,8 +115,9 @@ apply only under `frontend/`.
 
 ## Runtime And Stable
 
-- Playwright specs in a task worktree use `npm --prefix frontend run e2e`.
-  It publishes the backend and builds the frontend once on the runner, then
+- Use `scripts/agent-check.sh frontend-e2e <paths>` for focused Playwright
+  specs in a task worktree. It wraps the existing `npm run e2e` script, which
+  publishes the backend and builds the frontend once on the runner, then
   serves those assets on isolated ports. Reuse the prebuilt assets for focused
   specs; do not start `ng serve` or `dotnet run` for routine Playwright checks.
 - Dev backend port 5030 is offline by default. Agents may bring it up only via a
@@ -132,14 +133,24 @@ apply only under `frontend/`.
 
 ## Verification
 
-- Run builds and tests in the foreground with a timeout appropriate to the
-  command, or start them in the background and use one blocking command to wait
-  (for example, `wait <pid>` in the launching shell or
-  `timeout 20m tail --pid=<pid> -f /dev/null`), then read the end of the log once.
-- Do not poll logs in a loop of separate commands. If a command can outlast the
-  tool's per-call limit, wait in blocks of at least five minutes.
-- Each check re-sends the whole conversation, and builds on the shared host take
-  minutes.
+- Use [`scripts/agent-check.sh`](scripts/agent-check.sh) for builds, focused
+  tests, guards, and lint while working. Run it once in the foreground and
+  use the summary it returns. Read its full log only if the finished summary
+  leaves a specific failure unresolved. Never poll build or test logs.
+- Run `scripts/agent-check.sh build` for the solution build,
+  `scripts/agent-check.sh test <class-or-filter> --project <alias>` for a
+  focused .NET check, and `scripts/agent-check.sh guards` for all .NET guard
+  checks. Run `scripts/agent-check.sh test --help` for project aliases.
+  Omit `--project` to search all review-plan test projects.
+- Use `scripts/agent-check.sh frontend-lint` for frontend lint,
+  `scripts/agent-check.sh frontend-specs <paths>` for Angular unit specs, and
+  `scripts/agent-check.sh frontend-e2e <paths>` for focused Playwright specs.
+  Give frontend paths relative to `frontend/`. The wrapper also exposes
+  `release-build`, `frontend-build`, `docs`, and `self-test`.
+- The wrapper applies a timeout based on the check and host load, and
+  overlapping identical checks in the same attempt share a result.
+  Keep the tool call open long enough for the shared host. If an outer tool
+  limit forces a background launch, use one blocking wait.
 - Regression reports need data first: reproduce, measure, find the test gap,
   write the failing regression test, fix, then repeat the original measurement.
 - Prompt changes under `prompts/runtime/` are CLI behavior changes. Run the

@@ -4,11 +4,7 @@ Frontend-specific rules live in `frontend/AGENTS.md`.
 
 ## Verification
 
-- Run builds and tests in the foreground with a timeout appropriate to the
-  command, or start them in the background and use one blocking command to wait
-  (for example, `wait <pid>` in the launching shell or
-  `timeout 20m tail --pid=<pid> -f /dev/null`), then read the end of the log once.
-- Do not poll logs in a loop of separate commands. If a command can outlast the
-  tool's per-call limit, wait in blocks of at least five minutes.
-- Each check re-sends the whole conversation, and builds on the shared host take
-  minutes.
+- Run builds, focused tests, guards, and lint in the foreground with
+  `scripts/agent-check.sh`. See [Verification](../AGENTS.md#verification) for commands.
+- Use the finished summary. Read the full log only if a specific failure
+  is unresolved, and never poll build or test logs.

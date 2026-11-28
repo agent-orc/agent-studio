@@ -61,14 +61,16 @@ After **every** frontend change under `frontend/src/` that touches layout, spaci
 
 Workflow:
 
-1. Run from the task worktree on the Linux runner. `npm run e2e` prepares prebuilt assets and starts an isolated stack on dynamic ports. Focused runs reuse the built assets.
+1. Run Playwright from the task worktree root with `scripts/agent-check.sh
+   frontend-e2e`. The underlying `npm run e2e` prepares prebuilt assets and
+   starts an isolated stack on dynamic ports. Focused runs reuse the built assets.
 2. Run the relevant spec, or the full suite for cross-cutting changes (sh — never PowerShell):
    ```sh
-   npm --prefix frontend run e2e                          # full suite, headless
-   npm --prefix frontend run e2e -- e2e/cli-usage.spec.ts # single spec
+   scripts/agent-check.sh frontend-e2e                    # full suite, headless
+   scripts/agent-check.sh frontend-e2e e2e/cli-usage.spec.ts # single spec
    npm --prefix frontend run e2e:ui                       # interactive UI mode
    npm --prefix frontend run e2e:headed                   # watch the browser
-   SKIP_BILLABLE=1 npm --prefix frontend run e2e          # skip CLI-quota-burning specs
+   SKIP_BILLABLE=1 scripts/agent-check.sh frontend-e2e     # skip CLI-quota-burning specs
    ```
    `npm --prefix frontend run e2e:external` targets an already running stack for operator inspection.
 3. If your change isn't covered by an existing spec, **add or extend one** as part of the same change. Regression coverage is the deliverable, not optional.
