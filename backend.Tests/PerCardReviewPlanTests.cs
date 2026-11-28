@@ -858,6 +858,93 @@ public sealed class PerCardReviewPlanTests : IDisposable
             command.Arguments.Any(argument => argument.StartsWith("dotnet test", StringComparison.Ordinal)));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Fast_review_selects_the_pinned_template_owner_and_barrel_consumer(bool deferred, bool mapped)
+    {
+        Write("frontend/package.json", """{"scripts":{"test:ci":"node scripts/run-unit-tests.mjs"}}""");
+        Write("frontend/src/app/child/child.component.ts", """
+            @Component({templateUrl: './view.html'}) export class Child {}
+            """);
+        Write("frontend/src/app/child/view.html", "<p>Old</p>");
+        Write("frontend/src/app/child/child.component.spec.ts", "it('renders', () => {});");
+        Write("frontend/src/app/child/lazy.ts", "export { Child as PublicChild } from './child.component';");
+        Write("frontend/src/app/parent/parent.ts", "import { PublicChild as Rendered } from '../child/lazy'; export class Parent {}");
+        Write("frontend/src/app/parent/parent.spec.ts", "it('renders', () => {});");
+        Write("frontend/src/app/app.spec.ts", "it('app', () => {});");
+        Write("frontend/src/app/features/studio-shell/studio-shell.component.spec.ts", "it('shell', () => {});");
+        Write("frontend/src/app/features/task-detail/task-detail.spec.ts", "it('detail', () => {});");
+        if (mapped)
+            File.AppendAllText(Path.Combine(_repo, ".agent-studio/project.yml"), """
+
+                testSelection:
+                  - paths: [frontend/]
+                    suites: [frontend-unit]
+                    build: [0]
+                    lint: [0]
+                """);
+        Git("add", ".");
+        Git("commit", "-qm", "frontend baseline");
+        Git("switch", "-qc", "agent-studio/results/task");
+        Git("mv", "frontend/src/app/child/child.component.ts", "frontend/src/app/child/renamed.component.ts");
+        Git("mv", "frontend/src/app/child/child.component.spec.ts", "frontend/src/app/child/renamed.component.spec.ts");
+        Write("frontend/src/app/child/lazy.ts", "export { Child as PublicChild } from './renamed.component';");
+        Write("frontend/src/app/parent/result-only.spec.ts", "import { PublicChild } from '../child/lazy'; it('uses child', () => {});");
+        Git("add", ".");
+        Git("commit", "-qm", "rename child");
+        var sha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+        var changed = new[] { "frontend/src/app/child/child.component.ts", "frontend/src/app/child/renamed.component.ts",
+            "frontend/src/app/child/child.component.spec.ts", "frontend/src/app/child/renamed.component.spec.ts",
+            "frontend/src/app/child/view.html", "frontend/src/app/child/lazy.ts" };
+        var settings = Settings(TestingStrategies.Fast);
+        if (deferred) settings = settings with
+        {
+            BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only"),
+        };
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project", WatchPath = _repo,
+            FolderPath = _folder, State = TaskStates.AutoReview, Mode = TaskModes.Coding,
+        }, _repo, settings, "develop", sha, changed, ResultRef);
+        var angular = Assert.Single(plan.Commands, command => command.Arguments.Any(argument => argument.Contains("--include=")));
+        var shell = string.Join(" ", angular.Arguments);
+        foreach (var spec in new[] { "src/app/child/renamed.component.spec.ts", "src/app/parent/parent.spec.ts",
+                     "src/app/parent/result-only.spec.ts", "src/app/app.spec.ts",
+                     "src/app/features/studio-shell/studio-shell.component.spec.ts", "src/app/features/task-detail/task-detail.spec.ts" })
+            Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(shell, System.Text.RegularExpressions.Regex.Escape(spec)).Count);
+        Assert.Contains("npm run test:ci --", shell);
+        Assert.DoesNotContain("child/child.component.spec.ts", shell);
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(FrontendUnit));
+        Assert.Equal(TestExecutionLevels.WorkPackage, plan.TestLevel);
+    }
+
+    [Fact]
+    public void Strict_frontend_review_keeps_the_declared_unit_suite()
+    {
+        Write("frontend/src/app/app.spec.ts", "it('app', () => {});");
+        var sha = Commit("frontend/src/app.ts");
+        var plan = Build(Settings(TestingStrategies.Strict), sha, "frontend/src/app.ts");
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(FrontendUnit));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument => argument.Contains("--include=")));
+    }
+
+    [Theory]
+    [InlineData("docs/notes.md", null)]
+    [InlineData("frontend/README.md", null)]
+    [InlineData("frontend/src/app/app.spec.ts", TaskModes.Research)]
+    public void Documentation_and_report_only_deliveries_do_not_add_an_Angular_slice(string changed, string? mode)
+    {
+        Write("frontend/src/app/app.spec.ts", "it('app', () => {});");
+        Write(changed, "Notes");
+        var sha = Commit(changed);
+        var plan = Build(Settings(TestingStrategies.Fast), sha, changed, mode);
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument => argument.Contains("--include=")));
+        if (mode is null) Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(FrontendUnit));
+    }
+
     [Fact]
     public void FastChecksFollowTheTouchedPackages()
     {

@@ -3125,14 +3125,28 @@ comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/PreDevelopBuildGate.cs` and
   `FrontendWorkPackagePlanner.cs`: exact-merge develop boundary. Non-frontend
   deliveries retain the build-only level. A merge result that touches
-  `frontend/` runs a blocking Angular work package made from every spec in each
-  touched source folder plus the fixed app, studio-shell, and task-detail
-  barrel collision probes. Broad frontend suite commands stay outside the
+  frontend code runs a blocking Angular work package with explicit spec paths:
+  changed unit specs, companion specs of changed TypeScript and template/style
+  owners, direct named references, and companion specs of immediate production
+  consumers. Named imports resolve to their declaring modules through aliases
+  and barrel re-exports. The union of touched feature folders is included only
+  when it contains at most eight specs. The fixed app, studio-shell, and
+  task-detail collision probes remain in every frontend code slice. Playwright
+  specs are excluded from unit discovery. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
   Focused Angular slices prefer the declared `test:ci` script, including the
   report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
   the completed-test report check instead of falling back to raw `ng test`.
+  Normal fast coding reviews reuse this slice, including mapped, deferred and
+  broad-fallback plans. Review selection reads the pinned result tree rather
+  than the integration checkout, so renamed components and result-only
+  consumers participate. Strict review and full integration verification keep
+  their existing full-suite behavior. Documentation-only deliveries add no
+  Angular invocation. Selection reasons record missing companion/collision
+  matches and oversized feature omissions; these are selected paths, not
+  attempted tests. The existing wrapper report supplies execution and
+  zero-test evidence. Full feature coverage remains a post-merge obligation.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order

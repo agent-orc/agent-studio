@@ -3061,7 +3061,8 @@ public static class V1ReviewPlaneEndpoints
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath ?? string.Empty,
             declared, changedFiles, "remote-review", TestExecutionLevels.WorkPackage);
-        var fixedChecks = verifyOverride?.Commands.Any(command => command.TestScope == ReviewBaseChecks.Scope) == true;
+        var fixedChecks = verifyOverride?.Commands.Any(command => command.TestScope
+            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope) == true;
         var verify = fixedChecks || shared is null
             ? VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
                 verifyOverride ?? declared, changedFiles)
