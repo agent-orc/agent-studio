@@ -122,6 +122,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         // The original gate evidence survives inside the parked reason.
         Assert.Contains(budgetOverrun ? "gate-run budget exceeded" : "does not match .nvmrc", status.Failure.Reason, StringComparison.Ordinal);
         Assert.Contains("Gate evidence:", status.Failure.Reason);
+        Assert.Contains("No healthy alternative gate host is configured", status.Failure.Reason);
 
         // Idempotent: the next sweep must not append a second parked receipt.
         var second = await stack.Retries.RunOnceAsync();
@@ -156,6 +157,44 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             Assert.DoesNotContain(stack.Timeline.ReadAll(stack.Scanner.FindJob(id, _watchPath)!.FolderPath),
                 entry => entry.Details?.GetValueOrDefault("source") == "gate-environment-continuation");
         }
+    }
+
+    [Fact]
+    public async Task ExhaustedHostRelocatesTheHeldDeliveryOnceWithoutReopeningProductWork()
+    {
+        var stack = Build(alternateHost: "healthy-gate");
+        var delivery = SeedGateEnvironmentFailure(stack, "relocated", 600, key: "AGT-2813");
+        MoveToFlatStore(stack, "relocated", 2813);
+        for (var rung = 1; rung <= 3; rung++) SeedRetryReceipt(stack, "relocated", delivery, rung);
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Parked);
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Retried);
+        Assert.Equal("RemoteGate:ShardHosts:0", stack.Gate.RelocationSection);
+        Assert.Equal(1, stack.Gate.Invocations);
+        Assert.True(IsAncestor(delivery, "develop"));
+        Assert.Single(stack.Authority.GetTaskProjection(stack.TaskKey("relocated")).ReviewAttempts);
+        Assert.Single(stack.Scanner.ScanAutomationJobsWithArchive(_watchPath),
+            card => card.CreationSource?.StartsWith("gate-host-repair:", StringComparison.Ordinal) == true);
+        Assert.Equal(0, (await stack.Retries.RunOnceAsync()).Retried);
+    }
+
+    [Fact]
+    public async Task CompletedRepairWakesHeldDeliveryOnceEvenIfItsGateStillFails()
+    {
+        var stack = Build(gateEnvironmentFails: true);
+        var delivery = SeedGateEnvironmentFailure(stack, "repaired", 600, key: "AGT-2814");
+        MoveToFlatStore(stack, "repaired", 2814);
+        for (var rung = 1; rung <= 3; rung++) SeedRetryReceipt(stack, "repaired", delivery, rung);
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Parked);
+        var repair = Assert.Single(stack.Scanner.ScanAutomationJobsWithArchive(_watchPath),
+            card => card.CreationSource?.StartsWith("gate-host-repair:", StringComparison.Ordinal) == true);
+        TaskJsonFile.UpdateField(repair.FolderPath, "state", TaskStates.Completed,
+            NullLogger<GateEnvironmentRetryServiceTests>.Instance);
+        stack.Scanner.InvalidateCache();
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Retried);
+        Assert.Null(stack.Gate.RelocationSection);
+        Assert.Equal(0, (await stack.Retries.RunOnceAsync()).Retried);
+        Assert.Equal(1, stack.Gate.Invocations);
+        Assert.Equal(delivery, ReviewSubjectStore.Read(stack.Scanner.FindJob("repaired", _watchPath)!.FolderPath)!.ResultSha);
     }
 
     private void MoveToFlatStore(Stack stack, string id, int number)
@@ -713,7 +752,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     private Stack Build(
         bool gateEnvironmentFails = false,
         Action? onGateRun = null,
-        ILogger<GateEnvironmentRetryService>? logger = null)
+        ILogger<GateEnvironmentRetryService>? logger = null,
+        string? alternateHost = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -722,6 +762,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             ["WatchPaths:0:RootPath"] = _repo,
             ["WatchPaths:0:RepositoryPath"] = _repo,
             ["TaskRepository"] = _root,
+            ["RemoteGate:ShardHosts:0:SshHost"] = alternateHost,
         }).Build();
 
         var scanner = new TaskScannerService(
@@ -868,6 +909,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         }
 
         public int Invocations { get; private set; }
+        public string? RelocationSection { get; private set; }
 
         public Task<BuildTestGateResult> RunAsync(
             BuildTestGateRequest request,
@@ -878,6 +920,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             CancellationToken ct)
         {
             Invocations++;
+            RelocationSection = GateEnvironmentRelocationScope.For(request)?.Section;
             _duringRun?.Invoke();
             var result = _environmentFails
                 ? new BuildTestGateResult(

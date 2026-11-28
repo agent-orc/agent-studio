@@ -3511,9 +3511,17 @@ move-error dialog.
   repair permits one replay per held exact delivery; new deliveries cannot claim
   that historical wake. Manual holds remain held. Transport failures stay with
   their outage probe, and service-shutdown resumptions spend no host rung.
-  Healthy-host relocation requires a per-replay transport placement input; the
-  existing merge runner has no such input. The scoped quarantine and repair path
-  does not claim that relocation is implemented. See
+  After quarantine, each held delivery can also relocate once to a configured
+  `RemoteGate:ShardHosts` host outside the failed host and all quarantined hosts.
+  The AI Operator decides from placement and durable spending facts. The narrow
+  `RemoteBuildTestGateRunner` hook confines placement to that replay's project and
+  card, bypasses the primary transport and its sharding, disables verdict-cache
+  reuse, and retains exact-subject evidence validation and bounded transport retries.
+  Relocated runs do not update the primary host's outage or disk state. Other gates
+  keep their current transport. A single-host installation records that no healthy
+  alternative is configured and retains the quarantine and repair path; it cannot
+  relocate. A configured alternative is a candidate whose operation is verified by
+  the exact-subject gate, not a promise of host health. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
   for the ladder, the receipts, and the operator action.
 - A gate that never reached a verdict at all - the process that owned the merge

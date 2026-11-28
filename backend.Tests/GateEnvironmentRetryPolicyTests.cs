@@ -44,6 +44,28 @@ public sealed class GateEnvironmentRetryPolicyTests
             GateEnvironmentRetryPolicy.Decide(facts with { TransportFailure = true }).Reason);
     }
 
+    [Fact]
+    public void QuarantinedHostRelocatesOnceWithoutRenewingItsBudget()
+    {
+        var facts = HostFacts() with
+        {
+            HostAttemptsSpent = 3, HostQuarantined = true, HostRelocationAvailable = true,
+        };
+        var decision = GateEnvironmentRetryPolicy.Decide(facts);
+        Assert.Equal(GateEnvironmentRetryAction.Retry, decision.Action);
+        Assert.Equal(GateEnvironmentRetryReasons.HostRelocation, decision.Reason);
+        Assert.Equal(3, decision.AttemptsSpent);
+        Assert.Null(GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts with { OperatorRequest = true }));
+        Assert.Equal(GateEnvironmentRetryAction.Park,
+            GateEnvironmentRetryPolicy.Decide(facts with { HostRelocationSpent = true }).Action);
+        Assert.Equal(GateEnvironmentRetryReasons.HostQuarantined,
+            GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts with { OperatorRequest = true, HostRelocationSpent = true }));
+        Assert.Equal(GateEnvironmentRetryReasons.HumanHold,
+            GateEnvironmentRetryPolicy.Decide(facts with { HumanHold = true }).Reason);
+        Assert.Equal(GateEnvironmentRetryReasons.TransportAwaitsGateHost,
+            GateEnvironmentRetryPolicy.Decide(facts with { TransportFailure = true }).Reason);
+    }
+
     private static GateEnvironmentRetryFacts HostFacts() => new(
         true, true, true, false, true, true, 0,
         [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(45)],

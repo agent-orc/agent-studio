@@ -19,6 +19,7 @@ public static class GateEnvironmentRetryReasons
     public const string Due = "gate-environment-retry-due";
     public const string AlreadyParked = "gate-environment-retry-already-parked";
     public const string HostQuarantined = "gate-host-quarantined";
+    public const string HostRelocation = "gate-host-relocation";
     public const string HostRecovered = "gate-host-repair-recovered";
     public const string HumanHold = "gate-environment-human-hold";
 
@@ -126,7 +127,9 @@ public sealed record GateEnvironmentRetryFacts(
     bool HostRepairSucceeded = false,
     bool HostRecoverySpent = false,
     bool HumanHold = false,
-    bool OperatorRequest = false);
+    bool OperatorRequest = false,
+    bool HostRelocationAvailable = false,
+    bool HostRelocationSpent = false);
 
 /// <summary>The AI Operator facts: the ladder plus the one continuation after parking.</summary>
 public sealed record GateEnvironmentRetryOperatorFacts(
@@ -165,6 +168,9 @@ public static class GateEnvironmentRetryPolicy
             return facts.HostRepairSucceeded && !facts.HostRecoverySpent
                 ? new(GateEnvironmentRetryAction.Retry, GateEnvironmentRetryReasons.HostRecovered,
                     spent, maximum, TimeSpan.Zero, facts.Now)
+                : facts.HostRelocationAvailable && !facts.HostRelocationSpent
+                    ? new(GateEnvironmentRetryAction.Retry, GateEnvironmentRetryReasons.HostRelocation,
+                        spent, maximum, TimeSpan.Zero, facts.Now)
                 : new(GateEnvironmentRetryAction.Park, GateEnvironmentRetryReasons.HostQuarantined,
                     spent, maximum, TimeSpan.Zero, DueAt: null);
 
@@ -203,7 +209,8 @@ public static class GateEnvironmentRetryPolicy
         if (!facts.Enabled) return GateEnvironmentRetryReasons.Disabled;
         if (facts.HumanHold) return GateEnvironmentRetryReasons.HumanHold;
         if (facts.OperatorRequest && facts.HostQuarantined
-            && (!facts.HostRepairSucceeded || facts.HostRecoverySpent))
+            && (!facts.HostRepairSucceeded || facts.HostRecoverySpent)
+            && (!facts.HostRelocationAvailable || facts.HostRelocationSpent))
             return GateEnvironmentRetryReasons.HostQuarantined;
         if (!facts.InRetryLane) return GateEnvironmentRetryReasons.OutsideLanes;
         if (!facts.RequiresIntegration) return GateEnvironmentRetryReasons.NoCodeDelivery;

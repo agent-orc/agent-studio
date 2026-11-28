@@ -609,6 +609,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             && !GateEnvironmentRetryFactsReader.IsTransportFailure(status)
             && !GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status);
         GateEnvironmentHostRepair? host = null;
+        string? relocationSection = null;
         if (hostFault)
         {
             // Custody is pinned before the merge reason is annotated. Neither a
@@ -628,8 +629,16 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             // new host budget. New receipts spend the host budget before execution.
             host = host with { AttemptsSpent = Math.Max(host.AttemptsSpent, ledger.AttemptsSpent) };
             var repair = host.RepairTaskId is null ? null : _scanner.FindJob(host.RepairTaskId, job.WatchPath);
+            relocationSection = _configuration.GetSection("RemoteGate:ShardHosts").GetChildren()
+                .OrderBy(section => section.Key, StringComparer.Ordinal)
+                .FirstOrDefault(section => !string.IsNullOrWhiteSpace(section["SshHost"])
+                    && !string.Equals(section["SshHost"]!.Trim(), host.Host, StringComparison.OrdinalIgnoreCase)
+                    && !GateEnvironmentHostRepairs.IsQuarantined(job.WatchPath, section["SshHost"]!.Trim()))?.Path;
             withoutReview = withoutReview with
             {
+                HostRelocationAvailable = relocationSection is not null
+                    && host.HeldDeliveries.Contains(DeliveryIdentity(job, subject), StringComparer.Ordinal),
+                HostRelocationSpent = host.RelocatedDeliveries.Contains(DeliveryIdentity(job, subject), StringComparer.Ordinal),
                 HostAttemptsSpent = host.AttemptsSpent,
                 HostQuarantined = host.Quarantined,
                 HostRepairSucceeded = repair?.State == TaskStates.Completed
@@ -654,7 +663,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             reviewLookup,
             GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status),
             host,
-            subject);
+            subject,
+            relocationSection);
     }
 
     /// <summary>
@@ -728,10 +738,15 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             || ParkedBlockerMarker.TryRead(current.FolderPath) is { } blocker
                 && blocker.BlockerType != GateFailureParkCategories.EnvironmentExhausted)
             return new(GateEnvironmentRetryStatus.NotApplicable, "The delivery or its hold changed before replay.");
+        var relocationSection = evaluation.Host is { Quarantined: true }
+            && (!evaluation.Facts.HostRepairSucceeded || evaluation.Facts.HostRecoverySpent)
+            ? evaluation.RelocationSection : null;
         if (evaluation.Host is { } host)
         {
             var next = host.Quarantined
-                ? host with { ReplayedDeliveries = [.. host.ReplayedDeliveries, DeliveryIdentity(job, subject)] }
+                ? relocationSection is not null
+                    ? host with { RelocatedDeliveries = [.. host.RelocatedDeliveries, DeliveryIdentity(job, subject)] }
+                    : host with { ReplayedDeliveries = [.. host.ReplayedDeliveries, DeliveryIdentity(job, subject)] }
                 : host with { AttemptsSpent = host.AttemptsSpent + 1, LastAttemptAt = _time.GetUtcNow() };
             if (!GateEnvironmentHostRepairs.TryWrite(job.WatchPath, host, next))
                 return new(GateEnvironmentRetryStatus.AlreadyRunning, "The host fault budget changed before replay.");
@@ -772,6 +787,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id, "enqueued",
             deliveredAtUtc: deliveredAt, reason: "gate-environment-retry", atUtc: now);
         IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id, "dequeued", atUtc: now);
+        using var relocation = relocationSection is null ? null
+            : new GateEnvironmentRelocationScope(relocationSection, job.ProjectName, job.Id);
         MergeIntoIntegrationResult result;
         try
         {
@@ -809,6 +826,25 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             outcome: result.Outcome.ToString(), reason: result.Error,
             receipt: result.MergedSha, atUtc: _time.GetUtcNow());
 
+        if (relocationSection is not null && result.Outcome == MergeIntoIntegrationOutcome.GateEnvironmentFailure)
+        {
+            var relocatedStatus = _integrationStatus.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
+            if (!GateEnvironmentRetryFactsReader.IsTransportFailure(relocatedStatus)
+                && !GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(relocatedStatus))
+            {
+                var failedHost = _configuration[relocationSection + ":SshHost"]!.Trim();
+                lock (GateEnvironmentHostRepairs.Sync)
+                {
+                    var failed = GateEnvironmentHostRepairs.Read(job.WatchPath, failedHost, evaluation.Host!.Fingerprint);
+                    GateEnvironmentHostRepairs.TryWrite(job.WatchPath, failed, failed with { Quarantined = true });
+                }
+                _logger.LogWarning("gate-relocation-closed host={Host}: alternative also failed; quarantined without another ladder", failedHost);
+            }
+        }
+        if (relocationSection is not null)
+            _timeline.Append(job.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
+                $"Relocated exact delivery {deliverySha} to {_configuration[relocationSection + ":SshHost"]}; passed review retained.",
+                details: new Dictionary<string, string> { ["source"] = "gate-host-relocation", ["deliverySha"] = deliverySha });
         RecordOutcome(job, evaluation, result, rung, maximum, source);
         return new GateEnvironmentRetryResult(
             GateEnvironmentRetryStatus.Replayed,
@@ -868,6 +904,11 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     {
         ct.ThrowIfCancellationRequested();
         if (evaluation.Ledger.Parked) return Task.FromResult(false);
+        var current = _scanner.FindJob(job.Id, job.WatchPath);
+        if (current is null || current.State != job.State
+            || ParkedBlockerMarker.TryRead(current.FolderPath) is { } blocker
+                && blocker.BlockerType != GateFailureParkCategories.EnvironmentExhausted)
+            return Task.FromResult(false);
         var step = evaluation.MergeStep;
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         if (step is null || evaluation.DeliverySha is null || subject is null
@@ -932,6 +973,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             0, evaluation.Facts.Backoff.Count);
         var reason = MonolithTransitionAdapter.GateEnvironmentRetryPolicyParkedReason(
             attempts, evaluation.IntegrationBranch, step.Reason)
+            + (evaluation.RelocationSection is null
+                ? " No healthy alternative gate host is configured outside the quarantined failure domain; relocation is unavailable."
+                : $" Exact delivery relocation is available via {evaluation.RelocationSection}.")
             + $" Repair: {repair}. Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";
         _pipelineLog.RecordStep(job.FolderPath, step with { Reason = reason });
         GateEnvironmentRetryReceipts.RecordParked(_timeline, job.FolderPath, evaluation.DeliverySha, attempts, reason);
@@ -942,7 +986,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
 
     private static string EvaluationSubjectKey(GateEnvironmentRetryEvaluation evaluation)
         => $"gate-environment:{evaluation.Subject?.RunAttemptId}:{evaluation.DeliverySha}:"
-            + $"{evaluation.Ledger.AttemptsSpent}:{evaluation.Host?.Version}";
+            + $"{evaluation.Ledger.AttemptsSpent}:{evaluation.Host?.Version}:{evaluation.RelocationSection}:"
+            + $"{evaluation.Facts.HostRepairSucceeded}:{evaluation.Facts.HumanHold}";
 
     private static string DeliveryIdentity(TaskInfo job, ReviewSubjectRecord? subject)
         => $"{job.Key ?? job.TaskKey}:{subject?.RunAttemptId}:{subject?.ResultSha}";
@@ -990,7 +1035,8 @@ internal sealed record GateEnvironmentRetryEvaluation(
     GateEnvironmentReviewLookup ReviewLookup,
     bool ShutdownInterruption = false,
     GateEnvironmentHostRepair? Host = null,
-    ReviewSubjectRecord? Subject = null);
+    ReviewSubjectRecord? Subject = null,
+    string? RelocationSection = null);
 
 /// <summary>Durable host/fingerprint budget. Product delivery identities only fence the single repair wake.</summary>
 internal sealed record GateEnvironmentHostRepair(string Host, string Fingerprint)
@@ -1001,6 +1047,7 @@ internal sealed record GateEnvironmentHostRepair(string Host, string Fingerprint
     public bool Quarantined { get; init; }
     public string? RepairTaskId { get; init; }
     public string[] HeldDeliveries { get; init; } = [];
+    public string[] RelocatedDeliveries { get; init; } = [];
     public string[] ReplayedDeliveries { get; init; } = [];
 }
 
@@ -1019,6 +1066,13 @@ internal static class GateEnvironmentHostRepairs
     {
         lock (Sync)
             return ReadAll(watchPath).GetValueOrDefault(Key(host, fingerprint)) ?? new(host, fingerprint);
+    }
+
+    internal static bool IsQuarantined(string watchPath, string host)
+    {
+        lock (Sync)
+            return ReadAll(watchPath).Values.Any(record => record.Quarantined
+                && string.Equals(record.Host, host, StringComparison.OrdinalIgnoreCase));
     }
 
     internal static bool TryWrite(string watchPath, GateEnvironmentHostRepair expected, GateEnvironmentHostRepair next)
