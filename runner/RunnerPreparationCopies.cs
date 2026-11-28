@@ -6,6 +6,7 @@ namespace AgentRunner;
 internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerStateStore state, Action<string> log)
 {
     internal const long DefaultMaxBytes = 20_000_000_000;
+    private const string LinuxRunsSegment = "/caches/preparation/" + ProjectPreparationCacheSweep.RunsDirectoryName + "/";
     private const string ReleasePending = ".release-pending";
     private static readonly StringComparer Paths = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -53,15 +54,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         if (!Directory.Exists(path)) return;
         try
         {
-            // A surviving child can still have a binding after its worker and slot are gone.
-            // The marker lets the regular sweep retry even below the byte limit.
-            if (ProcessBindings().Contains(path))
-            {
-                using var marker = File.Open(Path.Combine(path, ReleasePending), FileMode.OpenOrCreate, FileAccess.Write);
-                log($"preparation-copy-release-deferred path={path}");
-                return;
-            }
-            TryDelete(path, log);
+            TryRelease(path, ProcessReferences([path]).Contains(path), log);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -99,6 +92,25 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         var observation = DurableAgentProcess.InspectForReattach(worker);
         // A handed-off result may still trigger an in-attempt same-session resume.
         return observation.IsLive || (daemonShutdown.IsCancellationRequested && observation.Result is not null);
+    }
+
+    private static bool TryRelease(string path, bool referenced, Action<string> log)
+    {
+        if (!referenced && TryDelete(path, log)) return true;
+        // Startup and pressure can discover an orphan whose terminal cleanup never ran.
+        // Retry it below the limit too, including after a partial delete or runner restart.
+        try
+        {
+            using var marker = File.Open(Path.Combine(path, ReleasePending), FileMode.OpenOrCreate,
+                FileAccess.Write, FileShare.ReadWrite);
+            log($"preparation-copy-release-deferred path={path}");
+        }
+        catch (DirectoryNotFoundException) { return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log($"preparation-copy-release-marker-failed path={path} error={ex.Message}");
+        }
+        return false;
     }
 
     private static bool TryDelete(string path, Action<string> log)
@@ -167,11 +179,11 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         var candidates = roots.Where(root => !referenced.Contains(root.Directory.FullName))
             .OrderBy(root => root.Directory.LastWriteTimeUtc).ThenBy(root => root.Directory.FullName, Paths).ToArray();
         if (candidates.Length == 0) return total;
-        var processBindings = ProcessBindings();
+        var processReferences = ProcessReferences(candidates.Select(root => root.Directory.FullName).ToArray());
         foreach (var (dir, bytes, pending) in candidates)
         {
             if (!pending && !startup && total <= limit) continue;
-            if (processBindings.Contains(dir.FullName) || !TryDelete(dir.FullName, log)) continue;
+            if (!TryRelease(dir.FullName, processReferences.Contains(dir.FullName), log)) continue;
             total -= bytes;
             log($"preparation-copy-removed path={dir.FullName} bytes={bytes}");
         }
@@ -194,28 +206,74 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         return bytes;
     }
 
-    // A child of an older worker can outlive its slot. Read only the three cache
-    // bindings and never persist process environments.
-    private static HashSet<string> ProcessBindings()
+    // A child can exec with a clean environment and keep its cwd, file descriptors
+    // or mapped package files. Read procfs once per batch and retain only copy roots.
+    private static HashSet<string> ProcessReferences(string[] candidates)
     {
         var referenced = new HashSet<string>(Paths);
         if (!OperatingSystem.IsLinux()) return referenced;
         foreach (var process in Directory.EnumerateDirectories("/proc"))
         {
             if (!int.TryParse(Path.GetFileName(process), out _)) continue;
-            try
+            foreach (var path in ProcessPaths(process))
             {
-                foreach (var entry in File.ReadAllText(Path.Combine(process, "environ")).Split('\0'))
+                if (!path.Contains(LinuxRunsSegment, StringComparison.Ordinal)) continue;
+                foreach (var root in candidates)
                 {
-                    var split = entry.IndexOf('=');
-                    if (split <= 0 || !CacheVariables.Contains(entry[..split], StringComparer.OrdinalIgnoreCase)) continue;
-                    var path = entry[(split + 1)..];
-                    if (Path.IsPathFullyQualified(path) && Directory.GetParent(path) is { } root)
-                        referenced.Add(root.FullName);
+                    if (path.StartsWith(root, StringComparison.Ordinal)
+                        && (path.Length == root.Length || path[root.Length] == '/'))
+                        referenced.Add(root);
                 }
+                if (referenced.Count == candidates.Length) return referenced;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         return referenced;
+    }
+
+    private static IEnumerable<string> ProcessPaths(string process)
+    {
+        var environment = ReadProcFile(process, "environ");
+        foreach (var entry in environment.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = entry.IndexOf('=');
+            if (split > 0 && CacheVariables.Contains(entry[..split], StringComparer.OrdinalIgnoreCase)
+                && Path.IsPathFullyQualified(entry[(split + 1)..]))
+                yield return Path.GetFullPath(entry[(split + 1)..]);
+        }
+
+        // Some tools receive a package or browser path as an argument and open it later.
+        var arguments = ReadProcFile(process, "cmdline");
+        if (arguments.Contains(LinuxRunsSegment, StringComparison.Ordinal))
+        {
+            foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
+                if (Path.IsPathFullyQualified(value)) yield return Path.GetFullPath(value);
+            }
+        }
+
+        if (new DirectoryInfo(Path.Combine(process, "cwd")).LinkTarget is { } cwd) yield return cwd;
+        if (new FileInfo(Path.Combine(process, "exe")).LinkTarget is { } exe) yield return exe;
+        string[] descriptors;
+        try { descriptors = Directory.GetFileSystemEntries(Path.Combine(process, "fd")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { descriptors = []; }
+        foreach (var descriptor in descriptors)
+            if (new FileInfo(descriptor).LinkTarget is { } target) yield return target;
+
+        // A loader can close the descriptor once it has mapped the file.
+        var maps = ReadProcFile(process, "maps");
+        if (!maps.Contains(LinuxRunsSegment, StringComparison.Ordinal)) yield break;
+        using var lines = new StringReader(maps);
+        while (lines.ReadLine() is { } line)
+        {
+            var start = line.IndexOf('/');
+            if (start >= 0) yield return line[start..];
+        }
+    }
+
+    private static string ReadProcFile(string process, string name)
+    {
+        try { return File.ReadAllText(Path.Combine(process, name)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return string.Empty; }
     }
 }

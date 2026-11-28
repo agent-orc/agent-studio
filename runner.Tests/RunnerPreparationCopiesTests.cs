@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.MemoryMappedFiles;
 using System.Text.Json;
 using AgentStudio.TestSupport;
 using AgentStudio.TaskServer.Contracts;
@@ -161,6 +162,102 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         {
             if (!process.HasExited) process.Kill();
             await process.WaitForExitAsync();
+        }
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
+        Assert.False(Directory.Exists(path));
+    }
+
+    [SkippableTheory]
+    [InlineData("cwd")]
+    [InlineData("fd")]
+    [InlineData("argument")]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    [Trait("Category", "MachineBound")]
+    public async Task Terminal_release_preserves_child_references_without_cache_environment(string reference)
+    {
+        PlatformGate.LinuxOnly("inspects a live child's procfs links");
+        var slot = Claim();
+        var path = Prepare(slot, 21);
+        _state.Delete(slot);
+        var start = new ProcessStartInfo("/bin/sh")
+        {
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+        start.Environment.Clear();
+        start.ArgumentList.Add("-c");
+        // Supplying the working path over stdin keeps the fd and cwd cases out of argv.
+        var bind = reference switch
+        {
+            "cwd" => "cd \"$root\"",
+            "fd" => "exec 3<\"$root/package\"",
+            _ => ":"
+        };
+        start.ArgumentList.Add($"set -eu; read -r root; {bind}; echo ready; read -r done");
+        if (reference == "argument") start.ArgumentList.Add(Path.Combine(path, "package"));
+        using var child = Process.Start(start)!;
+        try
+        {
+            await child.StandardInput.WriteLineAsync(path);
+            Assert.Equal("ready", await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)));
+            RunnerPreparationCopies.Release(_work, slot, _ => { });
+            Assert.True(File.Exists(Path.Combine(path, "package")));
+            Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, true, _ => { }));
+        }
+        finally
+        {
+            child.StandardInput.Close();
+            await child.WaitForExitAsync();
+        }
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
+        Assert.False(Directory.Exists(path));
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public void A_file_mapping_keeps_the_copy_after_its_file_descriptor_closes()
+    {
+        PlatformGate.LinuxOnly("inspects a package mapping in procfs");
+        var slot = Claim();
+        var path = Prepare(slot, 21);
+        _state.Delete(slot);
+        var package = Path.Combine(path, "package");
+        using (var mapping = MemoryMappedFile.CreateFromFile(package, FileMode.Open))
+        using (var view = mapping.CreateViewAccessor())
+        {
+            mapping.Dispose();
+            RunnerPreparationCopies.Release(_work, slot, _ => { });
+            Assert.True(File.Exists(package));
+            Assert.Equal(0, view.ReadByte(0));
+        }
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
+        Assert.False(Directory.Exists(path));
+    }
+
+    [SkippableTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    [Trait("Category", "MachineBound")]
+    public async Task Sweep_retries_a_slotless_copy_after_its_last_process_exits(bool startup)
+    {
+        PlatformGate.LinuxOnly("inspects a live child's cache binding");
+        var slot = Claim();
+        var path = Prepare(slot, 21);
+        _state.Delete(slot);
+        var start = new ProcessStartInfo("sleep", "90") { UseShellExecute = false };
+        start.Environment["NUGET_PACKAGES"] = Path.Combine(path, "nuget");
+        using var child = Process.Start(start)!;
+        try
+        {
+            Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, startup ? 100 : 0, startup, _ => { }));
+            Assert.True(File.Exists(Path.Combine(path, "package")));
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill();
+            await child.WaitForExitAsync();
         }
         Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
         Assert.False(Directory.Exists(path));
