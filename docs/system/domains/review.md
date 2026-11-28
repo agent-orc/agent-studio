@@ -503,6 +503,20 @@ retains its existing lineage checks. Stale briefs, a wrong content aspect,
 unsettled or mismatched reviews, and missing required research reports remain
 refused. Report-only local review retains its existing run-bound contract.
 
+For the local coding route, the final budget decision is stored in the task
+folder's `local-content-admission.json` before promotion to Human Review
+(AGT-4195). The receipt records the review attempt, delivery SHA, local run
+identity, brief version, content dispositions and hashes of
+`content-review-context.json` plus each original `aspect-<aspect>.json`.
+The context's `admissionReviewAttemptId` anchors the receipt independently;
+a missing receipt cannot bypass a required follow-up even for a literal pass.
+Original aspect findings are preserved. Completion verifies these identities
+and hashes and reads any required follow-up key from the exact review round
+in `review-round-budget.json`. A new local run clears the context and receipt.
+Missing dispositions, an absent or mismatched delivery, unreadable evidence,
+and failed atomic writes keep promotion pending and log
+`local-content-admission-record-failed`; a later review sweep can retry.
+
 `CompletionContentAdmissionTests` in
 `backend.Tests/CompletionContentPolicyTests.cs` covers advisory and spent-budget
 concerns, repaired deliveries, durable transfer recovery, failed creation,

@@ -271,6 +271,57 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         Assert.Equal(originalFinding, File.ReadAllText(findingPath));
     }
 
+    [Theory]
+    [InlineData("null-dispositions")]
+    [InlineData("empty-dispositions")]
+    [InlineData("missing-sha")]
+    [InlineData("blank-sha")]
+    [InlineData("missing-delivery")]
+    [InlineData("different-delivery")]
+    [InlineData("missing-context")]
+    [InlineData("missing-finding")]
+    [InlineData("malformed-context")]
+    [InlineData("malformed-finding")]
+    public void Skipped_local_admission_write_keeps_promotion_pending_until_evidence_is_repaired(string damage)
+    {
+        var budget = LocalAdmission("Consider clearer wording.", writeAdmission: false);
+        var contextPath = Path.Combine(_root, CompletionContentEvidence.LocalContextFile);
+        var findingPath = Path.Combine(_root, "aspect-requirement-fit.json");
+        var context = File.ReadAllText(contextPath);
+        var finding = File.ReadAllText(findingPath);
+        var dispositions = budget.RoundBudget.ContentAdmissions;
+        string? sha = new string('a', 40);
+        switch (damage)
+        {
+            case "null-dispositions": dispositions = null; break;
+            case "empty-dispositions": dispositions = []; break;
+            case "missing-sha": sha = null; break;
+            case "blank-sha": sha = " "; break;
+            case "missing-delivery": File.Delete(TaskPaths.SessionEventsLog(_root)); break;
+            case "different-delivery": LocalDelivery(new string('b', 40)); break;
+            case "missing-context": File.Delete(contextPath); break;
+            case "missing-finding": File.Delete(findingPath); break;
+            case "malformed-context": File.WriteAllText(contextPath, "null"); break;
+            case "malformed-finding": File.WriteAllText(findingPath, "null"); break;
+        }
+
+        var logger = new AdmissionLogger();
+        // This is the promotion boundary used immediately before GuardedMoveJob.
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            sha, dispositions, logger));
+        Assert.Contains("local-content-admission-record-failed", Assert.Single(logger.Errors).Message);
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+        Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+
+        LocalDelivery(new string('a', 40));
+        File.WriteAllText(contextPath, context);
+        File.WriteAllText(findingPath, finding);
+        Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+        Assert.True(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+        Assert.Equal(finding, File.ReadAllText(findingPath));
+    }
+
     private sealed class FailingAdmissionWriter(string failedPath, Exception failure)
         : AgentStudio.Persistence.IAtomicJsonFileWriter
     {

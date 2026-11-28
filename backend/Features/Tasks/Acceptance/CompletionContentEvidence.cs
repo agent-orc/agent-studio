@@ -30,7 +30,7 @@ public static class CompletionContentEvidence
             WriteLocalAdmission(folder, reviewAttemptId, resultSha, dispositions, writer);
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
             logger.LogError(ex,
                 "local-content-admission-record-failed folder={FolderPath} review={ReviewAttemptId}",
@@ -44,12 +44,14 @@ public static class CompletionContentEvidence
         IReadOnlyList<ReviewContentAdmission>? dispositions,
         AgentStudio.Persistence.IAtomicJsonFileWriter? writer = null)
     {
-        if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha)) return;
+        if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha))
+            throw new InvalidDataException("Local content admission requires a content disposition and delivery SHA.");
         var delivery = ReadLocalDelivery(folder);
         if (delivery is null || !string.Equals(delivery.Value.Sha, resultSha, StringComparison.OrdinalIgnoreCase))
-            return;
+            throw new InvalidDataException("Local content admission requires the reviewed delivery to match the current local run.");
         var local = ReadLocal(folder, dispositions[0].Aspect);
-        if (local is null) return;
+        if (local is null)
+            throw new InvalidDataException("Local content admission requires readable review context and content evidence.");
         // The context anchors the receipt independently. A lost receipt must
         // not silently turn a transferred literal pass into an unrestricted pass.
         var contextPath = Path.Combine(folder, LocalContextFile);
