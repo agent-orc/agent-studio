@@ -571,8 +571,9 @@ public sealed class PostMergeRunCommand
             foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
             {
                 var name = Path.GetFileName(path);
-                if (name == ".git" || directory == _options.Checkout
-                    && name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work") continue;
+                // Only the pinned checkout has separately tracked HEAD and runner bookkeeping.
+                if (directory == _options.Checkout && (name == ".git"
+                    || name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work")) continue;
                 Add(Path.GetRelativePath(root, path));
                 var attributes = File.GetAttributes(path);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
@@ -1084,15 +1085,21 @@ public sealed class PostMergeRunCommand
             if (!source.Success) throw new IOException(source.StdErr);
             sourceSha = source.StdOut.Trim();
         }
-        var input = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            JsonSerializer.Serialize(new { command, sourceSha, environment, shape, Envelope = _lastEnvelope }, Json))));
+        string CommandInput(PostMergeEnvelopeFingerprint fingerprint)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new { command, sourceSha, environment, shape, Envelope = fingerprint }, Json);
+            return Convert.ToHexString(SHA256.HashData(bytes));
+        }
+        var input = CommandInput(_lastEnvelope with { StartLoadPerCore = null, PeakLoadPerCore = null });
         if (_journal is not null)
         {
             lock (_journalGate)
             {
                 if (ordinal < _journal.Commands.Count && _journal.Commands[ordinal] is { } cached)
                 {
-                    if (cached.Input != input) throw new PostMergeCheckpointException("Post-merge checkpoint inputs changed.");
+                    // Older journals included the observed host load in the hash.
+                    if (cached.Input != input && cached.Input != CommandInput(_lastEnvelope))
+                        throw new PostMergeCheckpointException("Post-merge checkpoint inputs changed.");
                     _canaryObserved |= cached.CanaryObserved;
                     _canaryFailed |= cached.CanaryFailed;
                     duration?.Invoke(cached.DurationMs);

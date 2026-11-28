@@ -593,13 +593,16 @@ Recovery reconstructs the original plan and per-test ledger from saved raw
 command results. It reuses completed commands only when the saved workspace
 content digest (including ignored outputs and detached HEAD) and command inputs
 (command text, source SHA, declared environment and test-envelope fingerprint) still match.
+New command checkpoints use the envelope's configuration fields. The receipt also
+records the initial and peak host load for diagnostics.
 An incomplete command or changed workspace settles as `inconclusive`, retaining
 finished evidence, rather than attributing a product regression. Such a receipt
 does not advance the completed-window tip. Raw inconclusive evidence remains
 under `.post-merge-evidence/`. The command home stays in the checkout. New runs
 share a short, owner-checked temp directory across commands and restarts
-(`/tmp/pm-<digest>/t` on Unix). The checkpoint digest covers its contents,
-and accepted delivery removes both writable roots. Older journals retain their
+(`/tmp/pm-<digest>/t` on Unix). The digest covers its contents, including
+Git metadata in nested repositories. A ref change there invalidates the checkpoint.
+Accepted delivery removes both writable roots. Older journals retain their
 checkout-local temp path when resuming completed commands. Linux recovery reaps
 orphan command groups in the checkout and the owned temp directory before settling an incomplete command. Other
 hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine

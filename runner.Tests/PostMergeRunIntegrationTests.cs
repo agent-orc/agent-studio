@@ -603,6 +603,40 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Null(state.LastWindowTipSha);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestartChecksGitMetadataInTheCommandTempDirectory(bool changeMetadata)
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var executed = new List<string>();
+        var workspace = Path.Combine(_root, "durable", ".post-merge-work", fixture.Journal.Owner);
+        var tempRoot = ReviewAttemptTemp.Root(ReviewAttemptTemp.DefaultBase(), workspace, "pm-");
+        var gitDir = Path.Combine(tempRoot, "t", "repo", ".git");
+        var head = Path.Combine(gitDir, "HEAD");
+        var worker = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart(),
+            executor: (command, _) =>
+            {
+                executed.Add(command);
+                Directory.CreateDirectory(gitDir);
+                File.WriteAllText(head, "ref: refs/heads/initial\n");
+                return Task.FromResult((0, false, ""));
+            });
+        await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, default));
+        var savedDigest = worker.ReadJournal().WorkspaceDigest;
+        if (changeMetadata)
+            File.WriteAllText(head, "ref: refs/heads/changed\n");
+        var currentDigest = worker.WorkspaceDigest();
+        var exit = await DurableWorker(http, executed).ExecuteJournalAsync(null, default);
+        var receipt = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+        Assert.NotNull(savedDigest);
+        Assert.Equal(changeMetadata, savedDigest != currentDigest);
+        Assert.Equal(changeMetadata ? 1 : 0, exit);
+        Assert.Equal(changeMetadata ? "inconclusive" : "green", receipt.Status);
+        Assert.Equal(changeMetadata ? new[] { "build" } : new[] { "build", "suite" }, executed);
+    }
+
     [Fact]
     public async Task UndeliveredOutboxBlocksExecutionWhileApiIsStillUnavailable()
     {

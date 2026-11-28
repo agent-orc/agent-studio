@@ -3594,6 +3594,13 @@
           <td>The checkout-local journal temp path exceeded the test bootstrap's length budget. Repair-card additions also took the incident test file past the weekly contention limit.</td>
           <td>New runs use a short, owned temp root that participates in checkpoint validation and terminal cleanup. Repair-card tests have their own file. Both checks continue through the normal review and integration gates.</td>
         </tr>
+        <tr id="case-post-merge-checkpoint-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-checkpoint-metadata</span></td>
+          <td>After a simulated host restart, checkpoint validation missed a changed temp repository ref. An unchanged workspace could also settle as inconclusive when host load fluctuated.</td>
+          <td>The workspace digest skipped every .git directory, and the command hash included live load measurements.</td>
+          <td>Recovery settles as inconclusive on a changed temp ref and can resume completed work across load changes. Receipts retain the load measurements.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
