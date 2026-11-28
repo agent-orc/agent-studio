@@ -2314,17 +2314,25 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     [InlineData(false, "RemoteAspectVerdict", "ProductFailure", "ReviewFinding")]
     [InlineData(true, CodeQualityReviewPolicy.Confirmed, "ProductFailure", "ReviewFinding")]
     [InlineData(true, "RemoteAspectVerdict", "Pass", CodeQualityReviewPolicy.Uncorroborated)]
+    [InlineData(true, CodeQualityReviewPolicy.Rechecked, "Pass", CodeQualityReviewPolicy.Uncorroborated)]
     public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis(
         bool currentPrompt, string classification, string expectedOutcome, string expectedClassification)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
+        const string previousEvidence = "docs/concept/workbench.json ResolveDefaultWorkspace";
+        const string previousSummary = "A new workbench opens with the wrong default workspace.";
+        var prompt = currentPrompt ? CodeQualityReviewPolicy.ProtocolHeading : "Review the delivered implementation.";
+        if (classification == CodeQualityReviewPolicy.Rechecked)
+            prompt = CodeQualityReviewPolicy.WithPreviousFinding(prompt, "previous-review", new ReviewVerdictDto(
+                "code-quality", "block", CodeQualityReviewPolicy.Confirmed, previousSummary,
+                previousEvidence, "The default workspace must match the active project."));
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
                 "aspect-code-quality", "code-quality", "codex", [],
                 ExecutionKind: ReviewCommandKinds.AgentAspect,
-                Prompt: currentPrompt ? CodeQualityReviewPolicy.ProtocolHeading : "Review the delivered implementation.",
+                Prompt: prompt,
                 CliType: "codex", Model: "gpt-5.4-mini")],
             ["code-quality"], IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);

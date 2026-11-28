@@ -1537,11 +1537,12 @@ runbook failures qualify. Shippable structure, naming, comment and scope
 suggestions use `quality-advisory`. Requirement fit and tests and evidence
 own brief coverage and missing proof respectively.
 
-A follow-up prompt includes the previous attempt, finding and citation. A
-`quality-rechecked` verdict records that the reviewer checked the same contract
-and describes what happened. A repeated block still needs a shipping consequence
-and a current delivery citation. Use `quality-uncorroborated` to keep inconclusive
-or omitted rechecks in review evidence for a human. An independent defect may
+A follow-up prompt includes the previous attempt, finding and citation. For a
+`quality-rechecked` pass or block, the evidence must match the previous citation
+in full and the summary must describe the current observation. A repeated block
+still needs a shipping consequence and the citation must identify a changed
+delivery path. An inconclusive or omitted recheck becomes a concern that retains
+the prior attempt, finding, and citation for human review. An independent defect may
 still block with `quality-independent`; the review narrative records the
 disposition of the prior claim. The classification is a reviewer statement
 recorded with the verdict. The worker and report admission enforce the marker

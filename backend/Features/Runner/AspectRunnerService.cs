@@ -888,6 +888,7 @@ public sealed class AspectRunnerService
                 verdict = ReviewDiffEvidencePolicy.Normalize(verdict, changedPaths);
             if (ReviewGradingPolicy.IsConcernToken(verdict.Status)) status = AspectStatus.Concerns;
             summary = verdict.Summary;
+            evidence = verdict.EvidenceChecked;
             classification = verdict.Classification;
         }
         return new AspectVerdict(

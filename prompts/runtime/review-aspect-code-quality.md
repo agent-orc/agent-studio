@@ -80,8 +80,10 @@ for each actionable defect and its evidence. Use the following verdicts.
 
 When a previous code-quality contract is supplied, explicitly recheck that
 same contract and describe the observed result. Use `quality-rechecked` with
-its citation and the current disposition (`pass` if resolved, `block` if
-the cited failure still occurs). If the same contract was not rechecked or
+the exact text of Previous evidence in `evidence_checked`. Describe the
+current observation in `summary`. Use `pass` if resolved and `block` if
+the cited failure still occurs in material changed by the delivery.
+If the same contract was not rechecked or
 the result is inconclusive, use `quality-uncorroborated`. Follow the previous
 contract section for an independently evidenced new blocker.
 

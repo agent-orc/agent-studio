@@ -40,7 +40,6 @@ public class CodeQualityReviewPolicyTests
     [Theory]
     [InlineData("block", CodeQualityReviewPolicy.Confirmed)]
     [InlineData("concerns", CodeQualityReviewPolicy.Uncorroborated)]
-    [InlineData("pass", "RemoteAspectVerdict")]
     public void Dropped_or_unconfirmed_parser_claim_stays_visible_without_another_coding_round(
         string status, string classification)
     {
@@ -53,6 +52,55 @@ public class CodeQualityReviewPolicyTests
         Assert.Equal(SiblingClaim.Missing, settled.Missing);
         Assert.False(Decide(settled).StartsCodingRound);
         Assert.Contains(SiblingClaim.Missing!, prompt);
+    }
+
+    [Theory]
+    [InlineData("pass", "RemoteAspectVerdict")]
+    [InlineData("pass", CodeQualityReviewPolicy.Advisory)]
+    [InlineData("concerns", CodeQualityReviewPolicy.Uncorroborated)]
+    [InlineData("block", CodeQualityReviewPolicy.Rechecked)]
+    public void Omitted_parser_claim_retains_the_prior_attempt_finding_and_evidence(
+        string status, string classification)
+    {
+        const string attempt = "agt-4326-round-3";
+        var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, attempt, SiblingClaim);
+        var candidate = new ReviewVerdictDto("code-quality", status, classification,
+            "The remaining changes look sound.", "none", "none");
+
+        var settled = Settle(candidate, prompt, [Parser]);
+
+        Assert.Equal("concerns", settled.Status);
+        Assert.Contains(candidate.Summary, settled.Summary);
+        Assert.Contains(attempt, settled.Summary);
+        Assert.Contains(SiblingClaim.Summary, settled.Summary);
+        Assert.Equal(SiblingClaim.EvidenceChecked, settled.EvidenceChecked);
+        Assert.Equal(SiblingClaim.Missing, settled.Missing);
+        Assert.False(Decide(settled).StartsCodingRound);
+        Assert.Equal(settled, Settle(settled, prompt, [Parser]));
+    }
+
+    [Theory]
+    [InlineData("block", Runbook + " migration step 3")]
+    [InlineData("pass", Runbook + " migration step 3")]
+    [InlineData("block", Parser + " UnrelatedMethod")]
+    [InlineData("pass", Parser + " UnrelatedMethod")]
+    public void An_unrelated_citation_cannot_clear_or_reopen_the_previous_claim(string status, string evidence)
+    {
+        var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "agt-4326-round-3", SiblingClaim);
+        var candidate = Migration with
+        {
+            Status = status,
+            Classification = CodeQualityReviewPolicy.Rechecked,
+            EvidenceChecked = evidence,
+        };
+        var settled = Settle(candidate, prompt, [Runbook, Parser]);
+
+        Assert.Equal("concerns", settled.Status);
+        Assert.Equal(CodeQualityReviewPolicy.Uncorroborated, settled.Classification);
+        Assert.Equal(candidate.EvidenceChecked, settled.EvidenceChecked);
+        Assert.Contains(SiblingClaim.EvidenceChecked!, settled.Summary);
+        Assert.Contains(SiblingClaim.Missing!, settled.Summary);
+        Assert.False(Decide(settled).StartsCodingRound);
     }
 
     [Theory]
@@ -88,6 +136,21 @@ public class CodeQualityReviewPolicyTests
 
         Assert.Equal(ReviewFollowUpAction.ReviewFindingRound, Decide(settled).Action);
         Assert.Equal(CodeQualityReviewPolicy.Independent, settled.Classification);
+        Assert.Contains(SiblingClaim.EvidenceChecked!, settled.Summary);
+        Assert.Equal(Migration.EvidenceChecked, settled.EvidenceChecked);
+    }
+
+    [Fact]
+    public void Next_recheck_uses_the_independent_blocker_citation_after_an_older_claim_was_preserved()
+    {
+        var first = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "parser-review", SiblingClaim);
+        var independent = Settle(Migration with { Classification = CodeQualityReviewPolicy.Independent }, first, [Runbook]);
+        var second = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "migration-review", independent);
+
+        var rechecked = Settle(Migration with { Classification = CodeQualityReviewPolicy.Rechecked }, second, [Runbook]);
+
+        Assert.Equal(CodeQualityReviewPolicy.Rechecked, rechecked.Classification);
+        Assert.True(Decide(rechecked).StartsCodingRound);
     }
 
     [Theory]
