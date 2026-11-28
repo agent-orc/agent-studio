@@ -37,9 +37,11 @@ public sealed class DeployRecordStore(IConfiguration configuration, IAtomicJsonF
             var row = Observe(report, previous);
             if (index < 0) records.Add(row);
             else records[index] = row;
-            audit.Append(new(ControlPlaneAuditStreams.Operator, actor, "deploy-record.upsert", "reported", row.Id,
-                Details: new { row.StartedAtUtc, row.ToCommit, row.Outcome }));
+            var request = new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator, actor, "deploy-record.upsert",
+                "requested", row.Id, Details: new { row.StartedAtUtc, row.ToCommit, row.Outcome });
+            audit.Append(request);
             writer.WriteJson(_path, records, Json);
+            audit.Append(request with { Outcome = "reported" });
             return DeployOutcome<DeployRecord>.Ok(row.At(clock.GetUtcNow()));
         }
     }
@@ -67,9 +69,15 @@ public sealed class DeployRecordStore(IConfiguration configuration, IAtomicJsonF
             }
             records.AddRange(added.Select(row => Observe(row, null)));
             var result = new DeployRecordImport(added.Count, reports.Length - added.Count);
-            audit.Append(new(ControlPlaneAuditStreams.Operator, actor, "deploy-record.import", "reported", "deploy-records",
-                Details: new { result.Imported, result.Skipped, Ids = added.Select(row => row.Id) }));
-            if (added.Count > 0) writer.WriteJson(_path, records, Json);
+            var idsToImport = added.Select(row => row.Id).ToArray();
+            var request = new ControlPlaneAuditRecord(ControlPlaneAuditStreams.Operator, actor, "deploy-record.import",
+                "requested", "deploy-records", Details: new { Ids = idsToImport });
+            if (added.Count > 0)
+            {
+                audit.Append(request);
+                writer.WriteJson(_path, records, Json);
+            }
+            audit.Append(request with { Outcome = "reported", Details = new { result.Imported, result.Skipped, Ids = idsToImport } });
             return DeployOutcome<DeployRecordImport>.Ok(result);
         }
     }

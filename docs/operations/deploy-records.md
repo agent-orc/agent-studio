@@ -1,6 +1,8 @@
 # Report an installation deployment
 
-Record one attempt from the deploy chain, including attempts that stop before the switch or roll back. The API retains all records in `<TaskRepository>/deployments/deploy-records.json`. Each accepted POST writes to the operator audit stream with the authenticated actor.
+Record one attempt from the deploy chain, including attempts that stop before the switch or roll back. The API retains all records in `<TaskRepository>/deployments/deploy-records.json`.
+
+The operator audit stream records the authenticated actor. For a history change, `requested` identifies the attempt and `reported` confirms that the history write completed. If only `requested` appears, read the history to check what was saved before retrying. An import that skips every row emits a single `reported` entry with zero imported.
 
 The two writes use the quota-reserve permission class, `workspace.settings.write`. A workspace-scoped operator API token (the `*` project grant) may also write these reports. Reading the installation history requires `workspace.operate` on the workspace. For the credential and calls that publish the live release, see [instance deployment reporting](instance-deploy-records.md).
 

@@ -61,8 +61,37 @@ public sealed class DeployRecordEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, reserveWrite.StatusCode);
         var entries = host.Services.GetRequiredService<ControlPlaneAuditLog>()
             .ReadNewest(e => e.Stream == ControlPlaneAuditStreams.Operator && e.Operation.StartsWith("deploy-record."), 10);
-        Assert.Equal(2, entries.Count);
+        Assert.Equal(["requested", "reported"], entries.Where(e => e.Operation == "deploy-record.upsert")
+            .OrderBy(e => e.Sequence).Select(e => e.Outcome));
+        var replay = Assert.Single(entries, e => e.Operation == "deploy-record.import");
+        Assert.Equal("reported", replay.Outcome);
+        Assert.Equal(0, replay.Details!.Value.GetProperty("Imported").GetInt32());
+        Assert.Equal(1, replay.Details.Value.GetProperty("Skipped").GetInt32());
         Assert.All(entries, e => Assert.Contains(tokenId, e.Actor));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_history_write_keeps_only_the_request_in_the_operator_stream(bool import)
+    {
+        await using var host = Factory().WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            services.AddSingleton(sp => ActivatorUtilities.CreateInstance<DeployRecordStore>(sp, new FailedHistoryWriter()))));
+        using var client = LocalClient(host);
+        using var response = import
+            ? await client.PostAsJsonAsync(Route + "/import", new[] { Open })
+            : await client.PostAsJsonAsync(Route, Open);
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Empty((await Page(client)).Items);
+        var operation = import ? "deploy-record.import" : "deploy-record.upsert";
+        var entry = Assert.Single(host.Services.GetRequiredService<ControlPlaneAuditLog>()
+            .ReadNewest(e => e.Stream == ControlPlaneAuditStreams.Operator && e.Operation == operation, 10));
+        Assert.Equal("requested", entry.Outcome);
+    }
+
+    private sealed class FailedHistoryWriter : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => throw new IOException("Injected deploy history write failure.");
     }
 
     [Fact]
@@ -128,6 +157,13 @@ public sealed class DeployRecordEndpointTests : IDisposable
             return await result.Content.ReadFromJsonAsync<DeployRecordImport>();
         }
         Assert.Equal(new DeployRecordImport(2, 1), await Import(first, second, alias));
+        var audit = host.Services.GetRequiredService<ControlPlaneAuditLog>();
+        var completed = Assert.Single(audit.ReadNewest(e => e.Stream == ControlPlaneAuditStreams.Operator
+            && e.Operation == "deploy-record.import" && e.Outcome == "reported", 10));
+        var details = completed.Details!.Value;
+        Assert.Equal(2, details.GetProperty("Imported").GetInt32());
+        Assert.Equal(1, details.GetProperty("Skipped").GetInt32());
+        Assert.Equal([first.Id, second.Id], details.GetProperty("Ids").EnumerateArray().Select(id => id.GetString()));
         Assert.Equal(new DeployRecordImport(0, 3), await Import(alias, first, second));
         Assert.Equal(second.Id, Assert.Single((await Page(client, "?limit=1")).Items).Id);
         var tail = await Page(client, "?offset=1&limit=1");
