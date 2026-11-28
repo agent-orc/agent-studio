@@ -16,6 +16,9 @@ public sealed record DotNetReferenceSelection
     /// </summary>
     public Func<IReadOnlyList<string>, DotNetSourceOverlay>? Overlay { get; init; }
 
+    /// <summary>Reads the old side of deletions and renames for fast review.</summary>
+    public Func<IReadOnlyList<string>, DotNetSourceOverlay>? BeforeOverlay { get; init; }
+
     /// <summary>
     /// Serves the identifier index of one test project (repo-relative project
     /// path) for the checkout's current commit, or builds it. Null builds it on
@@ -102,6 +105,11 @@ internal enum DotNetReferenceOutcomeKind
 internal sealed record DotNetReferenceOutcome(
     DotNetReferenceOutcomeKind Kind,
     DotNetReferenceSelectionAudit Audit);
+
+internal sealed record DotNetFastReviewCandidates(
+    string TestProject,
+    IReadOnlyList<string> MandatoryClasses,
+    IReadOnlyDictionary<string, string[]> OptionalClassFiles);
 
 /// <summary>
 /// Source scanning shared by the index and the overlay: top-level type
@@ -308,24 +316,26 @@ internal sealed class DotNetReferenceSelectionPlanner
         string repositoryPath,
         IReadOnlyList<string> changedFiles,
         IReadOnlyCollection<string> readPaths,
-        DotNetReferenceSelection options)
+        DotNetReferenceSelection options,
+        bool exactPaths = false)
     {
         var buildInput = changedFiles.FirstOrDefault(path =>
             !IsGeneratedPath(path) && RepositoryBuildInputs.Contains(FileName(path)));
         // A build input change keeps every impacted project whole, so nothing
         // needs to be read.
+        var comparer = exactPaths ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
         var paths = (buildInput is null ? readPaths : [])
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct(comparer)
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
-        var requested = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requested = paths.ToHashSet(comparer);
         if (paths.Count == 0)
             return new(repositoryPath, options, buildInput,
-                new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase), null, requested);
+                new Dictionary<string, string?>(comparer), null, requested);
 
         if (options.Overlay is null)
         {
-            var local = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            var local = new Dictionary<string, string?>(comparer);
             try
             {
                 foreach (var path in paths)
@@ -353,7 +363,7 @@ internal sealed class DotNetReferenceSelectionPlanner
             overlay = DotNetSourceOverlay.Failed(ex.Message);
         }
         return new(repositoryPath, options, buildInput,
-            new Dictionary<string, string?>(overlay.Files, StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, string?>(overlay.Files, comparer),
             overlay.Failure, requested);
     }
 
@@ -593,13 +603,119 @@ internal sealed class DotNetReferenceSelectionPlanner
         foreach (var absolute in Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
         {
             var relative = Normalize(Path.GetRelativePath(repositoryPath, absolute));
-            if (IsGeneratedPath(Path.GetRelativePath(directory, absolute))) continue;
+            if (!IsTestIndexPath(relative)) continue;
             files.Add(DotNetSourceScanner.Scan(relative, File.ReadAllText(absolute)));
         }
         return new DotNetTestIndex(files);
     }
 
     private DotNetTestIndex BuildIndex(string testProject) => BuildIndex(_repositoryPath, testProject);
+
+    internal static bool IsTestIndexPath(string path)
+        => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !IsGeneratedPath(path);
+
+    internal IReadOnlyList<DotNetFastReviewCandidates> FastReviewCandidates(
+        GeneratedTestProjectMap map, List<string> reasons)
+    {
+        if (_overlayFailure is not null)
+            reasons.Add($"fast .NET review: delivery overlay unavailable ({_overlayFailure}); post-merge verification required");
+
+        var changed = _contents.Where(entry => entry.Value is not null && _requested.Contains(entry.Key))
+            .ToDictionary(entry => entry.Key, entry => DotNetSourceScanner.Scan(entry.Key, entry.Value!),
+                StringComparer.Ordinal);
+        var removed = _requested.Where(path => _contents.TryGetValue(path, out var text) && text is null)
+            .Order(StringComparer.Ordinal).ToArray();
+        var old = removed.Length == 0 ? null : _options.BeforeOverlay?.Invoke(removed);
+        var missing = _requested.Except(changed.Keys, StringComparer.Ordinal)
+            .Where(path => old?.Files.GetValueOrDefault(path) is null).Order(StringComparer.Ordinal).ToArray();
+        if (missing.Length > 0)
+            reasons.Add($"fast .NET review: source unavailable for {string.Join(", ", missing)}; post-merge verification required");
+
+        var seedsByProject = changed.Values.Concat((old?.Files ?? new Dictionary<string, string?>())
+                .Where(entry => entry.Value is not null)
+                .Select(entry => DotNetSourceScanner.Scan(entry.Key, entry.Value!)))
+            .ToLookup(file => map.OwningProject(file.Path), StringComparer.OrdinalIgnoreCase);
+        var result = new List<DotNetFastReviewCandidates>();
+        foreach (var project in map.Rows.SelectMany(row => row.TestProjects)
+                     .Where(map.References.ContainsKey).Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Order(StringComparer.Ordinal))
+        {
+            var references = map.References[project];
+            var affected = references.Where(reference => seedsByProject.Contains(reference.Project)).ToArray();
+            if (affected.Length == 0 && !seedsByProject.Contains(project)) continue;
+            var seeds = affected.Where(reference => !reference.ProcessLevel)
+                .SelectMany(reference => seedsByProject[reference.Project])
+                .SelectMany(file => file.DeclaredTypes).ToHashSet(StringComparer.Ordinal);
+            var conventions = seeds.SelectMany(name => new[] { name + "Test", name + "Tests" })
+                .ToHashSet(StringComparer.Ordinal);
+            var tokens = seeds.SelectMany(MatchTokens).ToHashSet(StringComparer.Ordinal);
+            var own = changed.Values.Where(file => string.Equals(map.OwningProject(file.Path), project,
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
+            var ownPaths = own.Select(file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var process = affected.Where(reference => reference.ProcessLevel)
+                .Select(reference => ProjectName(reference.Project)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (project == "backend.Tests/OrchestratorApi.Tests.csproj" && affected.Any(reference =>
+                    reference.Project.Equals("task-server/TaskServer.csproj", StringComparison.OrdinalIgnoreCase)))
+                conventions.Add("ConnectorNegativeMatrixTests");
+
+            DotNetTestIndex index;
+            try
+            {
+                index = _options.IndexMemo is null ? BuildIndex(project)
+                    : _options.IndexMemo(project, () => BuildIndex(project));
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "DotNetReferenceSelectionPlanner: fast review identifier index");
+                reasons.Add($"fast .NET review: test index unavailable for {project}; post-merge verification required");
+                index = new DotNetTestIndex([]);
+            }
+
+            var files = index.Files.Values.Where(file => !_requested.Contains(file.Path)).Concat(own).ToArray();
+            var abstractTestBases = files.SelectMany(file => file.AttributedTestClasses.Except(file.TestClasses))
+                .ToHashSet(StringComparer.Ordinal);
+            var mandatory = new List<string>();
+            var optional = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            var mandatoryFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var groups = files.SelectMany(file => file.DeclaredTypes.Select(name => (Name: name, File: file)))
+                .GroupBy(entry => entry.Name, entry => entry.File, StringComparer.Ordinal);
+            foreach (var group in groups.OrderBy(group => group.Key, StringComparer.Ordinal))
+            {
+                var name = group.Key;
+                if (!group.Any(file => file.TestClasses.Contains(name))
+                    || group.Any(file => file.MachineBoundTypes.Contains(name))) continue;
+                var testFiles = group.Where(file => file.AttributedTestClasses.Contains(name))
+                    .Select(file => file.Path).Order(StringComparer.Ordinal).ToArray();
+                // Derived tests can inherit their facts from a base class.
+                if (testFiles.Length == 0)
+                {
+                    if (!group.Any(file => abstractTestBases.Overlaps(file.Tokens))) continue;
+                    testFiles = group.Select(file => file.Path).Order(StringComparer.Ordinal).ToArray();
+                }
+                if (conventions.Contains(name) || group.Any(file => ownPaths.Contains(file.Path)
+                        || file.ProcessReferences.TryGetValue(name, out var projects) && process.Overlaps(projects)
+                        || conventions.Contains(FileName(file.Path).Split('.')[0])))
+                {
+                    mandatory.Add(name);
+                    mandatoryFiles.UnionWith(testFiles);
+                }
+                else
+                {
+                    var matchingParts = group.Where(file => tokens.Overlaps(file.Tokens))
+                        .Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
+                    if (matchingParts.Count == 0) continue;
+                    // The filter runs the merged class. Charge the source files
+                    // that supplied the direct match. When only a helper part
+                    // matches, charge the test sources it selected.
+                    var directTestFiles = testFiles.Where(matchingParts.Contains).ToArray();
+                    optional[name] = directTestFiles.Length > 0 ? directTestFiles : testFiles;
+                }
+            }
+            result.Add(new(project, mandatory, optional.ToDictionary(pair => pair.Key,
+                pair => pair.Value.Where(path => !mandatoryFiles.Contains(path)).ToArray(), StringComparer.Ordinal)));
+        }
+        return result;
+    }
 
     /// <summary>
     /// Reads and scans one changed file. Returns the whole-project reason when

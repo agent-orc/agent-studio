@@ -277,11 +277,26 @@ public sealed partial class RemoteReviewPlanBuilder
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
         var resultSha = expectedResultSha ?? subject?.ResultSha;
-        var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(repositoryPath)
-            || string.IsNullOrWhiteSpace(integrationRef) || string.IsNullOrWhiteSpace(resultRef)
-            ? null
-            : _git.ChangedPathsAgainstMergeBase(
-                repositoryPath, integrationRef, resultRef));
+        var fastCoding = task is not null && TaskModes.Normalize(task.Mode) == TaskModes.Coding
+            && projectSettings is not null && TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast;
+        var resolveFullDelivery = fastCoding && _git is not null && repositoryPath is not null && integrationRef is not null
+            && ReviewSubjectStore.IsValidResultSha(resultSha);
+        var deliveryBase = resolveFullDelivery
+            ? _git!.GetMergeBase(repositoryPath!, integrationRef!, resultSha!) : null;
+        IReadOnlyList<string>? changedPaths = resolveFullDelivery
+            ? FullDeliveryPaths(repositoryPath!, deliveryBase, resultSha!) : null;
+        if (changedPaths is null) deliveryBase = null;
+        if (changedPaths is not { Count: > 0 })
+        {
+            var ordinaryPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(repositoryPath)
+                || string.IsNullOrWhiteSpace(integrationRef) || string.IsNullOrWhiteSpace(resultRef)
+                ? null
+                : _git.ChangedPathsAgainstMergeBase(repositoryPath, integrationRef, resultRef));
+            // An unavailable delivery diff cannot establish that a result is
+            // already integrated, even if the pickup diff was empty.
+            changedPaths = resolveFullDelivery && changedPaths is null && ordinaryPaths is { Count: 0 }
+                ? null : ordinaryPaths;
+        }
         var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath,
             projectSettings?.BuildProfile, integrationRef, changedPaths) with
         {
@@ -318,8 +333,10 @@ public sealed partial class RemoteReviewPlanBuilder
             // Selection reads the existing checkout's command inventory. A
             // test-project content item cannot change the verify commands;
             // all other inventory edits still require the per-card gate.
+            var inventoryPaths = changedFiles is { Count: > 0 }
+                ? changedPaths!.Union(changedFiles, StringComparer.Ordinal).ToArray() : changedPaths!;
             deferralDisabledReason = InventoryDeferralReason(selectionRepo,
-                integrationRef, resultSha, changedPaths!);
+                integrationRef, resultSha, inventoryPaths);
             if (deferralDisabledReason is not null)
                 deferBuildTest = false;
             if (deferBuildTest)
@@ -340,7 +357,7 @@ public sealed partial class RemoteReviewPlanBuilder
                     LogReferenceSelection(task!, selection.Audit);
                     if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
                     {
-                        selection = FixedReviewSelection(task!, selectionRepo, verify, selection, changedPaths, resultSha);
+                        selection = FixedReviewSelection(task!, selectionRepo, verify, selection, changedPaths, resultSha, deliveryBase);
                         level = selection.Audit.Level;
                     }
                     var selected = selection.Commands.Where(command =>
@@ -362,7 +379,7 @@ public sealed partial class RemoteReviewPlanBuilder
                     {
                         toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(selectionRepo,
                             projectSettings.BuildProfile, integrationRef, changedPaths,
-                            verify with { Commands = selected }) with
+                            verify with { Commands = selected }, DotNetReviewReasons(selection)) with
                         {
                             BuildTestDeferredToBatch = true,
                         };
@@ -374,7 +391,8 @@ public sealed partial class RemoteReviewPlanBuilder
                                     : command).ToArray(),
                         };
                         testLevel = level;
-                        selectionDigest = Convert.ToHexStringLower(SHA256.HashData(
+                        selectionDigest = fastCoding && selection.Audit.Digest is not null
+                            ? selection.Audit.Digest : Convert.ToHexStringLower(SHA256.HashData(
                             Encoding.UTF8.GetBytes(string.Join("\n", level,
                                 string.Join("\n", changedPaths ?? []),
                                 string.Join("\n", selected.Select(command =>
@@ -423,9 +441,9 @@ public sealed partial class RemoteReviewPlanBuilder
                         });
                 }
                 if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
-                    selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha);
+                    selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha, deliveryBase);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
-                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }, DotNetReviewReasons(selection)) with
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
@@ -448,9 +466,9 @@ public sealed partial class RemoteReviewPlanBuilder
                 var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
                     repositoryPath, verify, changedPaths, projectSettings.TestExecution,
                     TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
-                selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha);
+                selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha, deliveryBase);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
-                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }, DotNetReviewReasons(selection)) with
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
@@ -898,8 +916,31 @@ public sealed partial class RemoteReviewPlanBuilder
         };
 
     private StagedVerifyPlan FixedReviewSelection(TaskInfo task, string repositoryPath, VerifyPlan verify,
-        StagedVerifyPlan selection, IReadOnlyList<string>? changedPaths, string? resultSha)
+        StagedVerifyPlan selection, IReadOnlyList<string>? changedPaths, string? resultSha, string? deliveryBase)
     {
+        if (TaskModes.Normalize(task.Mode) == TaskModes.Coding)
+        {
+            var reference = _git is not null && deliveryBase is not null && ReviewSubjectStore.IsValidResultSha(resultSha)
+                ? ReferenceSelection(repositoryPath, resultSha!) with
+                {
+                    BeforeOverlay = paths => ReadDotNetOverlay(repositoryPath, deliveryBase, paths),
+                    Overlay = paths => ReadDotNetOverlay(repositoryPath, resultSha!, paths),
+                    IndexMemo = (project, _) =>
+                        _git.MemoizeByHead(repositoryPath, $"dotnet-review-index\n{deliveryBase}\n{project}",
+                            () => DotNetIndexAtBase(repositoryPath, deliveryBase, project)),
+                }
+                : null;
+            var useBudget = _configuration.GetValue<bool>("RemoteReview:UseBudgetedDotNetScope");
+            selection = PerCardVerifyPlanner.WithDotNetReviewSelection(repositoryPath, verify, selection,
+                deliveryBase is null ? null : changedPaths,
+                reference, useBudget);
+            var reasons = DotNetReviewReasons(selection);
+            if (reasons.Length > 0)
+                _logger?.LogInformation(
+                    "remote-review-dotnet-selection task={TaskKey} base={BaseSha} result={ResultSha} budgeted={Budgeted} selection={Digest} reasons={Reasons}",
+                    task.TaskKey ?? task.Id, deliveryBase, resultSha, useBudget, selection.Audit.Digest,
+                    string.Join(" | ", reasons));
+        }
         // The checkout may be the integration tip. Ownership and consumer
         // bindings must come from the immutable result, including renamed files.
         var frontendTree = FrontendWorkPackagePlanner.TouchesFrontend(changedPaths)
@@ -917,6 +958,39 @@ public sealed partial class RemoteReviewPlanBuilder
                 task.TaskKey ?? task.Id, resultSha, selected.Audit.Digest, string.Join(" | ", selected.Audit.Reasons),
                 string.Join(" | ", selected.Audit.SelectedCommands), string.Join(" | ", selected.Audit.AttemptedTestCommands));
         return selected;
+    }
+
+    private static string[] DotNetReviewReasons(StagedVerifyPlan selection)
+        => selection.Audit.Reasons.Where(reason => reason.StartsWith("fast .NET review", StringComparison.Ordinal)).ToArray();
+
+    private static string[]? FullDeliveryPaths(string repositoryPath, string? mergeBase, string resultSha)
+        => mergeBase is null ? null : Git(repositoryPath, "diff", "--name-only", "--no-renames", "-z",
+            mergeBase, resultSha, "--")?.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
+    private DotNetSourceOverlay ReadDotNetOverlay(string repositoryPath, string revision, IReadOnlyList<string> paths)
+    {
+        var files = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var chunk in paths.Chunk(GitService.MaxRevisionFileReadPaths))
+        {
+            var read = _git!.ReadFilesAtRevision(repositoryPath, revision, chunk);
+            if (read.Failure is not null) return new(files, read.Failure);
+            foreach (var (path, content) in read.Files) files[path] = content;
+        }
+        return new(files);
+    }
+
+    private DotNetTestIndex DotNetIndexAtBase(string repositoryPath, string baseSha, string project)
+    {
+        var directory = Path.GetDirectoryName(project)!.Replace('\\', '/');
+        var listing = Git(repositoryPath, "ls-tree", "-r", "--name-only", "-z", baseSha, "--", directory)
+            ?? throw new InvalidDataException($"Cannot list .NET test sources at {baseSha} for {project}.");
+        var paths = listing.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(DotNetReferenceSelectionPlanner.IsTestIndexPath).ToArray();
+        var overlay = ReadDotNetOverlay(repositoryPath, baseSha, paths);
+        if (overlay.Failure is not null)
+            throw new InvalidDataException(overlay.Failure);
+        return new DotNetTestIndex(overlay.Files.Where(entry => entry.Value is not null)
+            .Select(entry => DotNetSourceScanner.Scan(entry.Key, entry.Value!)));
     }
 
     private IReadOnlyDictionary<string, string> FrontendTree(string repositoryPath, string? resultSha)

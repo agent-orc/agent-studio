@@ -558,15 +558,130 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Fact]
-    public void FastAndBalancedShareTheAffectedPerCardPlan()
+    public void FastAndBalancedKeepTheSameCommandsWhenTheTrialFindsNoAdditionalTests()
     {
         var resultSha = Commit("backend/FooService.cs");
 
-        var fast = Json(Build(Settings(TestingStrategies.Fast), resultSha, "backend/FooService.cs"));
+        var fast = Build(Settings(TestingStrategies.Fast), resultSha, "backend/FooService.cs");
 
-        Assert.Equal(fast, Json(Build(Settings(TestingStrategies.Balanced), resultSha, "backend/FooService.cs")));
-        Assert.Equal(fast, Json(Build(new ProjectSettings(), resultSha, "backend/FooService.cs")));
+        var balanced = Build(Settings(TestingStrategies.Balanced), resultSha, "backend/FooService.cs");
+        Assert.Equal(Json(fast with { TestSelectionDigest = null }), Json(balanced with { TestSelectionDigest = null }));
+        Assert.Equal(Json(fast), Json(Build(new ProjectSettings(), resultSha, "backend/FooService.cs")));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Broad_fast_review_retains_new_tests_and_the_review_base(bool pilot)
+    {
+        ReviewBaseInventory(mapped: true);
+        for (var index = 0; index < 33; index++)
+            Write($"backend.Tests/Caller{index}.cs", TestSource($"Caller{index}", "FooService"));
+        Git("add", ".");
+        Git("commit", "-qm", "wide reference baseline");
+        Git("switch", "-qc", "agent-studio/results/task");
+        Write("backend.Tests/ProductStartupFixtureTests.cs", TestSource("ProductStartupFixtureTests"));
+        File.AppendAllText(Path.Combine(_repo, "backend/FooService.cs"), "// changed\n");
+        Git("add", ".");
+        Git("commit", "-qm", "wide delivery with a new fixture");
+        var sha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var plan = Build(Settings(TestingStrategies.Fast), sha, "backend/FooService.cs", pilot: pilot);
+        var shells = plan.Commands.SelectMany(command => command.Arguments).ToArray();
+        Assert.Contains(shells, command => command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+        var slice = Assert.Single(shells, command => command.Contains("FullyQualifiedName~ProductStartupFixtureTests", StringComparison.Ordinal));
+        Assert.Contains("FullyQualifiedName~FooServiceTests", slice);
+        Assert.Contains("Category!=MachineBound", slice);
+        Assert.DoesNotContain(shells, command => command.Contains("FullyQualifiedName~Caller0", StringComparison.Ordinal));
+        Assert.DoesNotContain(BackendTest, shells);
+        Assert.Contains(plan.SuiteSelection!.Reasons, reason => reason.Contains("broad-reference omission", StringComparison.Ordinal)
+            && reason.Contains("33 test-source files", StringComparison.Ordinal)
+            && reason.Contains("post-merge routine suite", StringComparison.Ordinal)
+            && reason.Contains("backend.Tests/Caller32.cs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Shadow_preserves_a_stronger_prior_class_filter_until_the_pilot_is_enabled()
+    {
+        for (var index = 0; index < 33; index++)
+            Write($"backend.Tests/Caller{index}.cs", TestSource($"Caller{index}", "FooService"));
+        for (var index = 0; index < 70; index++)
+            Write($"backend.Tests/Other{index}.cs", TestSource($"Other{index}"));
+        Git("add", ".");
+        Git("commit", "-qm", "wide reference baseline");
+        var sha = Commit("backend/FooService.cs");
+
+        var shadow = Build(Settings(TestingStrategies.Fast), sha, "backend/FooService.cs");
+        var pilot = Build(Settings(TestingStrategies.Fast), sha, "backend/FooService.cs", pilot: true);
+
+        Assert.Contains(shadow.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("FullyQualifiedName~Caller0", StringComparison.Ordinal)));
+        Assert.DoesNotContain(pilot.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("FullyQualifiedName~Caller0", StringComparison.Ordinal)));
+        Assert.All(new[] { shadow, pilot }, plan => Assert.Contains(plan.Commands, command =>
+            command.Arguments.Any(argument => argument.Contains("FullyQualifiedName~FooServiceTests", StringComparison.Ordinal))));
+    }
+
+    [Fact]
+    public void Docs_only_fix_round_still_selects_tests_from_the_unintegrated_delivery()
+    {
+        Git("switch", "-qc", "agent-studio/results/task");
+        Write("backend.Tests/NewDeliveryTests.cs", TestSource("NewDeliveryTests"));
+        Git("add", ".");
+        Git("commit", "-qm", "pending delivery");
+        Write("docs/fix.md", "Documentation fix.\n");
+        Git("add", ".");
+        Git("commit", "-qm", "fix round");
+        var sha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var plan = Build(Settings(TestingStrategies.Fast), sha, "docs/fix.md");
+        var rebuilt = Build(Settings(TestingStrategies.Fast), sha, null);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("FullyQualifiedName~NewDeliveryTests", StringComparison.Ordinal)));
+        Assert.Equal(Json(plan), Json(rebuilt));
+        Assert.Equal(TestExecutionLevels.WorkPackage, plan.TestLevel);
+    }
+
+    [Fact]
+    public void Unavailable_delivery_diff_keeps_the_fast_build_fallback()
+    {
+        var plan = Build(Settings(TestingStrategies.Fast), new string('a', 40), null);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest));
+        Assert.Equal(TestExecutionLevels.BuildOnly, plan.TestLevel);
+    }
+
+    [Fact]
+    public void Renamed_source_uses_both_names_and_test_sources_from_the_pinned_tree()
+    {
+        ReviewBaseInventory(mapped: true);
+        Write("backend.Tests/RenamedServiceTests.cs", TestSource("RenamedServiceTests"));
+        Git("add", ".");
+        Git("commit", "-qm", "companion tests");
+        Git("switch", "-qc", "agent-studio/results/task");
+        Git("mv", "backend/FooService.cs", "backend/RenamedService.cs");
+        Write("backend/RenamedService.cs", "namespace AgentStudio;\npublic sealed class RenamedService { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "source rename");
+        var sha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+        Write("backend.Tests/CheckoutOnlyTests.cs", TestSource("CheckoutOnlyTests", "FooService"));
+
+        var commands = Build(Settings(TestingStrategies.Fast), sha, "backend/RenamedService.cs")
+            .Commands.SelectMany(command => command.Arguments).ToArray();
+
+        var slice = Assert.Single(commands, command => command.Contains("FullyQualifiedName~FooServiceTests", StringComparison.Ordinal));
+        Assert.Contains("FullyQualifiedName~RenamedServiceTests", slice);
+        Assert.DoesNotContain(commands, command => command.Contains("CheckoutOnlyTests", StringComparison.Ordinal));
+    }
+
+    private static string TestSource(string name, string? reference = null)
+        => $"public sealed class {name}\n{{\n    [Fact]\n    public void Runs() {{ "
+            + (reference is null ? "" : $"_ = typeof({reference});") + " }\n}\n";
 
     [Fact]
     public void AffectedBackendDiffRunsTheReferencingClassesBuildAndLint()
@@ -986,6 +1101,8 @@ public sealed class PerCardReviewPlanTests : IDisposable
     public void Documentation_and_report_only_deliveries_do_not_add_an_Angular_slice(string changed, string? mode)
     {
         Write("frontend/src/app/app.spec.ts", "it('app', () => {});");
+        Git("add", ".");
+        Git("commit", "-qm", "Angular test baseline");
         Write(changed, "Notes");
         var sha = Commit(changed);
         var plan = Build(Settings(TestingStrategies.Fast), sha, changed, mode);
@@ -1020,13 +1137,14 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.All(web.Commands, item => Assert.Equal("web", item.WorkingSubdir));
     }
 
-    private Contract.ReviewPlanDto Build(ProjectSettings? settings, string resultSha, string changed, string? mode = null)
-        => Builder().Build(new TaskInfo
+    private Contract.ReviewPlanDto Build(ProjectSettings? settings, string resultSha, string? changed, string? mode = null,
+        bool pilot = false)
+        => Builder(pilot).Build(new TaskInfo
         {
             Id = "task", TaskKey = "task", ProjectName = "project",
             WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
             Mode = mode ?? TaskModes.Coding,
-        }, _repo, settings, "develop", resultSha, [changed], ResultRef);
+        }, _repo, settings, "develop", resultSha, changed is null ? null : [changed], ResultRef);
 
     private static ProjectSettings Settings(string strategy)
         => new() { Testing = new ProjectTestingSettings { Strategy = strategy } };
@@ -1036,9 +1154,12 @@ public sealed class PerCardReviewPlanTests : IDisposable
     private static string Json(Contract.ReviewPlanDto plan)
         => JsonSerializer.Serialize(plan with { DeepReviewDecision = null });
 
-    private static RemoteReviewPlanBuilder Builder()
+    private static RemoteReviewPlanBuilder Builder(bool pilot = false)
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteReview:UseBudgetedDotNetScope"] = pilot.ToString(),
+        }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
