@@ -12,6 +12,7 @@ namespace AgentStudio.Operator;
 public sealed class OperatorDecisionPublisher : BackgroundService
 {
     private readonly OperatorDecisionLog _log;
+    private readonly OperatorAttentionDismissals? _dismissals;
     private readonly IReadOnlyList<IOperatorDecisionFactSource> _sources;
     private readonly OperatorDecisionOptions _options;
     private readonly TimeProvider _clock;
@@ -27,9 +28,11 @@ public sealed class OperatorDecisionPublisher : BackgroundService
     internal long IntervalWaits => Interlocked.Read(ref _intervalWaits);
 
     public OperatorDecisionPublisher(OperatorDecisionLog log, IEnumerable<IOperatorDecisionFactSource> sources,
-        OperatorDecisionOptions options, TimeProvider clock, ILogger<OperatorDecisionPublisher> logger)
+        OperatorDecisionOptions options, TimeProvider clock, ILogger<OperatorDecisionPublisher> logger,
+        OperatorAttentionDismissals? dismissals = null)
     {
         _log = log;
+        _dismissals = dismissals;
         _sources = sources.ToArray();
         _options = options;
         _clock = clock;
@@ -116,6 +119,7 @@ public sealed class OperatorDecisionPublisher : BackgroundService
         var current = facts.Where(fact => !failed.Contains(fact.Type))
             .Concat(_current?.Facts.Where(fact => failed.Contains(fact.Type)) ?? [])
             .ToArray();
+        _dismissals?.Observe(current, observed);
         _current = new FactSnapshot(now, current);
         return (facts, observed);
     }

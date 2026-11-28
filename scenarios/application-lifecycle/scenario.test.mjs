@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { scenarioSteps } from '../../scripts/release/product-scenario/steps.mjs';
+import { deployNextJob } from './deploy-job.mjs';
 import { runFixtureRelease } from './release.mjs';
 import { waitForCompletion } from './completion.mjs';
 
@@ -90,7 +91,10 @@ test('a failed fixture restart replaces stale evidence and preserves the other s
 test('the reviewed release claims the queued stage and approved production jobs for the card digest', async () => {
   const release = { id: 'reviewed', version: '2', cardKeys: ['CC-1'], artifactDigests: ['wish-digest'] };
   const unrelated = { id: 'other', cardKeys: [], artifactDigests: ['other-digest'] };
-  const queue = [];
+  const queue = [{ id: 'older-job', status: 'queued', environmentId: 'production', artifact: 'other-digest' }];
+  // An expired claim is eligible again even though the environment view lists it as claimed.
+  queue.push({ id: 'expired-stage', status: 'claimed', environmentId: 'stage', artifact: 'wish-digest' });
+  let activeLease;
   const promotions = [];
   const environments = ['stage', 'production'].map(kind => ({
     declaration: { id: kind, kind }, health: 'healthy', deployedArtifact: 'baseline',
@@ -100,7 +104,9 @@ test('the reviewed release claims the queued stage and approved production jobs 
   const owner = {
     releases: async () => ++reads < 2 ? [unrelated] : [unrelated, release],
     environments: async () => {
-      if (reads >= 3 && !queue.length) queue.push({ status: 'queued', environmentId: 'stage', artifact: 'wish-digest' });
+      if (reads >= 3 && !queue.some(job => job.id === 'reviewed-stage')) {
+        queue.push({ id: 'reviewed-stage', status: 'queued', environmentId: 'stage', artifact: 'wish-digest' });
+      }
       return structuredClone({ jobs: queue, environments, promotions });
     },
   };
@@ -111,34 +117,70 @@ test('the reviewed release claims the queued stage and approved production jobs 
       async approvePromotion(_, artifact) {
         events.push([actor, artifact]);
         if (actor === 'pm') return { status: 403 };
-        queue.push({ status: 'queued', environmentId: 'production', artifact });
+        queue.push({ id: 'reviewed-production', status: 'queued', environmentId: 'production', artifact });
         return { status: 200 };
       },
     };
     return { page, api };
   }
   const people = new Map([['pm', person('pm')], ['manager', person('manager')]]);
-  async function deploy(kind, artifact) {
-    const job = queue.find(job => job.status === 'queued' && job.environmentId === kind && job.artifact === artifact);
-    assert.ok(job, 'only a queued job can be claimed');
+  async function request(route, body) {
+    if (route === '/api/deploy/jobs/claim') {
+      assert.deepEqual(body, { hostId: 'scenario-host' });
+      assert.equal(activeLease, undefined, 'report the current lease before claiming another');
+      const job = queue.find(job => job.status === 'queued' || job.status === 'claimed');
+      if (!job) return null;
+      job.status = 'claimed';
+      activeLease = { ...job, project: 'Click Counter', leaseToken: 'lease-' + job.id };
+      return activeLease;
+    }
+    assert.equal(route, '/api/deploy/jobs/Click%20Counter/' + activeLease.id + '/report');
+    assert.deepEqual(body, { leaseToken: activeLease.leaseToken, healthy: true, evidence: 'health-ok' });
+    const job = queue.find(job => job.id === activeLease.id);
     job.status = 'succeeded';
-    events.push([kind, artifact]);
-    environments.find(env => env.declaration.kind === kind).deployedArtifact = artifact;
-    if (kind === 'stage') promotions.push({ artifact, status: 'pending' });
-    return { environment: kind, artifact, healthStatus: 200 };
+    environments.find(env => env.declaration.id === job.environmentId).deployedArtifact = job.artifact;
+    if (job.environmentId === 'stage') promotions.push({ artifact: job.artifact, status: 'pending' });
+    activeLease = undefined;
   }
+  const deployNext = () => deployNextJob(request, job => {
+    events.push([job.environmentId, job.artifact]);
+    return 200;
+  });
   let now = 0;
   const clock = { now: () => new Date(now), sleep: async ms => { now += ms; } };
   const ctx = { owner, people, clock, refusals: [], config: { pollMs: 10, releaseTimeoutMs: 50, deployTimeoutMs: 50 },
     state: { project: { name: 'Click Counter' }, card: { key: 'CC-1' }, preview: { status: 'ready' },
       addresses: { stage: 'stage', production: 'production' } } };
   const evidence = {};
-  const record = { note: (key, value) => { evidence[key] = value; }, screenshot() {} };
+  const jobNotes = [];
+  const record = {
+    note(key, value) {
+      if (key === 'stageJob' || key === 'productionJob') jobNotes.push([key, value.job]);
+      evidence[key] = value;
+    },
+    screenshot() {},
+  };
   const step = scenarioSteps().find(step => step.id === 'release');
-  await runFixtureRelease(step, ctx, record, { deploy });
-  assert.deepEqual(events, ['stage', 'pm', 'manager', 'production'].map(who => [who, 'wish-digest']));
+  await runFixtureRelease(step, ctx, record, { deployNext });
+  assert.deepEqual(events, [
+    ['production', 'other-digest'], ['stage', 'wish-digest'], ['stage', 'wish-digest'], ['pm', 'wish-digest'],
+    ['manager', 'wish-digest'], ['production', 'wish-digest'],
+  ]);
+  assert.deepEqual(jobNotes, [['stageJob', 'reviewed-stage'], ['productionJob', 'reviewed-production']]);
   assert.equal(evidence.sameDigestAsStage, true);
   assert.equal(evidence.stageJob.healthStatus, 200);
   assert.equal(evidence.productionJob.healthStatus, 200);
   assert.ok(queue.every(job => job.status === 'succeeded'));
+});
+
+test('a fixture deployment error reports the granted lease before surfacing the error', async () => {
+  const job = { project: 'Click Counter', id: 'older-job', leaseToken: 'older-lease' };
+  const reports = [];
+  const request = async (route, body) => {
+    if (route === '/api/deploy/jobs/claim') return job;
+    reports.push({ route, body });
+  };
+  await assert.rejects(deployNextJob(request, () => { throw Error('artifact unavailable'); }), /artifact unavailable/);
+  assert.deepEqual(reports, [{ route: '/api/deploy/jobs/Click%20Counter/older-job/report',
+    body: { leaseToken: job.leaseToken, healthy: false, evidence: 'deploy-step-failed' } }]);
 });

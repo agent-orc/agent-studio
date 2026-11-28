@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Host;
 using AgentStudio.Management;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -95,6 +98,51 @@ public sealed class StructureLiveEndpointTests : IDisposable
         var installation = await environment.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(!installation.TryGetProperty("mode", out var mode) || mode.ValueKind == JsonValueKind.Null);
         Assert.True(!installation.TryGetProperty("routes", out var routes) || routes.ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Disconnected_task_server_expires_the_cached_report_during_repeated_reads()
+    {
+        var captured = JsonSerializer.Deserialize<StructureInstallationTests.Capture>(
+            File.ReadAllText(Path.Combine(RepositoryRoot.Find(), "testdata", "structure", "observations.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var host = captured.Hosts.First(h => h.Telemetry?.Structure is not null);
+        _time.SetUtcNow(host.LastSeenAt);
+        const string origin = "http://task-server.test";
+        var upstream = new DisconnectingTaskServer(host);
+        using var factory = Factory(new() { ["TaskServer:BaseUrl"] = origin })
+            .WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.AddHttpClient(TaskServerPlaneProxy.ClientName, client => client.BaseAddress = new Uri(origin))
+                    .ConfigurePrimaryHttpMessageHandler(() => upstream);
+            }));
+        var service = factory.Services.GetRequiredService<StructureSnapshotService>();
+
+        async Task<StructureNode?> HostNode()
+        {
+            var snapshot = await service.ReadAsync(null, null, CancellationToken.None);
+            return Assert.IsType<StructureResponse>(snapshot.Response).Nodes.SingleOrDefault(n => n.Id == $"machine:{host.HostId}");
+        }
+
+        Assert.NotNull(await HostNode());
+        _time.Advance(TimeSpan.FromDays(14));
+        Assert.Equal("stale", (await HostNode())!.Observation!.Health);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Null(await HostNode());
+        Assert.Equal(3, upstream.HostReads);
+    }
+
+    private sealed class DisconnectingTaskServer(RunnerCapabilitySnapshotDto host) : HttpMessageHandler
+    {
+        public int HostReads { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v1/management/remote-hosts" && ++HostReads == 1)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new[] { host }) });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }
     }
 
     [Fact]

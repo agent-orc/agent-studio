@@ -14,6 +14,50 @@ public sealed class RemoteBuildTestGateRunnerTests
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     [Fact]
+    public async Task RelocationHookDispatchesOnlyTheHeldCardAndRetainsExactEvidence()
+    {
+        var primary = new RecordingTransport();
+        var healthy = new RecordingTransport();
+        var sections = new List<string>();
+        var runner = new RemoteBuildTestGateRunner(primary, NullLogger<RemoteBuildTestGateRunner>.Instance)
+        {
+            RelocationTransportFactory = section => { sections.Add(section); return healthy; },
+        };
+        var request = Request() with { Project = "Fixture", JobId = "held" };
+        using (new GateEnvironmentRelocationScope("RemoteGate:ShardHosts:0", "Fixture", "held"))
+        {
+            var result = await runner.RunAsync(request, [], null, PostStepMode.Fail,
+                TimeSpan.FromMinutes(1), CancellationToken.None);
+            Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+            Assert.Equal(Sha, healthy.Request!.ExpectedSha);
+            Assert.True(healthy.Request.DisableVerdictCache);
+            await runner.RunAsync(request with { JobId = "other" }, [], null, PostStepMode.Fail,
+                TimeSpan.FromMinutes(1), CancellationToken.None);
+        }
+        await runner.RunAsync(request, [], null, PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(["RemoteGate:ShardHosts:0"], sections);
+        Assert.Equal(1, healthy.Calls);
+        Assert.Equal(2, primary.Calls);
+        Assert.False(primary.Request!.DisableVerdictCache);
+    }
+
+    [Fact]
+    public async Task RelocationHookRetainsTheExactSubjectEvidenceFence()
+    {
+        var primary = new RecordingTransport();
+        var healthy = new RecordingTransport { Result = Passed() with { TestedSha = new string('b', 40) } };
+        var runner = new RemoteBuildTestGateRunner(primary, NullLogger<RemoteBuildTestGateRunner>.Instance)
+        {
+            RelocationTransportFactory = _ => healthy,
+        };
+        using var placement = new GateEnvironmentRelocationScope("RemoteGate:ShardHosts:0", "Fixture", "held");
+        var result = await runner.RunAsync(Request() with { Project = "Fixture", JobId = "held" },
+            [], null, PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(BuildTestGateFailureKind.MissingSource, result.FailureKind);
+        Assert.Equal(0, primary.Calls);
+    }
+
+    [Fact]
     public void Gate_slot_report_uses_the_configured_budget_and_observed_SSH_reachability()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 8, 0, 0, TimeSpan.Zero));

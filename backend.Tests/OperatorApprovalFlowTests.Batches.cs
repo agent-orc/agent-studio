@@ -10,6 +10,55 @@ namespace AgentStudio.Tests;
 
 public sealed partial class OperatorApprovalFlowTests
 {
+    [Fact]
+    public async Task Batch_confirmation_audit_failure_settles_without_execution_or_replay()
+    {
+        using var factory = BuildFactory(("alpha-done", TaskStates.Completed));
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (agentId, _, _) = StartSession(factory, installationScope: true);
+        var login = store.Login("first.owner", Password, "batch audit failure", CurrentCode());
+        var human = store.AuthenticateSession(login.SessionToken)!;
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var point = key.ExportParameters(false).Q;
+        var start = store.StartOperatorSignIn(new(new("EC", "P-256", OperatorDevicePublicKey.Base64Url(point.X!),
+            OperatorDevicePublicKey.Base64Url(point.Y!)), "batch console", agentId, ["cards.archive-override"]), "127.0.0.1", "test");
+        store.VerifyStepUp(human, CurrentCode());
+        store.ConfirmOperatorSignIn(new(start.UserCode, agentId, ["cards.archive-override"], 8), human, "127.0.0.1");
+        var principal = store.AuthenticateOperatorSession(store.PollOperatorSignIn(start.PollHandle).Token)!;
+        var item = new OperatorBatchItemRequest("alpha-done", TaskStates.Archive, "Duplicate without delivery", "alpha");
+        var batch = store.SubmitOperatorBatch(principal, new("cards.archive-override", [item], "owner-chat"),
+            [new(0, item, "Completed card", "revision", null, null)]);
+        store.VerifyStepUp(human, CurrentCode());
+        var service = factory.Services.GetRequiredService<OperatorBatchService>();
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = factory.Services };
+        var auditPath = store.ControlPlaneAudit.FilePath;
+        var backupPath = auditPath + ".backup";
+        File.Move(auditPath, backupPath);
+        Directory.CreateDirectory(auditPath);
+        try
+        {
+            var failure = await Record.ExceptionAsync(() => service.DecideAsync(batch.Id, new([0]), human, context, CancellationToken.None));
+            Assert.True(failure is IOException or UnauthorizedAccessException, $"Expected an audit write failure, got {failure}");
+            var settled = Assert.Single(store.ListOperatorBatches());
+            Assert.Equal("confirmed", settled.State);
+            Assert.Equal(human.User.Id, settled.ApprovedBy);
+            var itemResult = Assert.Single(settled.Items);
+            Assert.Equal("skipped", itemResult.State);
+            Assert.Contains("Confirmation interrupted", itemResult.ResultReason);
+            Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
+            Assert.Empty(new OperatorApprovalFactSource(store).Collect(_clock.GetUtcNow().UtcDateTime));
+        }
+        finally
+        {
+            Directory.Delete(auditPath);
+            File.Move(backupPath, auditPath);
+        }
+        var replay = await Assert.ThrowsAsync<SecurityOperationException>(() => service.DecideAsync(
+            batch.Id, new([0]), human, context, CancellationToken.None));
+        Assert.Equal("batch-already-settled", replay.Code);
+        Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

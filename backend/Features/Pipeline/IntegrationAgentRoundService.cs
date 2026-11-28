@@ -368,7 +368,7 @@ public sealed class IntegrationAgentRoundService
         if (!ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord(
                 subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
                 AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.ContinueRoundResult,
-                subject.RunAttemptId, DateTime.UtcNow)))
+                subject.RunAttemptId, DateTime.UtcNow, RetainUntilIntegrated: true)))
             return Task.FromResult(Failed("The integration recovery delivery base could not be persisted; no round was charged."));
         var supersession = _mutations.SupersedeCurrentDeliveryOnFolder(
             job.FolderPath,
@@ -516,7 +516,7 @@ public sealed class IntegrationAgentRoundService
                 if (!ContinuationBaseStore.Save(repair.FolderPath, new ContinuationBaseRecord(
                         subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
                         AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.ContinueRoundResult,
-                        subject.RunAttemptId, DateTime.UtcNow)))
+                        subject.RunAttemptId, DateTime.UtcNow, RetainUntilIntegrated: true)))
                     throw new IOException("The integration repair base could not be pinned.");
                 if (_states.PromoteToReadyTop(repair.Id, repair.WatchPath,
                         expectedSourceState: TaskStates.Backlog) <= 0)

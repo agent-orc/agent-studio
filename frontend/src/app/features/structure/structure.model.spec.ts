@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applyStructureDelta, factLines, isStructuralDelta, isUndeclared, observationGlyph, observationWord,
   projectStructure, visibleBoxes,
   type StructureData, type StructureDelta, type StructureNode, type StructureObservation } from './structure.model';
+import workspaceRecording from '../../../../../testdata/structure/workspace.json';
 import { observedStructure } from './structure.fixtures';
 import { structureTestClockMs } from './structure-test-clock';
 
@@ -117,6 +118,20 @@ describe('Structure projection', () => {
     const roots = projectStructure(fixture, 'host', 3, {});
     expect(roots[0].children[0].children.map(child => child.id)).toEqual(['machine:web']);
     expect(fixture.nodes.find(item => item.id === 'machine:web')?.parentId).toBe('installation');
+  });
+
+  it('retains the recorded workspace history until a delta supplies a newer window', () => {
+    const recording = workspaceRecording as StructureData;
+    expect(recording.schemaVersion).toBe(3);
+    expect(recording.nodes.filter(item => item.kind === 'container')).toHaveLength(8);
+    expect(recording.history?.trends.length).toBeGreaterThan(0);
+    const delta: StructureDelta = {
+      scope: 'workspace', environment: null, baseRevision: 1, revision: 2, generatedAt: recording.generatedAt!,
+      nodes: [], links: [], removedNodes: [], removedLinks: [],
+    };
+    expect(applyStructureDelta(recording, delta).history).toBe(recording.history);
+    const history = { ...recording.history!, trends: [] };
+    expect(applyStructureDelta(recording, { ...delta, history }).history).toBe(history);
   });
 
   it('applies a delta in place and tells a fact update from a changed shape (AGT-3954)', () => {

@@ -51,6 +51,23 @@ public sealed class IntegrationConflictRecovery
     private static string Sha(RemoteDeliveryIntegrationRequest request)
         => request.ReviewedResultSha ?? ReviewSubjectStore.Read(request.JobFolderPath)?.ResultSha ?? string.Empty;
 
+    internal static bool SaveMechanicalFallbackBase(GitService git, string? repoRoot, string folder,
+        ContinuationBaseRecord result, string? attemptBaseSha)
+    {
+        var pin = ContinuationBaseStore.Read(folder);
+        if (pin is not { RetainUntilIntegrated: true }
+            || string.Equals(result.CommitSha, pin.CommitSha, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result.CommitSha, attemptBaseSha, StringComparison.OrdinalIgnoreCase))
+            return ContinuationBaseStore.SaveAttemptResult(folder, result);
+
+        var verified = repoRoot is not null
+            && git.VerifyDeliveredCommit(repoRoot, result.Ref, result.CommitSha).Status == DeliveryVerificationStatus.Verified
+            && git.IsAncestor(repoRoot, pin.CommitSha, result.CommitSha);
+        return verified
+            ? ContinuationBaseStore.SaveAttemptResult(folder, result, pin)
+            : true;
+    }
+
     internal MergeIntoIntegrationResult? Replay(RemoteDeliveryIntegrationRequest request)
     {
         var receipt = Read(request.JobFolderPath, out var unreadable);
@@ -78,7 +95,12 @@ public sealed class IntegrationConflictRecovery
             // A hold or infrastructure error retains priority. A landed result releases it.
             if (result.Outcome.IsSuccessfulIntegration())
             {
-                try { File.Delete(Path.Combine(request.JobFolderPath, FileName)); }
+                try
+                {
+                    File.Delete(Path.Combine(request.JobFolderPath, FileName));
+                    if (ContinuationBaseStore.Read(request.JobFolderPath) is { RetainUntilIntegrated: true } pin)
+                        ContinuationBaseStore.TryClearWhen(request.JobFolderPath, pin);
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // Publication already happened. Receipt cleanup cannot reverse it.

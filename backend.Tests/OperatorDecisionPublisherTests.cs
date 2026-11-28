@@ -219,6 +219,23 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         LastSummary = kind + " observed", LastDetails = new Dictionary<string, string> { ["stallKind"] = kind },
     };
 
+    [Fact]
+    public void Reformed_red_batch_stays_closed_after_its_successor_settles()
+    {
+        var store = new BatchGateStore(Path.Combine(_root, "batches"));
+        var parent = Close(store, null, "A-1");
+        var source = new OperatorBatchGateFactSource(store);
+        BatchGateStates.Reach(store, new(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
+            _clock.GetUtcNow(), "gate red"));
+        Assert.Single(source.Collect(_clock.GetUtcNow().UtcDateTime)!);
+        var successor = parent with { BatchId = "replacement", ReformedFromBatchId = parent.BatchId };
+        store.CloseManifest(successor);
+        BatchGateStates.Reach(store, new(successor.BatchId, successor.MembershipDigest, BatchPhase.Abandoned, null,
+            1, _clock.GetUtcNow(), "released"));
+        Assert.Empty(source.Collect(_clock.GetUtcNow().UtcDateTime)!);
+        Assert.Empty(source.Collect(_clock.GetUtcNow().UtcDateTime)!);
+    }
+
     private BatchGateManifest Close(BatchGateStore store, string? parent, params string[] keys)
     {
         var scope = new BatchGateScope("alpha", "repo", "develop", "full", "digest", "v1");

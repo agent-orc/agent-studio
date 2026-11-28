@@ -132,6 +132,7 @@ public sealed class MagazineStore
                 Kind = validated.Kind,
                 Body = validated.Body,
                 Sources = validated.Sources,
+                Items = validated.Items,
             };
             var next = new MagazineArticleHead
             {
@@ -146,6 +147,7 @@ public sealed class MagazineStore
                 Authors = head is null || head.Authors.Contains(author) ? head?.Authors ?? [author] : [.. head.Authors, author],
                 Sources = content.Sources,
                 BodyBytes = validated.BodyBytes,
+                LeadImportance = content.Items.FirstOrDefault()?.Importance,
                 Pinned = head?.Pinned ?? false,
                 ArchivedAt = head?.ArchivedAt,
             };
@@ -181,7 +183,7 @@ public sealed class MagazineStore
 
     private sealed record ValidatedRequest(
         string Title, string Summary, string Body, int BodyBytes, string Kind, string? Persona,
-        IReadOnlyList<MagazineSource> Sources);
+        IReadOnlyList<MagazineSource> Sources, IReadOnlyList<MagazineEditorialItem> Items);
 
     private static ValidatedRequest Validate(MagazineUpsertRequest request)
     {
@@ -232,7 +234,8 @@ public sealed class MagazineStore
                 throw Invalid("magazine-credential-in-content",
                     "The article contains a credential-shaped value. Remove it; if it is a real credential, revoke it.");
 
-        return new ValidatedRequest(title, summary, body, bodyBytes, kind, persona, sources);
+        return new ValidatedRequest(title, summary, body, bodyBytes, kind, persona, sources,
+            MagazineEditorialItems.ValidateAndOrder(request.Items));
     }
 
     public static MagazineException BodyTooLarge(long bytes) => new(StatusCodes.Status413PayloadTooLarge,
@@ -250,7 +253,10 @@ public sealed class MagazineStore
     private static MagazineArticle View(MagazineArticleHead head, MagazineRevision content) => new(
         head.Scope, head.Slug, content.Revision, head.Revision, content.Title, content.Summary, content.Kind,
         content.Author, head.Authors, content.Sources, head.CreatedAt, head.UpdatedAt, content.At, head.Pinned,
-        head.ArchivedAt, content.Body);
+        head.ArchivedAt, content.Body)
+    {
+        Items = content.Items,
+    };
 
     private MagazineArticleHead? ReadHead(MagazineScope scope, string slug)
         => Read<MagazineArticleHead>(HeadPath(scope, slug));

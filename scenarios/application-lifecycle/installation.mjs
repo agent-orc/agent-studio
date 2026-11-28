@@ -7,6 +7,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, wr
 import http from 'node:http';
 import path from 'node:path';
 import { SessionClient, totp } from '../../scripts/release/product-scenario/session.mjs';
+import { deployNextJob } from './deploy-job.mjs';
 import { serveGit, startWorker } from './worker.mjs';
 import { ProductApi } from '../../scripts/release/product-scenario/studio-api.mjs';
 
@@ -117,18 +118,16 @@ export async function installation() {
     json(path.join(dir, 'deploy-artifact.json'), { project: projectName, artifact, commit, sourceSha256: digest });
     return runnerRequest(releaseToken, '/api/deploy/gate-releases', { project: projectName, commit, artifact });
   }
-  async function deploy(kind, artifact) {
-    const job = await runnerRequest(deployToken, '/api/deploy/jobs/claim', { hostId: 'scenario-host' });
-    assert.ok(job?.id, 'Studio offered no deployment job for scenario-host');
-    assert.equal(job.environmentId, kind);
-    assert.equal(job.artifact, artifact);
-    const route = '/api/deploy/jobs/' + encodeURIComponent(projectName) + '/' + job.id;
+  async function applyDeployment(job, route) {
+    assert.ok(job.kind === 'standard' && job.template === 'static' && !job.runbookName,
+      'The fixture can only serve static deployments. Unsupported job ' + job.id);
+    const target = targets[job.environmentId];
+    assert.ok(target, 'Unknown fixture environment ' + job.environmentId);
     if (job.isStop) {
-      targets[kind].files.clear();
-      const stopped = await fetch(targets[kind].address);
+      target.files.clear();
+      const stopped = await fetch(target.address);
       assert.equal(stopped.status, 404);
-      await runnerRequest(deployToken, route + '/report', { leaseToken: job.leaseToken, healthy: true });
-      return { healthStatus: stopped.status, job: job.id };
+      return stopped.status;
     }
     const response = await fetch(new URL(route + '/artifact?content', studio), { headers: {
       Authorization: 'Bearer ' + deployToken, 'X-Deploy-Lease': job.leaseToken,
@@ -136,18 +135,23 @@ export async function installation() {
     assert.equal(response.status, 200, 'Download leased artifact');
     const archive = Buffer.from(await response.arrayBuffer());
     assert.equal('release-package@sha256:' + sha256(archive), job.artifact);
-    const target = targets[kind];
     target.files.clear();
     const files = execFileSync('tar', ['-tzf', '-'], { input: archive }).toString().split('\n');
     for (const [url, file] of [['/', './index.html'], ['/health.txt', './health.txt']]) {
       if (files.includes(file)) target.files.set(url, execFileSync('tar', ['-xzOf', '-', file], { input: archive }));
     }
     const health = await fetch(target.healthUrl);
-    await runnerRequest(deployToken, route + '/report', { leaseToken: job.leaseToken, healthy: health.ok,
-      evidence: health.ok ? 'health-ok' : 'health-http-failed' });
-    return { healthStatus: health.status, artifact, environment: kind, job: job.id };
+    return health.status;
   }
-  return { user, owner, session, credentials, targets, loginTime, initProject, declare, publish, deploy,
+  const deployNext = () => deployNextJob((route, data) => runnerRequest(deployToken, route, data), applyDeployment);
+  async function deploy(kind, artifact) {
+    const result = await deployNext();
+    assert.ok(result, 'Studio offered no deployment job for scenario-host');
+    assert.equal(result.environment, kind);
+    assert.equal(result.artifact, artifact);
+    return result;
+  }
+  return { user, owner, session, credentials, targets, loginTime, initProject, declare, publish, deploy, deployNext,
     get project() { return project; }, get group() { return group; },
     async startCoding() {
       for (const role of ['coding', 'review']) workers.push(await startWorker({ workspace, studio, project, session, remote }, role));

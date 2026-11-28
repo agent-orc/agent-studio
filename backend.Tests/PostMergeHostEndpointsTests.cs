@@ -269,6 +269,20 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Single(store.Read(project.Id).Runs);
         using var conflict = await client.PostAsJsonAsync(route, terminal with { Reason = "changed receipt" });
         Assert.Equal(System.Net.HttpStatusCode.Conflict, conflict.StatusCode);
+
+        // A receipt accepted before distinct-plan validation remains replayable.
+        var legacy = terminal with { Commands = ["build", "build"],
+            Verdicts = [new("build", 0, false), new("build", 0, false)] };
+        var persisted = store.Read(project.Id) with { Runs = [legacy] };
+        File.WriteAllText(Path.Combine(_root, "post-merge", project.Id + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(persisted, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+        using (var replay = await client.PostAsJsonAsync(route, legacy)) replay.EnsureSuccessStatusCode();
+        using (var changed = await client.PostAsJsonAsync(route, legacy with { Reason = "changed legacy receipt" }))
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, changed.StatusCode);
+        using (var fresh = await client.PostAsJsonAsync(route, legacy with { Id = "new-receipt" }))
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, fresh.StatusCode);
+        Assert.Equal(terminal.TipSha, store.Read(project.Id).LastGreenSha);
+        Assert.Single(store.Read(project.Id).Runs);
     }
 
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }

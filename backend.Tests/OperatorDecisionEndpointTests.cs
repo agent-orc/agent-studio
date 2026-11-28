@@ -101,6 +101,32 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task Dismissal_checks_each_project_and_audits_the_operator_token_and_reason()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory));
+        using var writer = BearerClient(factory, Token(factory, "alpha operator", StudioRoles.Operator, "alpha"));
+        using var viewer = BearerClient(factory, Token(factory, "alpha reader", StudioRoles.Viewer, "alpha"));
+        await Sweep(factory);
+        var rows = (await Attention(owner)).Items.Where(item => item.Type == OperatorDecisionTypes.EscalationOpened)
+            .ToDictionary(item => item.Project!);
+        const string route = "/api/operator/attention/dismiss";
+        var request = new AttentionDismissRequest([rows["alpha"].Id], "Tracked in the handover");
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsJsonAsync(route, request)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await writer.PostAsJsonAsync(route, request with
+            { Ids = [rows["alpha"].Id, rows["beta"].Id] })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await writer.PostAsJsonAsync(route, request with { Reason = " " })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await writer.PostAsJsonAsync(route, request)).StatusCode);
+        var remaining = (await Attention(owner)).Items;
+        Assert.DoesNotContain(remaining, item => item.Id == rows["alpha"].Id);
+        Assert.Contains(remaining, item => item.Id == rows["beta"].Id);
+        var receipt = Assert.Single(factory.Services.GetRequiredService<ControlPlaneAuditLog>()
+            .ReadNewest(entry => entry.Operation == "attention.dismiss", 1));
+        Assert.StartsWith("service-account:", receipt.Actor);
+        Assert.Contains(request.Reason!, receipt.Details.ToString());
+    }
+
+    [Fact]
     public async Task A_client_resuming_with_its_last_cursor_receives_every_event_in_between_once()
     {
         using var factory = BuildFactory();

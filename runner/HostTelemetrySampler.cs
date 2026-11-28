@@ -9,11 +9,14 @@ public sealed class HostTelemetrySampler
 {
     private readonly RunnerOptions? _options;
     private readonly IHostFilesystemProbe _probe;
+    private readonly string _proc;
     private readonly Func<long?>? _preparationCopyBytes;
+
     public HostTelemetrySampler(RunnerOptions? options = null, IHostFilesystemProbe? probe = null,
-        Func<long?>? preparationCopyBytes = null)
+        Func<long?>? preparationCopyBytes = null, string proc = "/proc")
     {
         _options = options;
+        _proc = proc;
         _preparationCopyBytes = preparationCopyBytes;
         _probe = probe ?? HostFilesystemProbes.Default;
     }
@@ -82,7 +85,7 @@ public sealed class HostTelemetrySampler
     private (long Receive, long Transmit)? NetworkRate(DateTime now)
     {
         HostNetworkCounters? current;
-        try { current = HostNetworkCounters.Parse(File.ReadLines("/proc/net/dev")); }
+        try { current = HostNetworkCounters.Parse(File.ReadLines(Path.Combine(_proc, "net/dev"))); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { current = null; }
         if (current is null) { _previousNetwork = null; return null; }
         var rate = _previousNetwork is { } previous
@@ -93,34 +96,36 @@ public sealed class HostTelemetrySampler
 
     private HostTelemetrySample SampleLinux(DateTime now, int activeSlots)
     {
-        var current = ReadLinuxCpu();
+        var stat = ProcLines("stat");
+        var current = stat.Length == 0 ? null : ReadLinuxCpu(stat[0]);
         var (cpu, steal, ioWait) = Percentages(_previousCpu, current);
         _previousCpu = current;
 
-        var loads = File.ReadAllText("/proc/loadavg").Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var memory = File.ReadLines("/proc/meminfo")
+        var loads = (ProcLines("loadavg").FirstOrDefault() ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var memory = ProcLines("meminfo")
             .Select(line => line.Split(':', 2))
             .Where(parts => parts.Length == 2)
             .ToDictionary(parts => parts[0], parts => ParseKb(parts[1]), StringComparer.Ordinal);
         var total = memory.GetValueOrDefault("MemTotal");
         var available = memory.GetValueOrDefault("MemAvailable", memory.GetValueOrDefault("MemFree"));
 
-        var vm = File.ReadLines("/proc/vmstat")
+        var vm = ProcLines("vmstat")
             .Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             .Where(parts => parts.Length == 2 && (parts[0] == "pswpin" || parts[0] == "pswpout"))
             .ToDictionary(parts => parts[0], parts => long.Parse(parts[1], CultureInfo.InvariantCulture));
         var currentSwap = (vm.GetValueOrDefault("pswpin"), vm.GetValueOrDefault("pswpout"), now);
         long? swapIn = null, swapOut = null;
-        if (_previousSwap is { } previous && now > previous.At)
+        if (vm.Count == 2 && _previousSwap is { } previous && now > previous.At)
         {
             var seconds = (now - previous.At).TotalSeconds;
             swapIn = (long)(Math.Max(0, currentSwap.Item1 - previous.InPages) * Environment.SystemPageSize / seconds);
             swapOut = (long)(Math.Max(0, currentSwap.Item2 - previous.OutPages) * Environment.SystemPageSize / seconds);
         }
-        _previousSwap = currentSwap;
+        _previousSwap = vm.Count == 2 ? currentSwap : null;
 
-        return new HostTelemetrySample(now, cpu, ParseDouble(loads[0]), ParseDouble(loads[1]), ParseDouble(loads[2]),
-            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, LinuxHostCpuCount(), activeSlots);
+        return new HostTelemetrySample(now, cpu, ParseDouble(loads.ElementAtOrDefault(0)), ParseDouble(loads.ElementAtOrDefault(1)), ParseDouble(loads.ElementAtOrDefault(2)),
+            total > 0 && available > 0 ? Math.Max(0, total - available) : null, total > 0 ? total : null,
+            swapIn, swapOut, steal, ioWait, stat.Length == 0 ? 0 : ParseLinuxHostCpuCount(stat), activeSlots);
     }
 
     private HostTelemetrySample SampleWindows(DateTime now, int activeSlots)
@@ -141,9 +146,15 @@ public sealed class HostTelemetrySampler
             Environment.ProcessorCount, activeSlots);
     }
 
-    private static CpuCounters ReadLinuxCpu()
+    private string[] ProcLines(string file)
     {
-        var fields = File.ReadLines("/proc/stat").First().Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1)
+        try { return File.ReadAllLines(Path.Combine(_proc, file)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    private static CpuCounters ReadLinuxCpu(string line)
+    {
+        var fields = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1)
             .Select(value => ulong.Parse(value, CultureInfo.InvariantCulture)).ToArray();
         return new CpuCounters(fields.Aggregate(0UL, (sum, value) => sum + value), fields.ElementAtOrDefault(3) + fields.ElementAtOrDefault(4),
             fields.ElementAtOrDefault(7), fields.ElementAtOrDefault(4));
@@ -151,9 +162,6 @@ public sealed class HostTelemetrySampler
 
     // /proc/loadavg counts runnable work across the host. ProcessorCount may
     // be reduced by this process's cgroup quota, so it cannot normalize loadavg.
-    internal static int LinuxHostCpuCount()
-        => ParseLinuxHostCpuCount(File.ReadLines("/proc/stat"));
-
     internal static int ParseLinuxHostCpuCount(IEnumerable<string> lines)
         => Math.Max(1, lines.Count(line =>
             line.Length > 3 && line.StartsWith("cpu", StringComparison.Ordinal)
@@ -175,7 +183,8 @@ public sealed class HostTelemetrySampler
     }
 
     private static long ParseKb(string value) => long.Parse(value.Trim().Split(' ')[0], CultureInfo.InvariantCulture) * 1024;
-    private static double ParseDouble(string value) => double.Parse(value, CultureInfo.InvariantCulture);
+    private static double? ParseDouble(string? value) =>
+        double.TryParse(value, CultureInfo.InvariantCulture, out var number) ? number : null;
 
     private static HostTelemetrySample WithConnectivity(
         HostTelemetrySample sample,

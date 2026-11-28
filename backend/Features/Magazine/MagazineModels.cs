@@ -96,7 +96,8 @@ public sealed record MagazineUpsertRequest(
     string? Persona,
     IReadOnlyList<MagazineSource>? Sources,
     string? PersonaId = null,
-    string? RoleId = null);
+    string? RoleId = null,
+    IReadOnlyList<MagazineEditorialItem>? Items = null);
 
 /// <summary>Body of the pin and archive routes; an absent value sets the flag.</summary>
 public sealed record MagazineFlagRequest(bool? Pinned, bool? Archived);
@@ -116,6 +117,7 @@ public sealed record MagazineRevision
     public required string Kind { get; init; }
     public required string Body { get; init; }
     public IReadOnlyList<MagazineSource> Sources { get; init; } = [];
+    public IReadOnlyList<MagazineEditorialItem> Items { get; init; } = [];
 }
 
 /// <summary>
@@ -136,11 +138,12 @@ public sealed record MagazineArticleHead
     public IReadOnlyList<MagazineAuthor> Authors { get; init; } = [];
     public IReadOnlyList<MagazineSource> Sources { get; init; } = [];
     public int BodyBytes { get; init; }
+    public int? LeadImportance { get; init; }
     public bool Pinned { get; init; }
     public DateTime? ArchivedAt { get; init; }
 }
 
-/// <summary>An article in a list: everything but the body.</summary>
+/// <summary>An article's list metadata, including the current lead importance.</summary>
 public sealed record MagazineArticleSummary(
     string Scope,
     string Slug,
@@ -154,11 +157,12 @@ public sealed record MagazineArticleSummary(
     DateTime UpdatedAt,
     bool Pinned,
     DateTime? ArchivedAt,
-    int BodyBytes)
+    int BodyBytes,
+    int? LeadImportance = null)
 {
     public static MagazineArticleSummary From(MagazineArticleHead head) => new(
         head.Scope, head.Slug, head.Revision, head.Title, head.Summary, head.Kind, head.Authors, head.Sources,
-        head.CreatedAt, head.UpdatedAt, head.Pinned, head.ArchivedAt, head.BodyBytes);
+        head.CreatedAt, head.UpdatedAt, head.Pinned, head.ArchivedAt, head.BodyBytes, head.LeadImportance);
 }
 
 /// <summary>
@@ -185,6 +189,9 @@ public sealed record MagazineArticle(
     DateTime? ArchivedAt,
     string Body)
 {
+    public IReadOnlyList<MagazineEditorialItem> Items { get; init; } = [];
+    public int? LeadImportance => Items.FirstOrDefault()?.Importance;
+
     [JsonPropertyOrder(-1)]
     public string BodyFormat => "markdown";
 }

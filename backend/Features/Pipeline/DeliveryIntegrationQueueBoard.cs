@@ -76,6 +76,8 @@ public sealed class DeliveryIntegrationQueueBoard(TimeProvider? time = null)
 
     internal DateTimeOffset ObservationTime => _time.GetUtcNow();
 
+    public int WaitingCount => _queues.Values.Sum(rows => rows.Count(row => row.Activity == Waiting));
+
     public void Publish(string project, IReadOnlyList<DeliveryIntegrationQueueRow> rows)
         => _queues[project] = new(rows.ToArray(), ObservationTime);
 

@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global personas | Article document</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style>
+    .contents { display: flex; flex-wrap: wrap; gap: 5px 16px; margin: 16px 0 32px; font-size: .8rem; }
+    .decision-list > li { margin: 0 0 16px; }
+    .decision-list > li p { margin: 3px 0; }
+    .facts { font-variant-numeric: tabular-nums; }
+    .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; font: .8rem/1.5 var(--article-sans); }
+    .flow .box { margin: 0; padding: 12px; }
+    .flow svg { width: 26px; height: 22px; color: var(--article-link); }
+    .prototype { --studio-bg-editor: #ffffff; --studio-bg-elevated: #ececec; --studio-fg: #333333; --studio-fg-strong: #1a1a1a; --studio-fg-dim: #555555; --studio-border-strong: #b4b4b4; --studio-accent-3-strong: #1d4ed8; --studio-warn: #7b3d08; --studio-font-size-lg: 14px; --studio-font-size-xl: 18px; --studio-font-size-2xl: 20px; --studio-spacing-2: 8px; --studio-spacing-3: 12px; --studio-spacing-4: 16px; --studio-spacing-5: 24px; --studio-spacing-6: 32px; --studio-target-coarse-min: 44px; --studio-spacing-1: 4px; }
+    @media (prefers-color-scheme: dark) {
+      .prototype { --studio-bg-editor: #0f0f1a; --studio-bg-elevated: #1e1e2e; --studio-fg: #e2e8f0; --studio-fg-strong: #f8fafc; --studio-fg-dim: #94a3b8; --studio-border-strong: rgba(255, 255, 255, .10); --studio-accent-3-strong: #93c5fd; --studio-warn: #fcd34d; }
+    }
+    .prototype { min-height: 100%; background: var(--studio-bg-editor); border: 1px solid var(--studio-border-strong); color: var(--studio-fg); font: var(--studio-font-size-lg)/1.5 var(--article-sans); font-variant-numeric: tabular-nums; }
+    .prototype a { color: var(--studio-accent-3-strong); }
+    .prototype .team-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--studio-spacing-2); padding: var(--studio-spacing-3) var(--studio-spacing-5); background: var(--studio-bg-elevated); }
+    .prototype .persona-grid { display: grid; grid-template-columns: minmax(154px, 1fr) minmax(0, 4fr); }
+    .prototype .team-nav { padding: var(--studio-spacing-4); border-inline-end: 1px solid var(--studio-border-strong); }
+    .prototype .team-nav b { display: block; margin-bottom: var(--studio-spacing-2); }
+    .prototype .team-nav a { display: flex; align-items: center; padding: var(--studio-spacing-2); }
+    .prototype .team-nav a[aria-current] { background: var(--studio-bg-elevated); color: var(--studio-fg-strong); font-weight: 650; text-decoration: none; }
+    .prototype .persona-links { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-4); }
+    .prototype .persona-content { min-width: 0; padding: var(--studio-spacing-5); }
+    .prototype h3, .prototype h4 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-strong); }
+    .prototype h3 { font-size: var(--studio-font-size-2xl); }
+    .prototype h4 { font-size: var(--studio-font-size-xl); }
+    .prototype p { margin: 0 0 var(--studio-spacing-2); }
+    .prototype .muted { color: var(--studio-fg-dim); }
+    .prototype .persona-period { margin-block: var(--studio-spacing-4); }
+    .prototype .goal-row { display: grid; grid-template-columns: 2.3fr 1fr 1.45fr 1fr; align-items: center; gap: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border-strong); padding-block: var(--studio-spacing-2); }
+    .prototype .missed { color: var(--studio-warn); }
+    .prototype .goal-current { font-weight: 700; color: var(--studio-fg-strong); }
+    .prototype .goal-current small { font-weight: 400; color: var(--studio-fg-dim); }
+    .prototype .goal-context { display: block; color: var(--studio-fg-dim); }
+    .prototype .persona-lower { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--studio-spacing-5); margin-top: var(--studio-spacing-5); }
+    .prototype .entry { padding-block: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border-strong); }
+    .prototype .entry p { margin: 0; }
+    .prototype details { margin-block: var(--studio-spacing-3); }
+    .prototype summary { color: var(--studio-accent-3-strong); cursor: pointer; }
+    .prototype .target-trend { min-width: 0; }
+    .prototype .target-trend summary::before { content: "▸"; padding-inline-end: var(--studio-spacing-2); }
+    .prototype .target-trend[open] summary::before { content: "▾"; }
+    .prototype .target-trend summary { list-style: none; }
+    @media (max-width: 760px) {
+      .flow { grid-template-columns: minmax(0, 1fr); }
+      .flow svg { transform: rotate(90deg); margin-inline: auto; }
+      .prototype .persona-grid, .prototype .persona-lower { grid-template-columns: minmax(0, 1fr); }
+      .prototype .team-nav { border-inline-end: 0; border-bottom: 1px solid var(--studio-border-strong); }
+      .prototype .team-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-1); }
+      .prototype .team-nav b { grid-column: 1 / -1; margin-bottom: 0; }
+      .prototype .team-nav a, .prototype summary, .prototype .persona-links a { display: flex; align-items: center; min-height: var(--studio-target-coarse-min); }
+      .prototype .persona-content, .prototype .team-bar { padding: var(--studio-spacing-3); }
+      .prototype .goal-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--studio-spacing-2); }
+      .prototype .goal-head { display: none; }
+    }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <h1>Global personas</h1>
+    <p class="lede">Give a small installation team standing duties, a direct line from the Owner, and goals measured against Studio records. Start with the model watch and prove that a dated provider change can reach a verified routing outcome.</p>
+    <div class="meta"><span><b>Source</b> AGT-4377</span><span><b>State</b> Decision pending</span><span><b>Date</b> 28 November 2026</span></div>
+  </header>
+  <nav class="contents" aria-label="Dossier sections">
+    <a href="#recommendation">Recommendation</a><a href="#duties">Duties</a><a href="#assignments">Assignments</a><a href="#goals">Goals</a><a href="#authority">Authority</a><a href="#magazine">Magazine</a><a href="#alternatives">Alternatives</a><a href="#evidence">Evidence</a><a href="#decisions">Open decisions</a><a href="#implementation">Implementation</a>
+  </nav>
+  <section lang="de" id="owner-brief">
+    <h2>Entscheidungsvorlage</h2>
+    <p>Das Team erhält vier Rollen für die gesamte Installation. Die Kostenkontrolle übernimmt Modelle und Verbrauch. Die Betriebsaufsicht beobachtet Hosts, Sicherheit und Backups. Die Qualitätsleitung überwacht Integrationszweige, Tests und Schutzregeln. Der Stabschef hält die offenen Entscheidungen und das Magazin zusammen. Die vorhandene Operator-Persona bearbeitet weiterhin konkrete Betriebsfälle. Die Dispatcher bleiben für die Reihenfolge und Freigabe ihrer jeweiligen Projekte zuständig.</p>
+    <p>Der erste Schritt macht die Modellwache auf dieser Installation nutzbar. Sie prüft alle sechs Stunden, Anbieterpreise, Modellfreigaben, CLI-Versionen und die tatsächlich geerbten Routen. Ein neuer Kandidat erhält einen Vergleich mit belegten Kosten, einem Qualitätstest und einem Test auf einem geeigneten Host. Eine freigegebene, rücknehmbare Standardroute kann die Persona innerhalb der erteilten Grenzen selbst umstellen. Für die Umstellung bleiben laufende Versuche und ausdrückliche Modellbindungen maßgeblich. Bei fehlenden Belegen oder einer Änderung außerhalb des Mandats erscheint eine konkrete Empfehlung mit Frist in der bestehenden Entscheidungsansicht.</p>
+    <p>Ein Satz im Team-Bereich oder Chat genügt für einen Auftrag. Die Persona zeigt ihre Lesart, die Kostenobergrenze und das erwartete Ergebnis. Der Eigentümer bestätigt dies mit einem Klick. Für einen verständlichen Auftrag kann er die angebotene Fassung direkt mit dem Absenden bestätigen. Die Aktivierung und jede Ausweitung der Schreibrechte verlangen weiterhin einen frischen Bestätigungscode. Eine befristete Freigabe erspart Einzelbestätigungen für genau benannte Änderungen.</p>
+    <p>Auf der Persona stehen zuerst verfehlte Ziele mit Istwert, Sollwert, Zeitraum und Trend. Darunter folgen die offenen Pflichten, die letzten Entscheidungen mit Belegen sowie die Kosten pro Pflicht und Auftrag. Das tägliche Magazin meldet Abweichungen und getroffene Entscheidungen. Die Wochenausgabe zeigt, welche Abweichungen sich wiederholen, wer übernimmt und welche Wirkung gemessen wurde.</p>
+    <p><strong>Empfehlung.</strong> Mit der Modellwache und GPT-6.2 Sol auf Stufe <code>medium</code> beginnen. Sie startet nach der Aktivierung im Beobachtungsmodus. Nach einer belegten Probeperiode und einer befristeten Freigabe übernimmt sie passende Änderungen selbst. Ohne Freigabe bleiben Vorschläge und Belege verfügbar. Die übrigen Rollen folgen erst mit ihren jeweiligen Datenquellen.</p>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation">
+    <h2>Recommendation</h2>
+    <p>Assign duties to four existing catalogue roles at installation scope. Add a model-watch duty to the Cost controller. The installation instance of a role has its own identity, charter revision, budget and grant. Existing workspace or project instances keep their scope and may coexist. A report, finding, or proposed action has exactly one owning installation duty. Route related facts by source ID so a local persona can cite a finding without republishing it.</p>
+    <table>
+      <thead><tr><th>Installation role</th><th>Standing ownership</th><th>Handoff</th></tr></thead>
+      <tbody>
+        <tr><td>Cost controller</td><td>Model watch and spend efficiency</td><td>Owns policy comparisons and inherited installation defaults. The Budget steward retains its existing admission and budget remit.</td></tr>
+        <tr><td>Quality lead</td><td>Integration tips, test reliability and guards</td><td>Quotes existing review and verification receipts. Reliability engineer and line guardian retain their incident and delivery workflows.</td></tr>
+        <tr><td>Operations warden</td><td>Host posture, open security findings and backup assurance</td><td>Consumes Fleet operator pressure and recovery evidence, Security officer findings and Operations backup evidence. Fleet operator remains the already-planned incident responder.</td></tr>
+        <tr><td>Chief of staff</td><td>Decision age and coverage, daily and weekly issues</td><td>Consumes the decision desk scope and journal. Presenter or the existing issue renderer can present the same issue revision.</td></tr>
+      </tbody>
+    </table>
+    <p>The installation covers every registered active workspace and project, active runner and review hosts, configured providers, and attributable installation costs. Include disconnected hosts as stale rather than dropping them. Retain historical projects in historical periods. Each fact carries an installation ID, source ID, source revision, measured and observed timestamps, and workspace, project, host or provider identity where applicable. Installation access is an explicit Owner-granted read capability. Facts crossing workspace boundaries are minimized and redacted. Viewers see only authorized subtrees and totals calculated from their visible rows. See the <a href="../persona-team/index.html">Persona team Dossier</a>, the <a href="../dispatcher-personas/index.html">Dispatcher Personas Dossier</a>, and the <a href="../operator-persona/index.html">Fleet operator Dossier</a>.</p>
+    <p>Keep the specialist catalogue entries available at workspace or project scope. Dispatchers and the line guardian retain their existing authorities. The Operations warden consumes their facts through APIs; it has no dispatch lease. The installation roles use one registry and one Team area.</p>
+  </section>
+
+  <section id="duties">
+    <h2>Duties</h2>
+    <p>Use the installation time zone, Europe/Berlin for this rollout. Store UTC interval bounds and a stable period key. Late evidence can correct a receipt while preserving its original submission time. A period ends in <em>covered, partial, blocked</em> or <em>missed</em>. A covered period may still contain a missed goal. Each receipt lists source coverage, findings, actions with verified outcomes or open references, and spend. Quiet periods still leave a compact receipt. Group repeated observations under the same condition ID and reopen only on recurrence or a meaningful revision.</p>
+    <table class="facts">
+      <thead><tr><th>Duty and cadence</th><th>Facts</th><th>Period complete and delegated action</th></tr></thead>
+      <tbody>
+        <tr><td><b>Model watch</b><br>Every six hours and on a verified change signal. Triage each confirmed change within 24 h.</td><td>Provider release and price records, provider model discovery, approved CLI release feed, host advertised CLI versions and capabilities, qualification matrix and historical price ledger. Read configured and effective consumer routes, project inheritance, pins, fallbacks, task-creation defaults and product-generated card rules.</td><td>Fresh source inventory and effective diff, stable candidate or drift issue, owner and deadline. Relevant changes receive a comparison, canary outcome and disposition. The granted operation may update eligible future installation routes and record verification or rollback. CLI upgrades, hard pins and candidates outside the grant get a recommendation.</td></tr>
+        <tr><td><b>Spend and efficiency</b><br>Daily by 09:00, seven-day trend weekly.</td><td>Usage receipts joined to task, mode, run, round and step, model-selection events, remote-review observations, process/tool events where retained, and historical prices.</td><td>Show tokens and priced USD per delivered card by mode, uncovered cards and attempts, round counts by recorded cause, repeated wait-only calls and above-standard model share by actual route and reason. Open one deduplicated research card for a breach with evidence; route fixes follow model-watch authority.</td></tr>
+        <tr><td><b>Integration and tests</b><br>After a tip or guard signal and at 09:00 daily.</td><td>Registered integration refs with tip SHAs, current verification and post-merge receipts, batch results, test retry and load context, review and guard events.</td><td>List each tested tip or currently unverified tip, red age, high-load failures contrasted with matched ordinary-load runs, and guard ID with affected change. Attach a reproduction or mark the load link unconfirmed. Draft one diagnostic research card per failure signature or one proposed fix with reviewer and exact failure evidence. The existing gate owns merges, exceptions and test disabling.</td></tr>
+        <tr><td><b>Hosts</b><br>Every 15 min from facts, on state change, daily review by 09:00.</td><td>Host registry and heartbeats, disk and memory/swap telemetry, in-flight leases and progress receipts, advertised capability freshness and Fleet operator pressure records.</td><td>Cover every expected host and report headroom against that host's admission threshold, suspected stalls against lease and progress deadlines, and stale advertisements against their TTL. Correlate causes and hand off one incident with host, thresholds and age to the Fleet operator. Host restart, cleanup, capacity or routing around a host follows its own authority.</td></tr>
+        <tr><td><b>Security and backup</b><br>Daily by 09:00, weekly drill-age review, critical fact on arrival.</td><td>Security finding state and severity, credential-expiry counts, backup job and off-host verification records, isolated restore drill results covering data and key recovery.</td><td>Report unresolved high/critical findings with owner and age, last successful verified copy and last successful drill or unknown. File a redacted finding and a restore-drill proposal when thresholds are missed. Rotation, access changes, production restore and host remediation require their named owners.</td></tr>
+        <tr><td><b>Decisions waiting</b><br>Hourly reconciliation, daily issue at 09:30.</td><td>Decision desk pending occurrence IDs, opening and closing times, urgency, due time, supersession and journal receipts. Distinguish human decisions from informational notices using the desk projection.</td><td>List open count by severity, oldest age, due and overdue IDs, explicit action and recommended choice. Send one reminder per overdue occurrence and reuse its existing desk entry. The Chief of staff may record a disposition already authorized for its own duties. Personal approval stays with the person.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Model qualification and roll-in</h3>
+    <p>The first baseline records the effective routes <em>after</em> the Owner's manual changes and retains the 17–28 November incident as a replay. Check each configured provider on its official release and price source and reconcile with CLI discovery from eligible hosts. Persist published time, observed time, release or price reference, price unit and currency, cache/input/output dimensions, hosted subscription versus metered treatment, observed host capability, and canonical model ID. A same-price CLI release is still a finding if it changes model availability. An unreachable source carries a freshness failure. A provider label, advertised price or a newer version alone leaves the candidate in watch.</p>
+    <ol>
+      <li><strong>Inventory.</strong> Build a before/after preview for new-card defaults, each path creating cards automatically, consumer and fallback rows, and effective project and step routes. Show inheritance, health-affected versus configured values, resolver constraints and explicit pins separately. Classify stale references against approved replacement, qualification or deprecation evidence. An older model can have a reasoned retained disposition with review date.</li>
+      <li><strong>Compare.</strong> Compare candidate and incumbent in the same capability class using paired replay of at least five representative cases for the affected consumer. Use identical case inputs and record effort, passing contract and guard results, measured tokens including cached input, priced cost, wall time, and provider refusals. Reuse recent paired evidence when the model, CLI, effort, route and suite revisions are identical. Spread fresh comparisons across budget periods or use a separately authorized benchmark allocation. Require all hard checks green, no regression on baseline-passing cases, current CLI/auth/readiness for every eligible target, and projected median priced cost at or below the incumbent for unattended adoption. Prefer quota-neutral placement and keep the current reserve and correctness floor. Incomplete or conflicting evidence becomes an explicit recommendation with the missing proof.</li>
+      <li><strong>Canary.</strong> For an eligible new model, use its qualified explicit-pin path on three controlled, non-production or designated canary research cards. Verify actual model, consumer and host receipts, no refusal, and the same checks and cost ceiling. Until a catalogue entry supports use as a default, including removal of an explicit-pin-only guard when proven, emit a coding proposal with that evidence through the normal pipeline. The model watch still runs if code adoption is pending.</li>
+      <li><strong>Apply and verify.</strong> Start with one named installation route family per change and one outstanding trial at a time. Use the normal settings service and retain a previous revision. Read back configured and effective routes immediately, including masked projects. Verify actual receipts for the first five eligible new attempts within 24 h and compare quality and cost. A refusal, mismatch, breached cost/quality floor, or missed verification deadline triggers the authorized restore when the applied revision still matches. Every trial records verified, reverted, retained or human decision required. The current manual 6.2 configuration can yield a verified no-op with evidence.</li>
+    </ol>
+    <p>Slice GP-1 exercises a real prospective scheduled occurrence against current installation sources and a bounded write/readback with rollback on a designated canary route using the same production resolver and API. It also replays the 17 November release plus the 28 November stale-route comparison. If today's audit finds no eligible production change, close that occurrence with observed no-op evidence. Follow-up evidence for review fallbacks or hard pins goes to their named owners with the exact effective route and current constraints. Do not relabel a replay or a canary as an installation-wide upgrade.</p>
+    <p>For spend, use unique provider invocation IDs across exports. Count a repeated wait-only invocation when its task, operation and observed job/step match an earlier invocation on unchanged evidence and it yields only status or log reads, with no new evidence or work. Report the denominator of classifiable invocations alongside all observed calls and unknown classifications. Deduplicate rounds by attempt, assign one recorded primary cause such as review rework, integration conflict, infrastructure retry or Owner follow-up, and leave unresolved attribution as unknown. Attribute cost to actual model and effort. Report known USD at historical list price, unknown-price sessions separately, and usage or quota where reliable without treating list prices as invoices.</p>
+  </section>
+
+  <section id="assignments">
+    <h2>Assignments</h2>
+    <p>“Compare the cost and quality of the new Codex model for our review fallback by Friday” works from Team or chat. Both use the same assignment command under the Owner's session. Resolve the persona, scope, deliverable, finish condition, earliest time, one-off or recurrence, next due date, cost cap and action class. Default to a one-off research report within the persona's existing budget and authority. Ask only for unresolved recurrence, risky scope or ambiguous deliverable. The confirmation preview carries a stable draft ID, a summary and an estimated cap. If the Owner chose the persona and can see that interpretation before sending, Send can confirm the exact draft. In chat, a subsequent explicit confirmation binds the displayed revision. Confirmations are idempotent across the two entry points.</p>
+    <p>The assignment is the Owner's mandate. It remains visible across occurrences with history, next due date and controls to edit future occurrences, pause, cancel, or run the next occurrence early. A card is the traceable execution unit with a project, a mode and the normal pipeline. One assignment can produce successive research cards and, under an allowed grant or recorded decision, a linked coding card in its owning project. Card completion alone leaves the mandate open until its result matches the assignment's finish condition and the receipt links the evidence. A one-off ends with evidence, cancellation, or a visible failure and reason. A recurring assignment closes per occurrence and continues until its end date, count limit or Owner stop. Editing a recurring assignment versions future work. Cancellation stops new admissions immediately, revokes unconsumed writes and requests cancellation through the existing pipeline for in-flight work. Final usage and evidence remain attached.</p>
+  </section>
+
+  <section id="runs">
+    <h2>Execution and budgets</h2>
+    <figure>
+      <div class="flow" role="img" aria-label="The persona scheduler turns due periods and assignments into deduplicated occurrences. Admitted work uses research or coding cards. The completion receipt feeds goal snapshots, the decision desk and the Magazine.">
+        <div class="box"><b>Due period or assignment</b><br>Typed facts, scope, revision</div>
+        <svg viewBox="0 0 26 22" aria-hidden="true"><path d="M2 11h21m-6-5 6 5-6 5" stroke="currentColor" fill="none"/></svg>
+        <div class="box"><b>Admitted occurrence</b><br>Lease, budget, research or coding card</div>
+        <svg viewBox="0 0 26 22" aria-hidden="true"><path d="M2 11h21m-6-5 6 5-6 5" stroke="currentColor" fill="none"/></svg>
+        <div class="box"><b>Verified receipt</b><br>Goals, decision desk, Magazine</div>
+      </div>
+      <figcaption>Typed facts and existing pipeline receipts carry the evidence from the due period to the Owner.</figcaption>
+    </figure>
+    <p>Extend the existing Watcher and persona occurrence path. Fixed intervals, DST-aware local daily/weekly cutoffs and typed urgent signals feed the same coordinator. Reserve a durable occurrence by installation, persona instance, duty or assignment revision, and period, plus a source condition key for early triggers. Restart reconciles existing cards and leases by that key. Quiet reads, typed threshold checks, missed coverage and period receipts can be produced without a model. Research cards handle comparison and evidence synthesis. A coding card is created only for a specific change that requires source, a named owning project and the existing integration policy. Use the configured Studio maintenance project for cross-installation research and the repository-owning project for a fix. Scope comes from the persona principal and approved fact projection, rather than the backing project's privileges. Server-authenticated authorship records persona, role, requester if assigned, occurrence and parent receipt. Workers receive a bounded facts pack and use standard task admission, least-privilege runner claims and existing review.</p>
+    <table class="facts">
+      <thead><tr><th>Role</th><th>Trailing seven-day cap</th><th>Duty allocations within the cap</th></tr></thead>
+      <tbody>
+        <tr><td>Cost controller</td><td>180k metered tokens / USD 6</td><td>Model 100k / USD 3.50, efficiency 50k / USD 1.50, assignments 30k / USD 1.</td></tr>
+        <tr><td>Quality lead</td><td>100k / USD 4</td><td>Integration and tests 75k / USD 3, assignments 25k / USD 1.</td></tr>
+        <tr><td>Operations warden</td><td>100k / USD 4</td><td>Hosts 40k / USD 1.50, security and backup 40k / USD 1.50, assignments 20k / USD 1.</td></tr>
+        <tr><td>Chief of staff</td><td>80k / USD 3</td><td>Decision watch 25k / USD 1, Magazine 35k / USD 1.25, assignments 20k / USD 0.75.</td></tr>
+      </tbody>
+    </table>
+    <p>These proposed ceilings cover a trailing seven days as evaluated at each admission. Installation totals are 460k tokens and USD 17 at the listed ceilings. Use <code>gpt-6.2-sol</code> with <code>medium</code> for new persona work, pinned through the current qualified path at rollout. Schedule by available quota. Reserve input, maximum output and worst-case priced cost across the installation, persona, duty and occurrence before any billable attempt, including rework and model-based review. Proposed ordinary occurrence cap is 25k tokens and USD 1, with a smaller cap where the duty balance requires it. Reconcile actual usage once by invocation ID. An unpriced route or usage gap leaves the accounting open and holds further metered work under that allocation until it can be safely reconciled. Unused allowances stay unspent.</p>
+    <p>Higher effort on Sol is justified for a bounded compatibility diagnosis or clearly specified complex failure after a failed standard run. An Astra comparison is justified when the decision explicitly depends on evaluating Astra or when a correctness floor with no qualified standard route requires it. Record the benchmark or failure, the exact ceiling and reviewer, and obtain a named allowance for above-standard use. On exhaustion, pause new model admissions for that duty, retain work in progress and settle usage, emit the fact-only receipt with next eligible time and any already observed failures, and surface the shortfall in Team and Magazine. Safety holds and already authorized restoration run through deterministic controls. Extra spend requires an Owner allowance. The next period starts with fresh facts and coalesces carry-over by condition.</p>
+  </section>
+
+  <section id="goals">
+    <h2>Goals</h2>
+    <p>A goal revision specifies its fact key and source, eligible scope and population, reducer, comparator, threshold and unit, measurement period and cutoff, minimum coverage or sample, owner and rule version. The service evaluates typed facts and stores a snapshot with numerator, denominator, missing IDs or count, observation time and evidence links. Use half-open periods, count each stable source ID once, and bind past snapshots to their original target. Calculate the trend against the preceding comparable period with the same scope and rule. An incomplete current period stays provisional. A known breach displays even when coverage is partial if the observed bound proves the breach. Otherwise missing or stale input gives <em>unknown</em> and zero eligible facts gives <em>no observations</em>. Use <em>met</em>, <em>missed</em> or <em>in progress</em> when justified. Show the actual measure and distance to target. Attendance and outcome are separate measures, and goals retain their own units.</p>
+    <table class="facts">
+      <thead><tr><th>Goal and initial target</th><th>Computation and coverage</th></tr></thead>
+      <tbody>
+        <tr><td>Model watch. At least 95% of confirmed relevant changes triaged within 24 h each local week. Zero unexplained superseded installation route rows at daily cutoff.</td><td>Count timely first dispositions divided by relevant confirmed changes assigned to the week of observation. Changes under 24 h old stay pending until their deadline. Keep provider publication-to-observation delay visible. Count unique resolved installation route rows without a live disposition. Coverage includes each configured provider and each route family. GP-1 adds the triage receipt while using existing catalogue, effective routing and host facts.</td></tr>
+        <tr><td>Spend. Repeated wait-only calls at most 5% per week, with at least 90% classification coverage. Weekly median tokens per delivered card by mode at or below its first complete four-week baseline.</td><td>Use usage and process correlation, per-card attempt groups, and the joined evidence in the duty. Count tokens across every observed round for delivered cards assigned by completion date. Compare medians with sample counts, require at least 10 covered cards per mode and at least 90% linkage. Until the baseline exists the token goal is collecting data. Above-standard use, USD per card and cause mix are supporting measurements.</td></tr>
+        <tr><td>Quality. No integration tip red for more than two hours each day.</td><td>Maximum uninterrupted red time per integration ref during the period, using time since the first red receipt and carrying age through midnight and across further red tips. Close the episode only on a covering green. Use exact-tip verification and tip-change history. Display unverified tip age separately and link the current refs. High-load-only recurrence and guards are supporting measurements when load and guard facts are available.</td></tr>
+        <tr><td>Hosts. At least 99% of expected host intervals with a heartbeat and fresh compatible capability advertisement each week.</td><td>Count healthy expected host intervals over all scheduled intervals from the host registry and advertisements. Include active disconnected hosts, exclude explicitly retired intervals from their retirement timestamp, and show disk and memory threshold breaches and stuck lease IDs beside the rate.</td></tr>
+        <tr><td>Security and backup. Zero unresolved critical findings past their SLA and last successful isolated restore drill at most 30 days old at the daily cutoff.</td><td>Read findings with severity, opening time and SLA deadline. Count open overdue IDs. Subtract last successful verified drill end from cutoff. Display <em>no successful drill</em> when a complete record proves absence and <em>unknown</em> when the evidence source is incomplete. A successful backup alone supplies no drill timestamp.</td></tr>
+        <tr><td>Decisions. Zero urgent human decisions older than 24 h at the daily cutoff.</td><td>Use current open, actionable, unsuperseded desk occurrences, deduplicated by decision ID. Display total pending and oldest age with urgent-overdue count. Reopening after a genuine state recurrence creates a new occurrence. Rewording keeps the original age.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Persona page</h3>
+    <p>The design keeps the Team navigation and includes an installation roster, one reporting period, visible goal thresholds and coverage, next work, actions and evidence. The first scan answers which goal needs attention. Each row states its own measurement window. Compare an open week with the preceding week at the same cutoff and label it week to date. Disclosing a goal or action shows the source-level breakdown and receipts. The page labels inactive, shadow, live and paused status with the currently authorized action families. The example uses illustrative values and a historical rehearsal to make the planned hierarchy concrete.</p>
+    <figure class="media-breakout">
+      <!-- prototype:start -->
+      <div class="prototype" aria-label="Proposed Cost controller page with illustrative data">
+        <div class="team-bar"><b>Team / Installation / Cost controller</b><span>Design example · Illustrative data</span></div>
+        <div class="persona-grid">
+          <nav class="team-nav" aria-label="Installation personas">
+            <b>Installation team</b>
+            <a href="#persona-title" aria-current="page">Cost controller</a>
+            <a href="#recommendation">Quality lead</a>
+            <a href="#recommendation">Operations warden</a>
+            <a href="#recommendation">Chief of staff</a>
+          </nav>
+          <div class="persona-content">
+            <h3 id="persona-title">Cost controller</h3>
+            <p>Installation · Shadow · Route changes require a grant</p>
+            <p class="muted">Maintains model routes and measures spend across the installation.</p>
+            <p class="persona-links"><a href="#assignments">Assign work</a><a href="#authority">Authority and audit</a></p>
+            <p class="persona-period"><b>23–29 November 2026</b> <span class="muted">Week to date · 28 Nov, 09:00 CET</span></p>
+            <h4>Goals</h4>
+            <div class="goal-row goal-head muted" aria-hidden="true"><span>Measure</span><span>Current</span><span>Target and status</span><span>Trend</span></div>
+            <div class="goal-row"><b>Repeat wait-only calls<span class="goal-context">Week to date</span></b><span class="goal-current">17% <small>(17/100)</small></span><span class="missed">Above target · ≤ 5%</span><span>+7 pp</span></div>
+            <div class="goal-row"><b>Unexplained stale routes<span class="goal-context">Daily cut</span></b><span class="goal-current">0 <small>(12 checked)</small></span><span>Met · 0 routes</span><span>−3 routes</span></div>
+            <div class="goal-row"><b>Changes triaged in 24 h<span class="goal-context">Week to date</span></b><span class="goal-current">100% <small>(4/4)</small></span><span>Provisional · ≥ 95%</span><span>+20 pp</span></div>
+            <details class="target-trend"><summary>Repeat-call evidence</summary><p class="entry">100 of 108 observed calls could be classified. Prior comparable value 10%. A breakdown links source runs and the repeated log-read invocation IDs.</p></details>
+            <div class="persona-lower">
+              <div>
+                <h4>Open duties · 2</h4>
+                <div class="entry"><b>Model watch</b><p>Next sweep 12:00 CET · CLI compatibility</p></div>
+                <div class="entry"><b>Efficiency review</b><p>Repeat-call diagnosis · Due 29 Nov, 09:00 CET</p></div>
+                <h4 style="margin-top: var(--studio-spacing-4)">Individual assignments · 1</h4>
+                <div class="entry"><b>Compare review fallback cost</b><p>One-off research · Due 30 Nov · USD 0.50 cap</p></div>
+              </div>
+              <div>
+                <h4>Last actions</h4>
+                <div class="entry"><b>08:45 · Default route verified</b><p>Existing owner change · <a href="#model-evidence">Route comparison</a></p></div>
+                <div class="entry"><b>08:12 · Review fallback proposed</b><p>Human decision · <a href="#decision-evidence">Decision evidence</a></p></div>
+                <h4 style="margin-top: var(--studio-spacing-4)">Cost · USD 1.74 / 6.00</h4>
+                <div class="entry"><p>Model watch USD 1.20 · Efficiency USD 0.54 · Assignments USD 0.00</p><p>USD 0.50 reserved · USD 3.76 remaining</p><p>34k tokens spent · 10k reserved · 136k remaining</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- prototype:end -->
+      <figcaption><b>Proposed Team detail.</b> The above example shows the measure, target and trend together. The source disclosure, action evidence, upcoming duties, individual assignment and cost answer follow-up questions in the same view.</figcaption>
+    </figure>
+    <p>The implemented page uses the Team detail surface, shared UI tokens, flat status treatments, permission-aware deep links and the standard loading, empty and failure states. A mobile view stacks the same rows. Display budget as spent, reserved and remaining for both tokens and priced USD, with unknown amounts separately; scope both the summary and its visible rows identically. Provide the receipt timeline with actor, kind, timestamp and result, and a link to the exact settings revision, card result or decision. Open duties and assignments show next due, current state and the reason for a hold. Hide write controls for viewers and offer pause or revoke to authorized Owners.</p>
+  </section>
+
+  <section id="authority">
+    <h2>Authority</h2>
+    <p>The Owner selects scope, budget and capability families when activating the installation instance. Activation, a wider grant or a longer live grant uses fresh single-use step-up. Start in shadow, then require seven prospective days with complete scheduled coverage, audited compare-and-set rehearsals and no unresolved provenance or admission faults and one Owner grant for live mutation. Trial grants name permitted operation, exact consumers or paths, limits, rollback window, version and expiry (initially 30 days). The Owner can pause or revoke immediately. Every request rechecks the live principal, activation, grant, recipient scope, evidence freshness and current target revision at admission and mutation. The human code and session stay with the Owner.</p>
+    <ul>
+      <li><b>Allowed under standing grant.</b> Read approved facts, record receipts, publish redacted reports and draft deduplicated cards. Admit routine scoped research within the approved budget. Apply only a qualified future installation default in the specifically named route family, and restore its recorded previous value under the revision and time fence. An inherited settings setter is granted by exact key only. Actions use idempotency keys and expected revisions.</li>
+      <li><b>Proposal or existing decision.</b> Route changes outside the named family, project or stage override changes, explicit pins, provider switches, cost increases, correctness-floor exceptions, catalogue edits, deployments, host controls, credentials, access policy, deletion, backup/restore and accepting another actor's delivery go to the authorized owner of that action. Wide grants are grouped by action family for review rather than asked for on every routine operation. A confirmed assignment cannot grant new authority. Draft coding cards remain behind existing project admission, review and integration.</li>
+      <li><b>Failure and recovery.</b> Lock or fence the single route trial, record the intended change and undo value before mutation, perform compare-and-set, and record the effect. On timeout or restart, reconcile stored intent against the authoritative resulting revision before retrying. An intervening human change defeats automatic rollback and opens one actionable decision. Revocation cancels outstanding proposed writes. Keep a narrowly scoped, time-boxed restore for a committed trial when explicitly included in its original consent. The Owner can stop the trial or restore through the owning settings surface.</li>
+    </ul>
+    <p>The existing IAM audit and persona occurrence ledger record authenticated actor and role, requester if present, charter/activation/grant revision, evidence IDs and digests, rule version, settings scope and before/after values or safe references, expected and actual revisions, effective route receipt, related task/decision ID, time, outcome and rollback. Join by one attempt or operation ID. Corrections append records. Never place secrets, raw provider credentials or private logs in issues. Put admission decisions in the orchestration decision library through the existing gateway. The settings authority applies only returned decisions.</p>
+  </section>
+
+  <section id="magazine">
+    <h2>Magazine</h2>
+    <p>The Chief of staff publishes an installation daily issue at 09:30 and the previous local week's issue on Monday at 11:00. Both open with missed or unmeasurable goals and decisions taken, grouped by current severity and impact. The daily issue links target, actual, coverage and first detection for each miss, then shows applied, retained, or reverted actions and their verified effect. It ends with unresolved human choices with a recommended option and due time, duty gaps, and cost. Use the same decision IDs and link to the desk. Only a new or materially changed condition gets a new decision entry.</p>
+    <p>The weekly issue compares consistent periods and names repeated misses, effectiveness of route changes, cost and coverage by role and duty, and next commitments. Order by acute misses, confirmed effects and open choices. Use the existing Magazine installation scope with immutable issue input snapshots and versioned article references. Use a stable key for edition and period, and a retry-safe publication. Late facts append a dated correction with links to the original, receipt and revised measurement. A deterministic issue posts even when the editor uses no tokens, recording missing duties explicitly.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives">
+    <h2>Alternatives</h2>
+    <table>
+      <thead><tr><th>Operating shape</th><th>Consequence</th></tr></thead>
+      <tbody>
+        <tr><td>One installation supervisor for every watch</td><td>One budget and inbox, with every decision family and evidence source concentrated in a single identity.</td></tr>
+        <tr><td>Four existing roles with installation instances</td><td>Named responsibility for each duty, narrow grants and distinct costs. Shared scheduling and source references keep the fixed operating cost low. Recommended.</td></tr>
+        <tr><td>Promote each specialist or compose project reports only</td><td>Broad coverage with more overlapping reports and budgets, or lower autonomy with installation infrastructure and provider facts still requiring an owner.</td></tr>
+      </tbody>
+    </table>
+    <p>For route adoption, manual recommendations are available during shadow. A narrow live grant makes eligible changes self-service with a verified rollback. A general settings grant would cover unrelated controls and weaken the evidence boundary. For individual work, creating a card immediately gives an execution artifact, while an assignment record keeps an enduring mandate and connects successive cards to it.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence">
+    <h2>Evidence</h2>
+    <div class="evidence-list">
+      <a id="model-evidence" class="evidence" href="../system/domains/model-routing-policy.md#model-families-and-migrations"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-3958, routing policy</b><small>Documented release on 17 November 2026, explicit-pin-only admission and Codex CLI 0.166.0 discovery. Qualification placed both models in the catalogue without promoting inherited routes.</small></span></a>
+      <a class="evidence" href="../system/domains/tasks.md#persona-catalogue-and-workspace-activation-pt-1"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Persona activation contract</b><small>Workspace-scoped activation snapshots, fresh single-use Owner step-up, and report-derived character sheet metrics.</small></span></a>
+      <a class="evidence" href="../system/domains/runner.md#persona-occurrences-pt-4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Persona occurrence contract</b><small>Watcher admission through the weekly ledger, fenced runner lease, bounded grounds pack and fact-only refusal report.</small></span></a>
+      <a class="evidence" href="../system/domains/magazine.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Magazine store</b><small>Installation scope exists alongside workspace and project scopes. Article revisions can be cited immutably.</small></span></a>
+    </div>
+    <p><b>Owner incident account, 28 November.</b> Eleven days after release, the Owner found <code>gpt-6-sol</code> still selected for new cards and review fallbacks, <code>gpt-5.5</code> in product-created cards and fleet use of <code>gpt-6.1-sol</code> and, on hard cards, <code>gpt-6.2-astra</code>. The Owner described Astra as four times the token price in this comparison and reported that the operator changed settings by hand. The same account reports that 17% of model calls in the night repeatedly read build logs. Its invocation denominator and exact window were unavailable here. The planned duty measures the denominator and distinguishes repeats from new evidence.</p>
+    <p><b>Operator handoff, 27–28 November.</b> The log at <code>/home/agent/operator-evidence/operator-log-2026-11-26-27.md</code> records the temporary research-card workaround at 22:51 and 00:35, the published Chief of staff digest at 03:21, and the queue promotion of the operator persona and decision desk cuts at 08:45. AGT-4260 through AGT-4269 published the nine reports and digest while no persona was activated, as recorded for this period. The distinct AGT-4263 weekly cost report quantified USD 109.05 repeat-review spend, 6.92% of USD 1,576.11 measured at list-price equivalent. AGT-4351 covers repeated review attributable to delivery changes, and AGT-4352 covers scoped usage writes contaminating a workspace total. The proposed spend duty makes both existing facts visible with their own coverage and attribution.</p>
+    <p><b>Evidence limits.</b> The report artifacts and policy support the need for installation ownership and a measured trial. They give no prospective benchmark for default route adoption. The first occurrence freezes a fresh inventory and records the qualifying result or remaining evidence gap.</p>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+          <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/team-catalogue-light--agt-3600.png" alt="Light theme. The Team page shows a workspace selector, a verification-code input and persona activation controls above two example roster entries." loading="lazy"></div>
+          <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/team-catalogue-dark--agt-3600.png" alt="Dark theme. The Team page shows a workspace selector, a verification-code input and persona activation controls above two example roster entries." loading="lazy"></div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Workspace Team verification.</b> In the AGT-3600 Team verification, a workspace selector, verification-code field and Activate persona action sit above the persona roster.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> <time datetime="2026-11-13">13 November 2026</time>, AGT-3600 Team Playwright captures using the Demo workspace fixture. The roster and counts are fixture data.</span>
+          <span><b>Dark:</b> <time datetime="2026-11-13">13 November 2026</time>, AGT-3600 Team Playwright captures using the Demo workspace fixture. The roster and counts are fixture data.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+          <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/installation-magazine-light--agt-3715.png" alt="Light theme. The Installation magazine shows an example digest followed by a Magazines below this scope section." loading="lazy"></div>
+          <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/installation-magazine-dark--agt-3715.png" alt="Dark theme. The Installation magazine shows an example digest followed by a Magazines below this scope section." loading="lazy"></div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Installation Magazine verification.</b> The Installation magazine has its own heading and an article list above links to magazines below this scope.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> <time datetime="2026-11-11">11 November 2026</time>, AGT-3715 Magazine Playwright verification at 1280 px using the published test fixture.</span>
+          <span><b>Dark:</b> <time datetime="2026-11-11">11 November 2026</time>, AGT-3715 Magazine Playwright verification at 1280 px using the published test fixture.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <figure id="decision-evidence" class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/attention-queue-light--agt-4255.png" alt="Agent Studio light theme showing the Needs you queue from the AGT-4255 verification run, with Decisions and Notices controls.">
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/attention-queue-dark--agt-4255.png" alt="Agent Studio dark theme showing the same Needs you queue with Decisions and Notices controls.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> AGT-4255's verified build presents Decisions and Notices separately in the Needs you surface. The duty will use the decision count and cite the owning occurrence. The capture demonstrates the layout using isolated verification data.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> <time datetime="2026-11-28">28 November 2026</time>, AGT-4255 Playwright verification, 1024 px viewport.</span>
+          <span><b>Dark:</b> <time datetime="2026-11-28">28 November 2026</time>, same AGT-4255 browser run and viewport.</span>
+        </span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <section id="decisions" data-concept-section="open-decisions">
+    <h2>Open decisions</h2>
+    <p>Promoted slices use the recommendation when the recorded Owner decision does not select a different option. Activation and live grants retain their own step-up.</p>
+    <ol class="decision-list" lang="de">
+      <li id="gp-d1" data-decision-id="GP-D1" data-decision-kind="single" data-decision-status="pending" data-decision-label="Installation roster"><b>GP-D1 · Besetzung</b><ul><li data-option-id="A" data-option-label="One installation supervisor">Eine zentrale Persona</li><li data-option-id="B" data-option-label="Four existing catalogue roles with installation instances (recommended)">Vier vorhandene Rollen mit Installationsmandat</li><li data-option-id="C" data-option-label="Promote every specialist">Alle Spezialisten global einsetzen</li></ul><p><strong>Empfehlung B.</strong> Vier klare Zuständigkeiten. Standard ist zunächst nur die Kostenkontrolle mit Modellwache. Die übrigen Rollen werden nach Lieferung ihrer Aufgaben angeboten.</p></li>
+      <li id="gp-d2" data-decision-id="GP-D2" data-decision-kind="single" data-decision-status="pending" data-decision-label="Model roll-in authority"><b>GP-D2 · Modellfreigabe</b><ul><li data-option-id="A" data-option-label="Require a person for every change">Jede Änderung einzeln bestätigen</li><li data-option-id="B" data-option-label="Time-box an exact rollbackable route grant after seven days of shadow evidence (recommended)">Befristete Freigabe einer benannten Route mit Vergleich, Probe und Rücknahme</li><li data-option-id="C" data-option-label="Allow general route mutations">Alle Routen freigeben</li></ul><p><strong>Empfehlung B.</strong> Die Modellwache sammelt sofort nach Aktivierung Belege. Nach sieben belegten Tagen kann der Eigentümer das begrenzte Mandat einmal freigeben. Ohne wirksames Mandat bleibt der begründete Vorschlag der Standard.</p></li>
+      <li id="gp-d3" data-decision-id="GP-D3" data-decision-kind="single" data-decision-status="pending" data-decision-label="Individual assignments"><b>GP-D3 · Einzelaufträge</b><ul><li data-option-id="A" data-option-label="Create a card immediately">Sofort eine Karte anlegen</li><li data-option-id="B" data-option-label="Confirm a bounded assignment and schedule its execution cards (recommended)">Auslegung und Kostenobergrenze einmal bestätigen, dann passende Karten ausführen</li><li data-option-id="C" data-option-label="Keep the request in chat">Nur im Chat protokollieren</li></ul><p><strong>Empfehlung B.</strong> Ein eindeutiger Auftrag startet standardmäßig als einmalige Recherche. Wiederholungen brauchen einen Rhythmus und ein sichtbares Ende. Die Bestätigung verleiht keine zusätzlichen Rechte.</p></li>
+      <li id="gp-d4" data-decision-id="GP-D4" data-decision-kind="single" data-decision-status="pending" data-decision-label="Goal measurement"><b>GP-D4 · Zielmessung</b><ul><li data-option-id="A" data-option-label="One combined score">Eine Gesamtpunktzahl</li><li data-option-id="B" data-option-label="Per-goal measured value, target, trend and evidence coverage (recommended)">Messwert, Zielwert und Belegabdeckung pro Ziel</li><li data-option-id="C" data-option-label="Narrative assessment">Freitextbewertung</li></ul><p><strong>Empfehlung B.</strong> Die vorgeschlagenen Grenzwerte gelten als Startwerte. Unvollständige Daten erscheinen als offen oder unbekannt. Neue Zielwerte gelten ab der nächsten Periode.</p></li>
+      <li id="gp-d5" data-decision-id="GP-D5" data-decision-kind="single" data-decision-status="pending" data-decision-label="Budget and model"><b>GP-D5 · Kostenrahmen</b><ul><li data-option-id="A" data-option-label="Single undivided budget">Gemeinsamer Kostentopf</li><li data-option-id="B" data-option-label="Installation, persona and duty ceilings with GPT-6.2 Sol medium by default (recommended)">Installations-, Rollen- und Pflichtgrenzen mit Sol auf <code>medium</code></li><li data-option-id="C" data-option-label="Open model choice per run">Freie Modellwahl je Lauf</li></ul><p><strong>Empfehlung B.</strong> Die Modellwache beginnt mit 100.000 Tokens und 3,50 USD je sieben Tage innerhalb des Limits der Kostenkontrolle. Ohne Restbudget erscheinen die verfügbaren Fakten und der nächste Termin. Mehrausgaben erfordern eine eigene Freigabe.</p></li>
+      <li id="gp-d6" data-decision-id="GP-D6" data-decision-kind="single" data-decision-status="pending" data-decision-label="Issues and decisions"><b>GP-D6 · Magazin und Entscheidungen</b><ul><li data-option-id="A" data-option-label="Separate report stream per role">Ein Bericht pro Rolle</li><li data-option-id="B" data-option-label="Daily and weekly installation issues and the existing decision desk (recommended)">Eine Tages- und eine Wochenausgabe mit Beleglinks und bestehender Entscheidungsansicht</li><li data-option-id="C" data-option-label="Exception notices only">Nur Meldungen bei Ausnahmezuständen</li></ul><p><strong>Empfehlung B.</strong> Verfehlte Ziele und getroffene Entscheidungen stehen oben. Tagesausgabe um 09:30, Wochenausgabe montags um 11:00. Bei fehlendem Redaktionsbudget erscheint die Ausgabe aus den belegten Fakten.</p></li>
+    </ol>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation</h2>
+    <ol>
+      <li><b>GP-1 · Model watch.</b> The first installation duty goes from schedule through sources, comparison, route preview, bounded canary write and rollback to a Team receipt and installation article.</li>
+      <li><b>GP-2 · Duties and measurement.</b> Generalizes the occurrence and goal snapshot contracts tested in GP-1. Adds the spend and quality projections.</li>
+      <li><b>GP-3 · Host, security and backup coverage.</b> Adds read-side adapters over the operator and backup work.</li>
+      <li><b>GP-4 · Owner assignments.</b> Adds the one-sentence assignment flow and links occurrences and cards.</li>
+      <li><b>GP-5 · Team detail.</b> Brings the measured goals, receipts, grants, costs and open work into one view.</li>
+      <li><b>GP-6 · Decision watch and issues.</b> Links the desk journal and publishes the daily and weekly issue using the existing Magazine infrastructure.</li>
+    </ol>
+    <p>The internal chain is explicit in <a href="workbench.json">workbench.json</a>. GP-1 owns installation defaults and reads project/review route outcomes. The existing operator cut AGT-4288 to AGT-4303 owns fleet responses and its review-route experiment (AGT-4296). AGT-4293 owns shared intervention admission. Keep GP-1's new work in the model-watch adapter and existing settings owner paths. When any edit overlaps a queued shared change, link the authoritative card dependency through the Task API before pickup. Before GP-3 consumes operator and backup additions, link the required external read contracts, initially AGT-4289 and AGT-4324/4325 as applicable. Before GP-6 touches Magazine or the desk, link the required external producer cards, especially the desk read and journal (AGT-4304 and AGT-4310) and the Magazine issue/store slices of AGT-4312 to AGT-4323. Existing contracts supply explicit missing facts while a producer is pending. The Workbench fields enforce the internal sequence. The promotion coordinator adds and verifies external edges against the current card state.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

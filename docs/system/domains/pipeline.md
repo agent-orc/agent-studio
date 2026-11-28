@@ -260,7 +260,10 @@ replacement keep their selected cases, even when already marked as guard steps.
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the
 legacy generated-map path. Whole .NET routine invocations remain post-merge
-obligations in these opted-in fast reviews. The selection audit records the
+obligations in these opted-in fast reviews. Only an unfiltered invocation or
+one filtered solely by `Category!=MachineBound` is recognized as whole-project.
+Explicit class or trait selections and unrecognized filters remain selected
+even when they exactly match a declared command. The selection audit records the
 commands and their reasons without treating selection as execution: attempted
 commands and tests must come from execution receipts, and selected commands
 without receipts remain missing evidence. A narrowed check never claims a
@@ -3519,7 +3522,29 @@ move-error dialog.
   unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
   creates a review attempt: it first checks that the latest review in
   attempt authority for exactly that delivery SHA ended in `Pass`, and reuses
-  it. See
+  it. Host faults also carry a durable host/fingerprint budget in the platform-owned
+  `gate-host-repairs.json` receipt at the project root (AGT-4100). Delivery SHA
+  changes and operator retries cannot replenish an exhausted host budget. On
+  exhaustion the service quarantines that host fault and creates one separate,
+  code-free host repair obligation through the task mutation boundary. It retains
+  the source result, review and run identity and never queues a product continuation,
+  including when an older engine receipt asks for one. Legacy lane-folder storage
+  or a host without task mutation support closes with a durable quarantine reason
+  instead of creating a hidden card or reopening product work. Completion of the
+  repair permits one replay per held exact delivery; new deliveries cannot claim
+  that historical wake. Manual holds remain held. Transport failures stay with
+  their outage probe, and service-shutdown resumptions spend no host rung.
+  After quarantine, each held delivery can also relocate once to a configured
+  `RemoteGate:ShardHosts` host outside the failed host and all quarantined hosts.
+  The AI Operator decides from placement and durable spending facts. The narrow
+  `RemoteBuildTestGateRunner` hook confines placement to that replay's project and
+  card, bypasses the primary transport and its sharding, disables verdict-cache
+  reuse, and retains exact-subject evidence validation and bounded transport retries.
+  Relocated runs do not update the primary host's outage or disk state. Other gates
+  keep their current transport. A single-host installation records that no healthy
+  alternative is configured and retains the quarantine and repair path; it cannot
+  relocate. A configured alternative is a candidate whose operation is verified by
+  the exact-subject gate, not a promise of host health. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
   for the ladder, the receipts, and the operator action.
 - A gate that never reached a verdict at all - the process that owned the merge
@@ -5174,6 +5199,21 @@ and preserves both sides. Staging, the merge commit, publication, refs and works
 lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
+
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. A mechanical fallback advances
+the pin only if the published ref resolves to the exact reported commit and
+that commit descends from the pinned delivery. A resolved merge then becomes
+the next checkout base. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
 
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic

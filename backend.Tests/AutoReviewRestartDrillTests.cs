@@ -213,6 +213,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var report = entry.Report with
         {
             Outcome = Contract.ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+            Workspace = entry.Report.Workspace with { IntegrationTipSha = Git(_repo, "rev-parse", "develop") },
             Summary = "Review plan needs scripts/check-release-build.sh, which this delivery predates; merge round sent.",
         };
         entry = entry with

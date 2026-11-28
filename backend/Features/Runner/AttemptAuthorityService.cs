@@ -2623,6 +2623,14 @@ public sealed partial class AttemptAuthorityService
         return builder.ToImmutable();
     }
 
+    /// <summary>One pass over the run records for a read of card quota waits.</summary>
+    internal IReadOnlyDictionary<string, DateTime> LatestRunStarts()
+    {
+        lock (_gate)
+            return _state.RunAttempts.GroupBy(run => run.TaskKey, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Max(run => run.CreatedAt), StringComparer.OrdinalIgnoreCase);
+    }
+
     public AttemptAuthorityProjection GetTaskProjection(string taskKey, bool includeArchived = false)
     {
         var key = Normalize(taskKey);

@@ -84,8 +84,10 @@ internal static class ReviewBaseChecks
                     InvocationKey(replacement.Invocation) == InvocationKey(command)
                     && FilterIsCovered(command.Command, replacement.Filter))
                 .Select(replacement => replacement.Exclusions).Distinct());
-            // Whole .NET invocations are post-merge obligations on fast reviews.
+            // Only known whole-project filters qualify for deferral. A declared
+            // command can itself select a class or trait slice.
             if ((GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
+                    && HasWholeProjectFilter(command.Command)
                     && declared.Commands.Any(full => full.Kind == VerifyCommandKind.Test && full.Command == command.Command
                         && InvocationKey(full) == InvocationKey(command)))
                 || (exclusions.Length > 0 && (GuardFirstGatePlan.IsGuardStep(command) || command.TestScope == Scope))) continue;
@@ -135,6 +137,12 @@ internal static class ReviewBaseChecks
 
     private static string Narrow(string command, string filter)
         => $"{ExistingFilter.Replace(command, string.Empty).Trim()} --filter \"({FilterExpression(command)})&({filter})\"";
+
+    private static bool HasWholeProjectFilter(string command)
+    {
+        var filters = ExistingFilter.Matches(command);
+        return filters.Count == 0 || (filters.Count == 1 && FilterExpression(command) == "Category!=MachineBound");
+    }
 
     private static string FilterExpression(string command)
     {

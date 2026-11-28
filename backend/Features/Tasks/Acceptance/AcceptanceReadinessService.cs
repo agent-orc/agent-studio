@@ -93,8 +93,10 @@ public sealed class AcceptanceReadinessService(
     {
         var key = card.Key ?? card.TaskKey;
         var projection = authority is null || string.IsNullOrWhiteSpace(key) ? null : authority.GetTaskProjection(key);
-        var refs = ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(card.FolderPath));
-        return ContinueRoundBasePolicy.Decide(null, refs, existingBase: null, startsFromClaim: true,
+        var existingBase = ContinuationBaseStore.Read(card.FolderPath);
+        var refs = ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(card.FolderPath),
+            existingBase);
+        return ContinueRoundBasePolicy.Decide(null, refs, existingBase, startsFromClaim: true,
             _time.GetUtcNow().UtcDateTime).Base?.Ref;
     }
 }

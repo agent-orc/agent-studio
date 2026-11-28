@@ -85,7 +85,7 @@ public sealed record PerCardSuiteFollowUp(int GreenSuites, int FollowedByBatchGa
 
 /// <summary>Instance-local records outside the workspace repository. Ninety days are retained.</summary>
 public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null,
-    ILogger<GateRunLedger>? logger = null)
+    ILogger<GateRunLedger>? logger = null, AgentStudio.Management.StructureHistoryBuffer? structure = null)
 {
     public const int RetentionDays = 90;
 
@@ -133,6 +133,8 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
             _lastFinished.AddOrUpdate(row.Project, row.FinishedAtUtc,
                 (_, prior) => prior >= row.FinishedAtUtc ? prior : row.FinishedAtUtc);
+            if (row.Outcome == nameof(BuildTestGateVerdict.Ok))
+                structure?.Add(new(row.FinishedAtUtc.UtcDateTime, "gate ledger", "gate-verified", row.RunId));
             Prune(_time.GetUtcNow().UtcDateTime.Date.AddDays(-RetentionDays));
         }
     }
