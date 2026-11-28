@@ -3221,6 +3221,36 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
+            // Persist recovery custody before either authority can publish Ready.
+            // Engine completion returns below without running the monolith lane path.
+            if (outcome is "mechanicalfallback" or "transientfailure"
+                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
+                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                var recoveryBase = new ContinuationBaseRecord(
+                    req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
+                    req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
+                    outcome == "transientfailure" ? "transient-model-capacity" :
+                        req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
+                    attemptId, DateTime.UtcNow);
+                var saved = outcome == "mechanicalfallback"
+                    ? IntegrationConflictRecovery.SaveMechanicalFallbackBase(
+                        git, git.ResolveRepoRootForWatchPath(task.WatchPath), ready.FolderPath, recoveryBase, req.BaseSha)
+                    : ContinuationBaseStore.SaveAttemptResult(ready.FolderPath, recoveryBase);
+                if (!saved)
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Continuation base persistence failed",
+                        detail: $"Run {attemptId} settled, but its fresh-attempt base was not saved. Retry completion.");
+            }
+            if (outcome == "mechanicalfallback")
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                AgentStudio.Runner.SessionContinuationLedgerStore.SaveFreshReason(
+                    ready.FolderPath,
+                    req.SessionContinuation?.FallbackReason ?? "resumed-round-failed");
+            }
+
             var codingMode = MonolithTransitionSwitch.For(configuration, "CodingCompletion");
             var codingModelActive = codingMode == OrchestrationExecutionMode.Engine
                 && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", false);
@@ -3367,31 +3397,6 @@ public static class LeaseEndpoints
                         position);
                 }
             }
-            if (outcome is "mechanicalfallback" or "transientfailure"
-                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
-                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
-            {
-                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-                if (!AgentStudio.Runner.ContinuationBaseStore.Save(
-                    ready.FolderPath,
-                    new AgentStudio.Runner.ContinuationBaseRecord(
-                        req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
-                        req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
-                        outcome == "transientfailure" ? "transient-model-capacity" :
-                            req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
-                        attemptId, DateTime.UtcNow)))
-                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
-                        "transient-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
-                        req.TaskKey, attemptId);
-            }
-            if (outcome == "mechanicalfallback")
-            {
-                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-                AgentStudio.Runner.SessionContinuationLedgerStore.SaveFreshReason(
-                    ready.FolderPath,
-                    req.SessionContinuation?.FallbackReason ?? "resumed-round-failed");
-            }
-
             // The claim guard and this mint share ReviewAttemptTaskLifecycleService's
             // lifecycle lock. The persisted lane transition above therefore closes
             // the former Progress-window race: a poll sees either no attempt or an

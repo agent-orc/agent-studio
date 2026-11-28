@@ -39,13 +39,23 @@ public static class OperatorEndpoints
 
         // The attention list (AGT-3576): the facts the stream currently sees,
         // in the reader's project scope, as one current list instead of events.
-        group.MapGet("/attention", async (HttpContext context, OperatorDecisionPublisher publisher,
-            ProjectRegistry projects, CancellationToken ct) =>
+        group.MapGet("/attention", async (HttpContext context, OperatorAttentionReadModel attention, CancellationToken ct)
+            => Results.Ok(await attention.Read(context, ct)));
+
+        group.MapPost("/attention/dismiss", async (AttentionDismissRequest request, HttpContext context,
+            OperatorAttentionReadModel attention, OperatorAttentionDismissals dismissals, CancellationToken ct) =>
         {
-            var archivedNames = projects.List().Where(project => project.Archived)
-                .Select(project => project.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return Results.Ok(OperatorAttention.Project(await publisher.CurrentFactsAsync(ct),
-                ReaderFor(context, projects), project => !archivedNames.Contains(project)));
+            if (string.IsNullOrWhiteSpace(request.Reason) || request.Ids is not { Length: > 0 }
+                || request.Ids.Any(string.IsNullOrWhiteSpace))
+                return Results.BadRequest(new { error = "Provide occurrence IDs and a dismissal reason." });
+            var ids = request.Ids.ToHashSet(StringComparer.Ordinal);
+            var current = await attention.Read(context, ct);
+            var items = current.Items.Where(item => ids.Contains(item.Id)).ToArray();
+            if (items.Length != ids.Count)
+                return Results.Conflict(new { error = "The group changed. Refresh attention and try again." });
+            if (items.Any(item => !item.CanDismiss)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            dismissals.Dismiss(items, Actor(context), request.Reason.Trim());
+            return Results.NoContent();
         });
 
         group.MapGet("/decisions/stream", async (HttpContext context, OperatorDecisionLog log,

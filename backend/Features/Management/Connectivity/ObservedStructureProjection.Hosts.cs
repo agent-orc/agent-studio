@@ -18,7 +18,7 @@ public sealed record StudioSelfObservation(string MachineId, string MachineLabel
 public sealed record StructureObservedContext(StudioSelfObservation? Studio = null,
     IReadOnlyList<StructureDataLocation>? DataLocations = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? RunningCards = null,
-    bool IncludeObservedHosts = true);
+    bool IncludeObservedHosts = true, StructureInstallationFacts? Installation = null);
 
 public static partial class ObservedStructureProjection
 {
@@ -36,7 +36,8 @@ public static partial class ObservedStructureProjection
     ];
 
     public static string RoleOf(RunnerCapabilitySnapshotDto report)
-        => report.Capabilities.Any(capability => capability.Key is CapabilityProtocol.ReviewExecutor
+        => report.Telemetry?.Structure?.Role is "coding" or "review" or "post" or "gate" ? report.Telemetry.Structure.Role
+            : report.Capabilities.Any(capability => capability.Key is CapabilityProtocol.ReviewExecutor
             or ReviewCapabilities.ReviewExecutor) ? "review"
             : report.Capabilities.Any(capability => capability.Key == GateCapabilities.Executor) ? "gate" : "coding";
 
@@ -90,7 +91,8 @@ public static partial class ObservedStructureProjection
                 var id = $"machine:{ancestor.Id}";
                 if (id == $"machine:{hostId}") break;
                 if (!Has(id))
-                    Put(new(id, ancestor.Kind == HostPlacementKinds.Vm ? "vm" : "physical", ancestor.Id, parent,
+                    Put(new(id, ancestor.Kind == HostPlacementKinds.Vm ? "vm" : "physical",
+                        ancestor.Kind == HostPlacementKinds.Vm ? "Virtual machine" : "Physical machine", parent,
                         null, null, null, "observed", ReportRef, Observation: new("undeclared", "not observed",
                             Detail: "Named by a reporting host")));
                 parent = id;
@@ -113,8 +115,9 @@ public static partial class ObservedStructureProjection
                 // A daemon on the Studio server's own kernel is an agent host on that machine,
                 // not a second machine: the machine carries the kind.
                 var kind = parent == studioId && placement?.Kind != HostPlacementKinds.Container ? "host" : KindOf(placement);
-                // The host id is the name operators know; the container name is detail.
-                var label = gate?.Name is { Length: > 0 } gateName && reports.Length == 0 ? gateName : hostId;
+                // Use the enrolled display name. The host id remains the join key.
+                var label = reports.FirstOrDefault()?.Telemetry?.Structure?.DisplayName ?? reports.FirstOrDefault()?.Name
+                    ?? gate?.Name ?? "Execution host";
                 Put(new(id, kind, label, parent, null, null, null, "observed", ReportRef,
                     Detail: placement?.ContainerName is { Length: > 0 } container && container != label ? container : null,
                     Observation: HostObservation(hostId, reports, gate, releases, now, declared: false)));
@@ -137,26 +140,6 @@ public static partial class ObservedStructureProjection
 
         if (studio is not null) AddStudio(nodes, Put, Get, Has, studio, studioId!, hostReports, placements, engineState, now, context);
 
-        // Links the hosts hold themselves: the control connection each one reports, and supervised runner links.
-        var api = studio is null ? null : nodes.FirstOrDefault(node => node.ParentId == studioId && node.Role == "api")?.Id;
-        if (api is not null)
-            foreach (var (hostId, reports) in hostReports.OrderBy(item => item.Key, StringComparer.Ordinal))
-            {
-                var telemetry = reports.Select(report => report.Telemetry)
-                    .Where(value => value is not null && value.TaskServerConnectionStatus != "unknown")
-                    .OrderByDescending(value => value!.ObservedAt).FirstOrDefault();
-                if (telemetry is null) continue;
-                var from = $"machine:{hostId}";
-                var id = StructureLink.IdFor(from, api, "control");
-                if (links.Any(link => link.Id == id)) continue;
-                var stale = now - telemetry.ObservedAt > Fresh;
-                var state = stale ? "stale" : telemetry.TaskServerConnectionStatus is "reachable" or "connected" ? "up" : "down";
-                links.Add(new(from, api, "control", "Task Server connection", ReportRef,
-                    new(stale ? "stale" : "undeclared", state, telemetry.TaskServerConnectionObservedAt ?? telemetry.ObservedAt,
-                        Detail: telemetry.TaskServerConnectionLastError ?? telemetry.TaskServerConnectionStatus),
-                    id, new(state, telemetry.TaskServerRoundTripMs,
-                        telemetry.TaskServerConnectionObservedAt ?? telemetry.ObservedAt, "https")));
-            }
         if (studioId is not null)
             foreach (var runnerLink in runnerLinks)
             {
@@ -173,8 +156,45 @@ public static partial class ObservedStructureProjection
                 var state = stale ? "stale" : runnerLink.State == RunnerLinkStates.Up ? "up" : "down";
                 links.Add(new(studioId, to, runnerLink.Kind, "Runner link", "RunnerLinks",
                     new(stale ? "stale" : "undeclared", state, runnerLink.LastHeartbeatAt, Detail: runnerLink.LastError ?? runnerLink.State),
-                    id, new(state, null, runnerLink.LastProbe?.At, runnerLink.Transport ?? runnerLink.Kind)));
+                    id, new(state, null, runnerLink.LastProbe?.At, runnerLink.Transport ?? runnerLink.Kind, Sample: LinkStamp(runnerLink))));
             }
+    }
+
+    private static void AddHostConnection(List<StructureLink> links, string from, string api,
+        IReadOnlyList<RunnerCapabilitySnapshotDto> reports, DateTime now)
+    {
+        var telemetry = reports.Select(r => r.Telemetry).OfType<HostTelemetrySnapshotDto>().ToArray();
+        var control = telemetry.Where(t => t.TaskServerConnectionStatus != "unknown").MaxBy(t => t.ObservedAt);
+        var receiver = reports.Where(r => r.Telemetry?.Peer is not null)
+            .OrderByDescending(r => r.Telemetry!.Peer!.ObservedAt)
+            .ThenBy(r => r.RunnerId, StringComparer.Ordinal).FirstOrDefault()?.Telemetry;
+
+        if (receiver?.Peer is { } peer)
+        {
+            var sample = new StructureStamp(peer.ObservedAt, "heartbeat receiver", peer.ObservedAt + Fresh);
+            var state = now > sample.FreshUntil ? "stale" : "up";
+            var facts = new StructureLinkFacts(state, receiver.TaskServerRoundTripMs, peer.ObservedAt,
+                peer.Scheme, peer.AddressClass, sample);
+            var observation = new StructureObservation(state == "stale" ? "stale" : "matched", state, peer.ObservedAt);
+            var existing = links.FindIndex(l => l.From == from && l.To == api && l.Kind is "control" or "runner-to-server");
+            if (existing >= 0)
+                links[existing] = links[existing] with { Kind = "runner-to-server", Observation = observation, Facts = facts };
+            else
+                links.Add(new(from, api, "runner-to-server", control is null ? "Runner connection" : "Task Server connection",
+                    control is null ? sample.ObservedBy : ReportRef, observation,
+                    StructureLink.IdFor(from, api, control is null ? "runner-to-server" : "control"), facts));
+            return;
+        }
+
+        var id = StructureLink.IdFor(from, api, "control");
+        if (control is null || links.Any(link => link.Id == id)) return;
+        var stale = now - control.ObservedAt > Fresh;
+        var health = stale ? "stale" : control.TaskServerConnectionStatus is "reachable" or "connected" ? "up" : "down";
+        var measured = control.TaskServerConnectionObservedAt ?? control.ObservedAt;
+        links.Add(new(from, api, "control", "Task Server connection", ReportRef,
+            new(stale ? "stale" : "undeclared", health, measured,
+                Detail: control.TaskServerConnectionLastError ?? control.TaskServerConnectionStatus),
+            id, new(health, control.TaskServerRoundTripMs, measured, "https")));
     }
 
     private static void AddStudio(List<StructureNode> nodes, Action<StructureNode> put, Func<string, StructureNode> get,
@@ -184,11 +204,12 @@ public static partial class ObservedStructureProjection
         StructureObservedContext context)
     {
         var machine = get(studioId);
-        // Performance: the API's own sample, else a daemon that reports from the same kernel.
-        var performance = studio.Performance ?? hostReports
-            .Where(item => placements.GetValueOrDefault(item.Key)?.KernelId is { } kernel
-                && kernel == studio.Placement?.KernelId)
-            .Select(item => Performance(item.Value)).FirstOrDefault(value => value is not null);
+        var selfPerformance = studio.Performance is { } self
+            ? self with { Sample = new(self.ObservedAt, SelfRef, self.ObservedAt + Fresh) } : null;
+        var kernelReports = hostReports.Where(item => placements.GetValueOrDefault(item.Key)?.KernelId is { } kernel
+            && kernel == studio.Placement?.KernelId).SelectMany(item => item.Value);
+        var performance = NewestPerformance(selfPerformance, machine.Facts?.Performance);
+        performance = NewestPerformance(performance, Performance(kernelReports));
         put(machine with
         {
             // A declared Studio server that no host reports for is still observed: the API runs on it.
@@ -200,8 +221,9 @@ public static partial class ObservedStructureProjection
                     : studio.Placement?.Kind == HostPlacementKinds.Container ? null : studio.Placement?.Kind,
                 Virtualization = studio.Placement?.MachineVirtualization,
                 LastSeenAt = machine.Facts?.LastSeenAt ?? studio.ObservedAt,
-                Performance = machine.Facts?.Performance ?? performance,
+                Performance = performance,
                 DataLocations = context.DataLocations,
+                Sample = new(studio.ObservedAt, SelfRef, studio.ObservedAt + Fresh),
             },
         });
         var containerized = studio.Placement?.Kind == HostPlacementKinds.Container;
@@ -289,14 +311,16 @@ public static partial class ObservedStructureProjection
             reports.Sum(report => report.ActiveGateCount) + (gate?.Busy ?? 0), verdict.Reason);
     }
 
-    private static StructurePerformanceFacts? Performance(IReadOnlyList<RunnerCapabilitySnapshotDto> reports)
+    private static StructurePerformanceFacts? NewestPerformance(StructurePerformanceFacts? current, StructurePerformanceFacts? candidate)
+        => current is null || candidate?.ObservedAt > current.ObservedAt ? candidate : current;
+
+    private static StructurePerformanceFacts? Performance(IEnumerable<RunnerCapabilitySnapshotDto> reports)
     {
         // A re-adopted slot record carries no machine reading; skip it.
-        var telemetry = reports.Select(report => report.Telemetry)
-            .Where(value => value is not null && (value.CpuCores > 0 || value.MemoryTotalBytes is not null
+        var report = reports.Where(r => r.Telemetry is { } value && (value.CpuCores > 0 || value.MemoryTotalBytes is not null
                 || value.Filesystems is { Count: > 0 }))
-            .OrderByDescending(value => value!.ObservedAt).FirstOrDefault();
-        if (telemetry is null) return null;
+            .OrderByDescending(r => r.Telemetry!.ObservedAt).ThenBy(r => r.RunnerId, StringComparer.Ordinal).FirstOrDefault();
+        if (report?.Telemetry is not { } telemetry) return null;
         var disks = telemetry.Filesystems is { Count: > 0 } filesystems
             ? filesystems.Where(item => item.TotalBytes > 0).Select(item => new StructureDiskFact(item.Path, item.Purpose,
                 Math.Max(0, item.TotalBytes - item.FreeBytes), item.FreeBytes, item.TotalBytes)).ToArray()
@@ -305,7 +329,8 @@ public static partial class ObservedStructureProjection
                 : null;
         return new(telemetry.ObservedAt, telemetry.CpuPercent, telemetry.CpuCores > 0 ? telemetry.CpuCores : null,
             telemetry.Load1, telemetry.Load5, telemetry.Load15, telemetry.MemoryUsedBytes, telemetry.MemoryTotalBytes,
-            disks, telemetry.NetworkReceiveBytesPerSecond, telemetry.NetworkTransmitBytesPerSecond);
+            disks, telemetry.NetworkReceiveBytesPerSecond, telemetry.NetworkTransmitBytesPerSecond,
+            new(telemetry.ObservedAt, report.RunnerId, telemetry.ObservedAt + Fresh));
     }
 
     private static StructureNodeFacts HostFacts(string hostId, IReadOnlyList<RunnerCapabilitySnapshotDto> reports,
@@ -370,15 +395,17 @@ public static partial class ObservedStructureProjection
             Tool(new(key["toolchain:".Length..], "toolchain", null, null, "missing"));
         var blocked = held.SelectMany(item => (item.WaitingTaskKeys ?? []).Select(key => new StructureBlockedCard(key,
                 // A key the role never offered refuses the claim; a key held back for now parks the work.
-                item.Cause == HeldCapabilityCauses.NotRegistered ? "refused" : "parked", item.Key)))
+                item.Cause == HeldCapabilityCauses.NotRegistered ? "refused" : "parked", item.Key, item.ObservedAt)))
             .Distinct().OrderBy(card => card.Key, StringComparer.Ordinal).ThenBy(card => card.Reason, StringComparer.Ordinal).ToArray();
         var ordered = tools.Values.OrderBy(tool => tool.Kind, StringComparer.Ordinal).ThenBy(tool => tool.Name, StringComparer.Ordinal).ToArray();
         var warnings = new StructureWarningFacts(ordered, missing,
             ordered.Where(tool => tool.State == "behind").Select(tool => tool.Name).ToArray(),
             release?.Behind == true, release?.PendingInstall == true, [], blocked);
 
+        var observers = reports.Select(r => r.RunnerId).Concat(gate is null ? [] : ["gate heartbeat"]).Order(StringComparer.Ordinal);
         return new(hostId, placement?.Kind, placement?.Virtualization, placement?.ContainerName, roles, lastSeen,
-            performance ? Performance(reports) : null, capacity, release, null, warnings);
+            performance ? Performance(reports) : null, capacity, release, null, warnings,
+            Sample: lastSeen is { } seen ? new(seen, string.Join(", ", observers), seen + Fresh) : null);
     }
 
     /// <summary>Names the links that are down on the nodes they touch.</summary>

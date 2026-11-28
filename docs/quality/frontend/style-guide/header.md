@@ -51,11 +51,10 @@ search, defaults, Environment, Project Chat, theme, Needs you, Settings, and
 account. Navigation is always available; the breadcrumb needs an active
 workspace, and the project picker and Needs you are always available. Search
 and the account/settings controls are buttons. Theme is an icon button.
-Needs you (`app-attention-control`, AGT-3576) owns the one "what needs me"
-count: it opens the attention list read from `GET /api/operator/attention`,
-with open operator facts and Dossier gates, plus backup and credential warnings
-from their installation reads. Rows show title, project, age, and reason, and
-its count is the number of rows that list renders (R3). Open stalls outside those classes
+Needs you (`app-attention-control`) counts open decisions, including Dossier
+gates. A quiet Notices count includes operational signals, backup warnings and
+credential warnings. Both counts equal the rows in their respective sections
+(R3). Each row shows the project, age and reason supplied by its source. Open stalls outside those classes
 stay in the Activity feed, which the list links to. Below 720 px the label
 hides and the bell icon and count stay. The workspace quota banner follows the top row and renders only
 when the workspace cap has an actionable finding (`a98537a193`). Usage totals

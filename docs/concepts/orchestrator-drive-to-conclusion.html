@@ -3601,6 +3601,39 @@
           <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
           <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
         </tr>
+        <tr id="case-integration-fresh-empty-checkout">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353 / AGT-4018</code><br><span class="small">integration-fresh-empty-checkout</span></td>
+          <td>A resumed conflict round hit its 300-second watchdog under CPU contention.
+            Its fresh successor started without the reviewed delivery or preparation record.</td>
+          <td>The Engine completion return skipped fallback-base persistence. Claims consumed
+            the recovery pin, and later result discovery selected an empty NeedsInput result.</td>
+          <td>Recovery pins now survive until integration. Both authorities receive persisted
+            fallback custody before Ready; failed writes hold Progress. Failed or commitless
+            attempts cannot replace the delivery. CPU full stall is excluded when available.
+            The original run escalated as missing-integration-preparation.</td>
+        </tr>
+        <tr id="case-integration-recovery-review-follow-up">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-recovery-review-follow-up</span></td>
+          <td>Review found that historical passes could hide newer salvage and watchdog
+            observation faults could be mistaken for duration expiry, stopping a live CLI.</td>
+          <td>Base discovery treated any historical passing review as outstanding delivery.
+            The watchdog continuation discarded fault status as if its deadline had elapsed.</td>
+          <td>Only a retained integration pin protects delivery discovery. Pressure faults
+            fall back to wall-clock charging; diagnostic failures leave the monitor alive.
+            Cancellation remains distinct from an unexpected deadline fault.</td>
+        </tr>
+        <tr id="case-integration-resolved-merge-lost-on-fallback">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-resolved-merge-lost-on-fallback</span></td>
+          <td>The resumed CLI resolved the case-log conflict and reached its duration limit during
+            verification. The next CLI started on the target and ended <code>NeedsInput</code>.</td>
+          <td>Completion published the resolved merge but the fresh claim received no base.</td>
+          <td>A mechanical fallback advances the retained base to verified descendant salvage.
+            A fresh conflict claim with no base fails preparation before launch. The operator
+            restored the incident's saved merge as a single delivery commit.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
@@ -3788,7 +3821,7 @@
       is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
       receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
 
-    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
+    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 charged seconds. On Linux workers with cgroup CPU pressure accounting, the duration excludes the worker group's full CPU stall intervals; unavailable counters retain a logged wall-clock fallback. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
        session is genuinely gone. That fallback consumes one attempt; it does not reset the budget. The current defect is the

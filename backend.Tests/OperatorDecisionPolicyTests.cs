@@ -240,6 +240,15 @@ public sealed class OperatorDecisionPolicyTests
             [(parent, State("parent", BatchPhase.Abandoned)), (successor, State("successor", BatchPhase.Running))]));
     }
 
+    [Theory]
+    [InlineData(BatchPhase.Published)]
+    [InlineData(BatchPhase.Abandoned)]
+    public void Terminal_batch_phases_close_red_notices(BatchPhase phase)
+    {
+        var batch = Manifest("closed", null, "A-1");
+        Assert.Empty(OperatorDecisionFacts.FromBatches([(batch, State(batch.BatchId, phase))]));
+    }
+
     [Fact]
     public void Only_pending_pushes_past_the_gate_age_alert_are_overdue()
     {

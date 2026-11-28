@@ -16,8 +16,48 @@ public static class PerCardVerifyPlanner
 
     /// <summary>Applied only by the fast coding-review entry point, after fallback.</summary>
     internal static StagedVerifyPlan WithReviewBase(string repositoryPath, VerifyPlan declared,
-        StagedVerifyPlan selection, IReadOnlyList<string>? changedFiles)
-        => ReviewBaseChecks.Apply(repositoryPath, declared, selection, changedFiles);
+        StagedVerifyPlan selection, IReadOnlyList<string>? changedFiles,
+        IReadOnlyDictionary<string, string>? frontendTree = null)
+    {
+        selection = ReviewBaseChecks.Apply(repositoryPath, declared, selection, changedFiles);
+        var angular = FrontendWorkPackagePlanner.Plan(repositoryPath, changedFiles ?? [], frontendTree)
+            is { } slice ? slice with { TestScope = FrontendWorkPackagePlanner.ReviewScope } : null;
+        if (angular is null)
+            return !FrontendWorkPackagePlanner.TouchesFrontend(changedFiles) ? selection
+                : DeterministicTestScope.WithDigest(selection with
+                {
+                    Audit = selection.Audit with
+                    {
+                        Reasons = [.. selection.Audit.Reasons,
+                            "frontend: no Angular invocation could be derived from the test script and matching unit specs; missing execution evidence"],
+                    },
+                });
+        var replaced = selection.Commands.Where(command => FrontendWorkPackagePlanner.IsBroadFrontendTest(command)
+            || (command.Kind == VerifyCommandKind.Test && command.WorkingSubdir == "frontend"
+                && command.Command.Contains("--include", StringComparison.Ordinal))).ToArray();
+        var commands = selection.Commands.Except(replaced).Append(angular).ToArray();
+        var tests = commands.Where(command => command.Kind == VerifyCommandKind.Test).ToArray();
+        var candidate = new TestSelectionCandidate("review-angular", angular, [angular.SelectionReason!]);
+        return DeterministicTestScope.WithDigest(selection with
+        {
+            Commands = commands,
+            Audit = selection.Audit with
+            {
+                Level = TestExecutionLevels.WorkPackage,
+                SelectedCommands = tests.Select(TestSelectionPlanner.Describe).ToArray(),
+                SelectedSuites = selection.Audit.SuiteCommands.Where(suite => tests.Any(test => test.Command == suite.Value))
+                    .Select(suite => suite.Key).ToArray(),
+                OmittedSuites = selection.Audit.SuiteCommands.Where(suite => !tests.Any(test => test.Command == suite.Value))
+                    .Select(suite => suite.Key).ToArray(),
+                Candidates = [.. selection.Audit.Candidates.Where(item => !replaced.Contains(item.Command)), candidate],
+                SelectedCandidateIds = [.. selection.Audit.SelectedCandidateIds.Where(id =>
+                    !selection.Audit.Candidates.Any(item => item.Id == id && replaced.Contains(item.Command))), candidate.Id],
+                OmittedTestCommands = selection.Audit.OmittedTestCommands.Concat(declared.Commands
+                    .Where(FrontendWorkPackagePlanner.IsBroadFrontendTest).Select(TestSelectionPlanner.Describe)).Distinct().ToArray(),
+                Reasons = [.. selection.Audit.Reasons, angular.SelectionReason!],
+            },
+        });
+    }
 
     public static StagedVerifyPlan Plan(
         string repositoryPath,

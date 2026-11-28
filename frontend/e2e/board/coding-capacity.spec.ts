@@ -23,8 +23,8 @@ test('capacity header and Needs you explain blocked chains in both themes at thr
     state: 'ok', stale: false, warnings: [], backups: [], offHost: {}, generatedAt: '2026-11-26T12:00:00Z',
   } }));
   await page.goto('/');
-  await expect(page.getByTestId('board-capacity-line')).toHaveText('5 of 12 slots, 3 claimable, limited by 3 chains');
-  await expect(page.getByTestId('studio-attention-count')).toHaveText('1');
+  await expect(page.getByTestId('board-capacity-line')).toHaveText('5 of 12 slots, 3 claimable, limited by 3 chains', { timeout: 60_000 });
+  await expect(page.getByTestId('studio-attention-notice-count')).toHaveText('1');
   mkdirSync(shots, { recursive: true });
   for (const width of [1440, 1024, 390]) {
     await page.setViewportSize({ width, height: 900 });

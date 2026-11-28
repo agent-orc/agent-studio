@@ -240,7 +240,10 @@ replacement keep their selected cases, even when already marked as guard steps.
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the
 legacy generated-map path. Whole .NET routine invocations remain post-merge
-obligations in these opted-in fast reviews. The selection audit records the
+obligations in these opted-in fast reviews. Only an unfiltered invocation or
+one filtered solely by `Category!=MachineBound` is recognized as whole-project.
+Explicit class or trait selections and unrecognized filters remain selected
+even when they exactly match a declared command. The selection audit records the
 commands and their reasons without treating selection as execution: attempted
 commands and tests must come from execution receipts, and selected commands
 without receipts remain missing evidence. A narrowed check never claims a
@@ -3130,14 +3133,28 @@ comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/PreDevelopBuildGate.cs` and
   `FrontendWorkPackagePlanner.cs`: exact-merge develop boundary. Non-frontend
   deliveries retain the build-only level. A merge result that touches
-  `frontend/` runs a blocking Angular work package made from every spec in each
-  touched source folder plus the fixed app, studio-shell, and task-detail
-  barrel collision probes. Broad frontend suite commands stay outside the
+  frontend code runs a blocking Angular work package with explicit spec paths:
+  changed unit specs, companion specs of changed TypeScript and template/style
+  owners, direct named references, and companion specs of immediate production
+  consumers. Named imports resolve to their declaring modules through aliases
+  and barrel re-exports. The union of touched feature folders is included only
+  when it contains at most eight specs. The fixed app, studio-shell, and
+  task-detail collision probes remain in every frontend code slice. Playwright
+  specs are excluded from unit discovery. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
   Focused Angular slices prefer the declared `test:ci` script, including the
   report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
   the completed-test report check instead of falling back to raw `ng test`.
+  Normal fast coding reviews reuse this slice, including mapped, deferred and
+  broad-fallback plans. Review selection reads the pinned result tree rather
+  than the integration checkout, so renamed components and result-only
+  consumers participate. Strict review and full integration verification keep
+  their existing full-suite behavior. Documentation-only deliveries add no
+  Angular invocation. Selection reasons record missing companion/collision
+  matches and oversized feature omissions; these are selected paths, not
+  attempted tests. The existing wrapper report supplies execution and
+  zero-test evidence. Full feature coverage remains a post-merge obligation.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -5140,6 +5157,21 @@ and preserves both sides. Staging, the merge commit, publication, refs and works
 lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
+
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. A mechanical fallback advances
+the pin only if the published ref resolves to the exact reported commit and
+that commit descends from the pinned delivery. A resolved merge then becomes
+the next checkout base. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
 
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic

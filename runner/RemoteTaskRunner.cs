@@ -146,7 +146,9 @@ public sealed class RemoteTaskRunner
             continuationBaseRef: continuationBaseRef,
             continuationBaseSha: continuationBaseSha,
             continuationBaseReason: continuationBaseReason,
-            taskTitle: runSpec?.TaskTitle);
+            taskTitle: runSpec?.TaskTitle,
+            requiresContinuationBase: mechanicalDelta is not null
+                || MechanicalRoundFallbackPolicy.RequiresPreparedCheckout(freshRunReason));
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);

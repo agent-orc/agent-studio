@@ -1311,8 +1311,18 @@ unreported claim expires with its lease and is queued again.
   AGT-2985 the slot used the lease id, so Stable 0.9.3 rejected every
   production completion with continuation evidence. The legacy-plane contract
   test (`backend.Tests/LegacyRunnerCompletionContractTests.cs`) and the
-  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 seconds or the
-  1,211,213-token observation threshold. Semantic conflicts and invalid
+  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 charged seconds or the
+  1,211,213-token observation threshold. On a worker with cgroup v2 CPU pressure
+  accounting, charged duration excludes that worker group's `cpu.pressure` full
+  stall intervals. It includes provider, I/O and tool waits. Logs name the measure
+  and report wall seconds and excluded CPU wait. Without that counter, the log
+  explicitly records the existing wall-clock fallback. A pressure-observation fault
+  switches subsequent intervals to wall-clock charging without resetting the budget.
+  Diagnostic write failures cannot expire the watchdog or stop the live CLI.
+  Lower card limits and caller cancellation still apply. A claim carrying a
+  mechanical recovery delta or a mechanical fallback reason requires a pinned
+  base. The runner prepares the exact ref and SHA with the current integration
+  tip before starting the CLI. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
   Both automatic integration recovery (`IntegrationAgentRoundService`, including

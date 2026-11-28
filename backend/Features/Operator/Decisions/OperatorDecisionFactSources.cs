@@ -188,6 +188,7 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store, BatchGateP
     // A closed manifest never changes, and a published or abandoned batch
     // never changes phase again: each is read once per folder.
     private readonly Dictionary<string, BatchGateManifest> _manifests = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _superseded = new(StringComparer.Ordinal);
     private readonly HashSet<string> _settled = new(StringComparer.Ordinal);
 
     public IReadOnlyList<string> Types { get; } =
@@ -206,6 +207,7 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store, BatchGateP
                 // and reported below; it is read again on the next sweep.
                 if (!store.TryReadManifestIn(folder, out manifest)) continue;
                 _manifests[folder] = manifest;
+                if (manifest.ReformedFromBatchId is { } previous) _superseded.Add(previous);
             }
             var state = LatestState(folder);
             if (state?.Reason == BatchGateStore.StateUnreadableReason) continue;
@@ -217,6 +219,7 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store, BatchGateP
             }
             batches.Add((manifest, state));
         }
+        batches.RemoveAll(batch => _superseded.Contains(batch.Item1.BatchId));
         var facts = OperatorDecisionFacts.FromBatches(batches).ToList();
         facts.AddRange(OperatorDecisionFacts.FromQuarantinedBatchRecords(store.ListQuarantined()));
         if (pilot is not null)
@@ -308,18 +311,34 @@ public sealed class OperatorBlockedPublicationFactSource(
 }
 
 /// <summary>Provider limits the runners recorded per CLI.</summary>
-public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits, AgentStudio.Cli.ModelSelectionLedger? selection = null) : IOperatorDecisionFactSource
+public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits,
+    AgentStudio.Cli.ModelSelectionLedger? selection = null, AgentStudio.Cli.QuotaService? quota = null) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.QuotaExhausted];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => selection is null ? OperatorDecisionFacts.FromProviderLimits(limits.Active(nowUtc))
-            : selection.Active().Where(entry => entry.Kind == "waiting" && entry.Rule != "pin"
-                && !entry.NearbyResetWait)
+            : FromWaits(selection.Active(), nowUtc, quota is null ? null : quota.GetCachedFor);
+
+    internal static IReadOnlyList<OperatorDecisionFact> FromWaits(IEnumerable<AgentStudio.Cli.ModelSelectionEvent> waits,
+        DateTime nowUtc, Func<string, AgentStudio.Shared.QuotaSnapshot?>? snapshot = null)
+        => waits.Where(entry => entry.Kind == "waiting" && entry.Rule != "pin"
+                && !entry.NearbyResetWait && ((entry.Quota?.ResetAt ?? entry.ReturnToPrimaryAt) is not { } reset || reset > nowUtc)
+                && !WindowRestarted(entry, snapshot))
                 .Select(entry => new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
                     "model-class-wait:" + entry.Id, entry.Project, entry.TaskKey, entry.Reason, entry.At.UtcDateTime,
                     [new OperatorEvidenceLink("Model routing", "/api/model-selection/events?eventId=" + entry.Id)]))
                 .ToArray();
+
+    private static bool WindowRestarted(AgentStudio.Cli.ModelSelectionEvent wait,
+        Func<string, AgentStudio.Shared.QuotaSnapshot?>? read)
+    {
+        if (wait.Quota is not { Provider: { } provider, Window: { } label }
+            || read?.Invoke(provider) is not { Suspicious: false, Error: null } snapshot) return false;
+        return snapshot.Windows.Any(window => string.Equals(window.Label, label, StringComparison.OrdinalIgnoreCase)
+            && window.ProjectionSuspiciousReason is null && window.ObservedStartAt > wait.At.UtcDateTime
+            && window.ObservedStartAt <= snapshot.FetchedAt);
+    }
 }
 
 /// <summary>
@@ -336,7 +355,7 @@ public sealed class OperatorPostMergeCoverageFactSource(Func<IReadOnlyList<PostM
     public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
         => missing().Select(coverage => new OperatorDecisionFact(
             OperatorDecisionTypes.PostMergeRunsMissing,
-            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.PendingWindow?.OpenedAtUtc?.ToString("O") ?? coverage.LastMeasuredTipSha ?? "never"}",
+            $"{OperatorDecisionTypes.PostMergeRunsMissing}|{coverage.Project}|{coverage.PendingWindow?.OpenedAtUtc?.ToString("O") ?? coverage.LastMeasuredTipSha ?? "never"}|{coverage.DevelopTipSha}",
             coverage.Project, null, coverage.Message,
             coverage.PendingWindow?.OpenedAtUtc is { } opened
                 ? opened.AddMinutes(Math.Max(1, coverage.PendingWindow.WindowMinutes) * 3).UtcDateTime
@@ -366,10 +385,16 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
     {
         var facts = new List<OperatorDecisionFact>();
         var pickupCards = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (project, state) in states())
+        var branches = states().ToArray();
+        var lastGreen = branches.ToDictionary(branch => branch.Project,
+            branch => branch.State.Runs.Where(run => run.Status == "green").Max(run => run.FinishedAtUtc),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var (project, state) in branches)
         foreach (var incident in state.Incidents ?? [])
         {
             if (incident.ResolvedAtUtc is not null) continue;
+            var lastRed = state.Runs.LastOrDefault(run => run.Status == "red" && run.Id == incident.LatestEvidenceRunId);
+            if (lastGreen.GetValueOrDefault(project) > (lastRed?.FinishedAtUtc ?? incident.FirstRedAtUtc)) continue;
             var lane = cardState?.Invoke(project, incident.RepairCardId);
             if (state.DevelopState == "red" && cardState is not null
                 && AgentStudio.Runner.MonolithTransitionAdapter.RedRepairPickupOverdue(
@@ -421,6 +446,7 @@ public sealed class OperatorPostMergeRedIncidentFactSource(
         foreach (var (project, state) in guardianStates?.Invoke() ?? [])
         foreach (var item in state.OwnerItems.Where(i => !state.ClosedIncidents.Contains(i.Incident)))
         {
+            if (lastGreen.GetValueOrDefault(project) > item.ExpiresAt.AddHours(-24)) continue;
             var budget = item.Operation == "budget";
             facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PostMergeRedIncident,
                 $"{OperatorDecisionTypes.PostMergeRedIncident}|{project}|guardian|{item.Id}", project, null,

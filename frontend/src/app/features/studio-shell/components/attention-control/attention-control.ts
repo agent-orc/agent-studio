@@ -1,4 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, afterNextRender, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { CountBadgeComponent } from '@studio/ui/components/count-badge/count-badge.component';
+import { ConfirmDialogService } from '@studio/ui/services/confirm-dialog.service';
 import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
@@ -26,17 +28,20 @@ import { nameWithVisibleText } from '@studio/ui/utils/accessible-name';
  * The header entry that answers "what needs me" (AGT-3576). It opens one list
  * of the open decision-stream facts, grouped by class; each row names its
  * cause and offers one action that opens the card or the surface owning it.
- * The trigger count is the number of rows the list renders (R3).
+ * Each trigger count is the number of rows in its section (R3).
  */
 @Component({
   selector: 'app-attention-control',
   standalone: true,
-  imports: [DialogComponent, StudioIconComponent, StatusIndicatorComponent, AppTooltipDirective, BatchPanelComponent],
+  imports: [CountBadgeComponent, DialogComponent, StudioIconComponent, StatusIndicatorComponent, AppTooltipDirective, BatchPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './attention-control.html',
   styleUrl: './attention-control.scss',
 })
 export class AttentionControlComponent {
+  private readonly confirm = inject(ConfirmDialogService);
+  readonly dismissalError = signal(false);
+  readonly dismissing = signal(false);
   readonly attention = inject(OperatorAttentionService);
   private readonly references = inject(TaskReferenceNavigationService);
   private readonly clock = inject(NowTickService);
@@ -58,18 +63,18 @@ export class AttentionControlComponent {
   readonly now = computed(() => this.open() ? Math.max(this.openedAt(), this.clock.now()) : this.openedAt());
   readonly count = this.attention.count;
   readonly reviewHostDrift = computed(() => this.attention.items().some(item => item.type === 'review-host.drift'));
-  readonly groups = this.attention.groups;
+  readonly sections = this.attention.sections;
   readonly readinessPresentation = readinessPresentation;
   readonly triggerLabel = computed(() => {
     const count = this.count();
     const coverage = this.attention.coverageLabel();
-    if (count === 0) return coverage || 'Nothing needs you';
-    const label = `${count} ${count === 1 ? 'item needs' : 'items need'} you`;
+    if (count === 0 && this.attention.noticeCount() === 0) return coverage || 'Nothing needs you';
+    const label = count ? `${count} ${count === 1 ? 'decision needs' : 'decisions need'} you` : 'No decisions need you';
     const detail = this.reviewHostDrift() ? `${label}; review host differs from Stable` : label;
     return coverage ? `${detail}; ${coverage}` : detail;
   });
   /** Starts with the visible "Needs you <count>" (WCAG 2.5.3). */
-  readonly accessibleName = computed(() => nameWithVisibleText(`Needs you ${this.count()}`, this.triggerLabel()));
+  readonly accessibleName = computed(() => nameWithVisibleText(`Needs you ${this.count()} Notices ${this.attention.noticeCount()}`, this.triggerLabel()));
   readonly closeBatch = () => this.batchProject.set(null);
 
   constructor() {
@@ -96,6 +101,7 @@ export class AttentionControlComponent {
       return;
     }
     this.cancelBackupHandoff?.();
+    this.dismissalError.set(false);
     this.openedAt.set(Date.now());
     this.attention.setReadinessActive(true);
     this.attention.refresh();
@@ -122,6 +128,24 @@ export class AttentionControlComponent {
 
   actionLabel(item: OperatorAttentionItem, spec: AttentionClassSpec): string {
     return attentionActionLabel(item, spec);
+  }
+
+  async dismiss(items: readonly OperatorAttentionItem[], label: string): Promise<void> {
+    if (this.dismissing()) return;
+    this.dismissing.set(true);
+    this.dismissalError.set(false);
+    try {
+      const reason = await this.confirm.confirmWithReason({
+        title: 'Dismiss group?', message: `${label} (${items.length}). New occurrences will appear again.`,
+        confirmLabel: 'Dismiss', kind: 'primary', requireReason: { prompt: 'Reason', minLength: 1 },
+      });
+      if (reason) await this.attention.dismiss(items, reason);
+    } catch {
+      this.dismissalError.set(true);
+      this.attention.refresh();
+    } finally {
+      this.dismissing.set(false);
+    }
   }
 
   async runAnyway(item: OperatorAttentionItem): Promise<void> {
