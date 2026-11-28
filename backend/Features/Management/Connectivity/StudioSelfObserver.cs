@@ -29,6 +29,23 @@ public sealed class StudioSelfObserver
     private (ulong Total, ulong Idle)? _previousCpu;
     private (HostNetworkCounters Counters, DateTime At)? _previousNetwork;
     private long _proxiedTicks;
+    private long _requests;
+    private int _inFlight;
+    private (DateTime At, long Count)? _lastRequests;
+
+    public void FinishRequest() => Interlocked.Decrement(ref _inFlight);
+
+    public (double? Rate, int InFlight) RequestLoad(DateTime now)
+    {
+        lock (_gate)
+        {
+            var count = Interlocked.Read(ref _requests);
+            double? rate = _lastRequests is { } previous && now > previous.At
+                ? (count - previous.Count) / (now - previous.At).TotalSeconds : null;
+            _lastRequests = (now, count);
+            return (rate, Volatile.Read(ref _inFlight));
+        }
+    }
 
     public StudioSelfObserver(IConfiguration configuration, TimeProvider clock, StableReleaseIdentity? release = null,
         ApiHostDiskService? disks = null, Func<string, string?>? read = null,
@@ -42,11 +59,15 @@ public sealed class StudioSelfObserver
         _placement = new(placement ?? (() => OperatingSystem.IsLinux() ? HostPlacementProbe.DetectLocal() : null));
     }
 
+    internal string? KernelId => _placement.Value?.KernelId;
+
     public string MachineId => _configuration[MachineIdKey]?.Trim() is { Length: > 0 } id ? id : DefaultMachineId;
 
     /// <summary>Called once per request before forwarded headers are consumed. Two header lookups.</summary>
     public void ObserveRequest(IHeaderDictionary headers)
     {
+        Interlocked.Increment(ref _requests);
+        Interlocked.Increment(ref _inFlight);
         if (headers.ContainsKey("X-Forwarded-For") || headers.ContainsKey("Forwarded"))
             Interlocked.Exchange(ref _proxiedTicks, _clock.GetUtcNow().UtcTicks);
     }

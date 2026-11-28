@@ -62,6 +62,8 @@ public sealed class DeliveryIntegrationQueueBoard
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _failures = new(StringComparer.OrdinalIgnoreCase);
 
+    public int WaitingCount => _queues.Values.Sum(rows => rows.Count(row => row.Activity == Waiting));
+
     public void Publish(string project, IReadOnlyList<DeliveryIntegrationQueueRow> rows)
         => _queues[project] = rows.ToArray();
 

@@ -241,6 +241,8 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
+                request = Contract.HeartbeatPeer.Stamp(request, context.Connection.RemoteIpAddress,
+                    context.Request.Scheme, DateTime.UtcNow);
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
                 {
                     ConfiguredModelRoutes = (request.Capabilities.Any(capability =>

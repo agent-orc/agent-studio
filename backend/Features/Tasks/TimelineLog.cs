@@ -81,9 +81,12 @@ public sealed class TimelineLog : IDisposable
 
     private readonly ILogger<TimelineLog> _logger;
 
-    public TimelineLog(ILogger<TimelineLog> logger)
+    private readonly AgentStudio.Management.StructureHistoryBuffer? _structure;
+
+    public TimelineLog(ILogger<TimelineLog> logger, AgentStudio.Management.StructureHistoryBuffer? structure = null)
     {
         _logger = logger;
+        _structure = structure;
     }
 
     /// <summary>
@@ -122,6 +125,8 @@ public sealed class TimelineLog : IDisposable
             var path = TaskPaths.TimelineLog(jobFolderPath);
             var line = JsonSerializer.Serialize(evt, WriteOpts) + Environment.NewLine;
             File.AppendAllText(path, line, Encoding.UTF8);
+            if (evt.Kind == TimelineEventKinds.IntegrationSucceeded)
+                _structure?.Add(new(evt.Ts, "task timeline", "delivery-integrated", Path.GetFileName(jobFolderPath)));
             return true;
         }
         catch (Exception ex)
