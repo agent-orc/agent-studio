@@ -103,9 +103,13 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                         StringComparison.OrdinalIgnoreCase),
             };
         }
+        var origin = new Uri(options.ServerUrl);
+        var renews = !string.IsNullOrWhiteSpace(options.AuthTokenFile) && origin.Scheme == Uri.UriSchemeHttps;
+        if (renews)
+            handler = new RunnerCredentialRenewalHandler(options.AuthTokenFile!, origin, handler, TimeProvider.System);
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System);
+        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System, renews);
     }
 
     /// <summary>

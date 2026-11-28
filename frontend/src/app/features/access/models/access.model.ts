@@ -1,5 +1,7 @@
 /** Wire types of the Access area (`/api/auth/iam`, IP-8 rights model). */
 
+import type { RunnerCredentialRenewal } from '../../../models/runner-credential-renewal';
+
 export type IamScopeKind = 'workspace' | 'project' | 'environment';
 export type IamPrincipalKind = 'user' | 'group' | 'service-account';
 export type PermissionLevel = 'workspace' | 'project' | 'environment';
@@ -126,12 +128,14 @@ export interface EnrolledRunner {
   name: string;
   createdAt: string;
   revokedAt?: string | null;
+  retiredAt?: string | null;
   lastSeenAt?: string | null;
   /** Bound projects; `*` binds every project and an empty list binds none (SM-9). */
   projects?: readonly string[] | null;
   /** Set for a runner enrolled before project binding: it holds every project until the Owner chooses. */
   projectsNotice?: string | null;
   credentials: readonly RunnerCredential[];
+  renewal?: RunnerCredentialRenewal | null;
 }
 
 export interface RoleBinding {

@@ -23,6 +23,14 @@ fallback and service principal. Host registry observations supply custody
 metadata only; never paste credentials or token prefixes into metadata fields.
 The Studio inventory also includes deploy secrets and external-store tokens.
 
+Studio-enrolled runner credentials renew automatically over HTTPS by default.
+Each role's token file and its containing directory must be writable by that
+role's service user. The inventory shows the current expiry, last and next
+renewal, failure reason and any refused reuse of a superseded credential.
+Use Settings > Access to disable renewal for one role. See
+[Automatic credential renewal](networked-task-server.md#automatic-credential-renewal)
+for the installation switch, rollover, and recovery after missed expiry.
+
 Every entry is marked `short-lived` or `long-lived`. A refreshable CLI login is
 long-lived even if its current access token expires in minutes. A principal
 bootstrapped from a file without expiry remains allowed and shows `none`.

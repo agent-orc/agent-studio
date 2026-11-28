@@ -63,7 +63,7 @@ export class CredentialInventoryComponent {
   /** Where this credential is managed. */
   action(item: CredentialInventoryItem): { section: 'github' | 'secrets' | 'access' | 'task-server' | 'remote-hosts'; label: string } {
     if (item.kind.startsWith('github_app') || item.kind === 'host_key') return { section: 'github', label: 'Open GitHub' };
-    if (item.kind === 'service_account_token' || item.kind === 'operator_session') return { section: 'access', label: 'Open Access' };
+    if (item.renewal || item.kind === 'service_account_token' || item.kind === 'operator_session') return { section: 'access', label: 'Open Access' };
     if (item.kind === 'secret' || item.kind === 'external_store_token') return { section: 'secrets', label: 'Open Secrets' };
     return item.category === 'service' || item.category === 'human'
       ? { section: 'task-server', label: 'Open Task Server actions' }

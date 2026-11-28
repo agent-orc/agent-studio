@@ -19,12 +19,13 @@ public static class CredentialLifecyclePolicy
     public static CredentialInventoryItemDto Complete(CredentialInventoryItemDto item, DateTime firstObservedAt)
     {
         var interval = item.RotationIntervalDays ?? DefaultRotationIntervalDays;
+        var manualPlan = item.LifetimeClass == "long-lived" && item.Renewal?.Enabled != true;
         return item with
         {
             Holder = item.Holder ?? item.HostId,
             Target = item.Target ?? item.Repository ?? item.Kind,
-            RotationIntervalDays = item.LifetimeClass == "long-lived" ? interval : null,
-            RotationDueAt = item.LifetimeClass == "long-lived"
+            RotationIntervalDays = manualPlan ? interval : null,
+            RotationDueAt = manualPlan
                 ? item.RotationDueAt ?? (item.RotationBasisAt ?? item.CreatedAt ?? firstObservedAt).AddDays(interval) : null,
         };
     }
@@ -32,9 +33,11 @@ public static class CredentialLifecyclePolicy
     public static IReadOnlyList<CredentialLifecycleWarningDto> Warnings(IReadOnlyList<CredentialInventoryItemDto> items, DateTime now)
     {
         var warnings = new List<CredentialLifecycleWarningDto>();
-        foreach (var item in items.Where(item => item.Active && item.LifetimeClass == "long-lived" && !item.Id.StartsWith("required:", StringComparison.Ordinal)))
+        foreach (var item in items.Where(item => item.Active && !item.Id.StartsWith("required:", StringComparison.Ordinal)
+            && (item.LifetimeClass == "long-lived" || item.Renewal is not null)))
         {
-            Add(item, "expiry", item.ExpiresAt);
+            if (item.Renewal is null or { Enabled: false } or { FailingSince: not null })
+                Add(item, "expiry", item.ExpiresAt);
             Add(item, "rotation", item.RotationDueAt);
         }
         return warnings;

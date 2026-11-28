@@ -31,7 +31,7 @@ public static class PasswordSecretHasher
     }
 
     public static string HashSecret(string secret)
-        => Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(secret)));
+        => AgentStudio.TaskServer.Contracts.OpaqueSecretHash.Compute(secret);
 
     public static bool VerifySecret(string secret, string expectedHash)
     {
