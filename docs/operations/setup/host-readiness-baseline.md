@@ -43,7 +43,16 @@ Keep each capture scoped to the same installation and collection window when mak
 
 A runner row retains the source's placement kind, ancestry, direct parent, and registration and instance IDs. Known physical ancestry or a reported bare-metal machine name can map the runner. A VM or a container ID alone leaves its physical parent unresolved. Container inventories can come from a remote runtime and require their own exact-ID evidence.
 
-For an owner topology receipt, set the capture's `profile` to the source of the owner record. Each item can name the `subjectProfile` of the role response, exact `runnerId` and `instanceId`, and/or exact `containerId`. Supply `physicalMachineId` and optionally `vmId`. Use a consistent physical-machine identifier across the source profiles. The export retains every distinct physical candidate from the reported placement in `reportedPhysicalMachineIds` and includes matched receipts with their provenance. If the combined evidence has multiple distinct IDs, `physicalMapping` reports `conflicting` with a null `physicalMachineId`. A role-profile row may also stand alone for a service absent from the runner API, for example an SSH gate. Supply its role, release and topology explicitly.
+Give each saved role response that needs owner topology evidence a unique `captureId` within the export input. Use a non-secret label such as `review-window-1` and assign a new ID for each snapshot. Duplicate role capture IDs reject the export. In the `role-profile` capture, set `profile` to the source of the owner record and use the same `scope` as the subject capture. Each linked receipt supplies:
+
+- `subjectProfile` and `subjectCaptureId` from that exact role response.
+- The exact `runnerId` and `instanceId` of the runner or inventory reporter.
+- `physicalMachineId` and, when known, `vmId`. Use a consistent physical-machine identifier across sources.
+- For a container, its exact `containerId` and its `containerInventory` (`containers` for the inventory summary or `structureContainers` for the structure reading). Use a separate receipt for the runner itself.
+
+A role-profile row may also stand alone for a service absent from the runner API, such as an SSH gate. Supply its role, release and topology explicitly. Older captures and standalone receipts remain valid. A receipt without a matching snapshot and subject stays visible in the role-profile facts. The runner's own reported placement can still supply physical evidence.
+
+The export retains each distinct physical candidate from the reported placement in `reportedPhysicalMachineIds` and includes matched receipts with their provenance. If the combined evidence has multiple distinct IDs, `physicalMapping` reports `conflicting` with a null `physicalMachineId`.
 
 The same role-profile row can carry numeric `workerCpuQuotaPercent`, `workerMemoryMaxBytes`, `physicalMemoryBytes`, `parentMemoryMaxBytes`, `leafMemoryMaxBytes`, `loadPerCoreThreshold` and `loadSustainSeconds`, Linux `parentCpuMax` and `leafCpuMax` strings, gate transport/slots/processor hint/sharding and an array of `accountBindings`. Each binding contains `provider`, a 64-character lowercase hex `subscriptionKey` from approved identity metadata, `observedAt` and `confidence` (`owner-confirmed`, `observed` or `unknown`). A cached provider reading alone cannot confirm that two roles share an account.
 

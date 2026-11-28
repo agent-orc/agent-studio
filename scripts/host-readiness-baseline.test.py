@@ -9,9 +9,9 @@ SCRIPT = Path(__file__).with_name("host-readiness-baseline.py")
 AT = "2026-11-28T11:50:00Z"
 
 
-def capture(kind, data, profile="task-server-a", scope="deployment"):
+def capture(kind, data, profile="task-server-a", scope="deployment", **metadata):
     return {"kind": kind, "data": data, "profile": profile, "scope": scope,
-            "release": "1.2.3", "capturedAt": AT}
+            "release": "1.2.3", "capturedAt": AT, **metadata}
 
 
 class HostReadinessBaselineTests(unittest.TestCase):
@@ -50,12 +50,17 @@ class HostReadinessBaselineTests(unittest.TestCase):
                                         "ancestors": [{"id": "guest", "kind": "vm"}]}},
         }]
         declarations = [
-            {"subjectProfile": "other", "containerId": "def", "physicalMachineId": "wrong"},
-            {"subjectProfile": "task-server-a", "containerId": "abc", "physicalMachineId": "metal"},
-            {"subjectProfile": "task-server-a", "runnerId": "review-1", "instanceId": "old",
+            {"subjectProfile": "other", "subjectCaptureId": "snapshot", "runnerId": "review-1",
+             "instanceId": "active", "containerId": "def", "containerInventory": "containers",
              "physicalMachineId": "wrong"},
+            {"subjectProfile": "task-server-a", "subjectCaptureId": "snapshot", "runnerId": "review-1",
+             "instanceId": "active", "containerId": "abc", "containerInventory": "containers",
+             "physicalMachineId": "metal"},
+            {"subjectProfile": "task-server-a", "subjectCaptureId": "snapshot", "runnerId": "review-1",
+             "instanceId": "old", "physicalMachineId": "wrong"},
         ]
-        args = [capture("task-server-roles", rows), capture("role-profile", declarations, "owner-a")]
+        args = [capture("task-server-roles", rows, captureId="snapshot"),
+                capture("role-profile", declarations, "owner-a")]
         report = self.export(*args)
         review, gate = report["observations"][0]["facts"]
         self.assertEqual("metal", review["physicalMapping"]["physicalMachineId"])
@@ -68,7 +73,7 @@ class HostReadinessBaselineTests(unittest.TestCase):
         self.assertEqual(2, review["runtimeCapacityAppliedVersion"])
         self.assertFalse(review["readiness"][0]["isFresh"])
 
-        declarations.append({"subjectProfile": "task-server-a", "runnerId": "review-1",
+        declarations.append({"subjectProfile": "task-server-a", "subjectCaptureId": "snapshot", "runnerId": "review-1",
                              "instanceId": "active", "physicalMachineId": "other-metal"})
         mapping = self.export(*args)["observations"][0]["facts"][0]["physicalMapping"]
         self.assertEqual("conflicting", mapping["status"])
@@ -82,17 +87,87 @@ class HostReadinessBaselineTests(unittest.TestCase):
                 {"id": "guest", "kind": "vm"},
             ],
         }}}
-        receipt = {"subjectProfile": "task-server-a", "runnerId": "review-1",
+        receipt = {"subjectProfile": "task-server-a", "subjectCaptureId": "snapshot", "runnerId": "review-1",
                    "instanceId": "active", "physicalMachineId": "metal-a"}
         for receipts in ([], [receipt]):
             with self.subTest(receipt_count=len(receipts)):
-                report = self.export(capture("task-server-roles", [role]),
+                report = self.export(capture("task-server-roles", [role], captureId="snapshot"),
                                      capture("role-profile", receipts, "owner-a"))
                 mapping = report["observations"][0]["facts"][0]["physicalMapping"]
                 self.assertEqual("conflicting", mapping["status"])
                 self.assertIsNone(mapping["physicalMachineId"])
                 self.assertEqual(["metal-a", "metal-b"], mapping["reportedPhysicalMachineIds"])
                 self.assertEqual(len(receipts), len(mapping["profileReceipts"]))
+
+    def test_receipts_bind_to_one_snapshot_and_reporting_instance(self):
+        first_runner = {"runnerId": "review-1", "instanceId": "active",
+                        "containers": [{"id": "abc"}],
+                        "telemetry": {"structure": {"studioContainers": [{"id": "abc"}]}}}
+        other_runner = {**first_runner, "runnerId": "review-2"}
+        receipt = {"subjectProfile": "task-server-a", "subjectCaptureId": "before",
+                   "runnerId": "review-1", "instanceId": "active", "physicalMachineId": "metal-a"}
+        old_receipt = {key: value for key, value in receipt.items() if key != "subjectCaptureId"}
+        after = {**receipt, "subjectCaptureId": "after", "physicalMachineId": "metal-b"}
+        before_capture = capture("task-server-roles", [first_runner, other_runner], captureId="before")
+        after_capture = capture("task-server-roles", [first_runner], captureId="after", release="2.0.0",
+                                capturedAt="2026-11-28T12:50:00Z")
+        report = self.export(
+            after_capture,
+            capture("role-profile", [receipt, {**receipt, "containerId": "abc", "containerInventory": "containers"},
+                                     after, {**after, "containerId": "abc", "containerInventory": "containers"},
+                                     {**old_receipt, "containerId": "abc", "containerInventory": "containers"},
+                                     {**receipt, "subjectProfile": "other", "physicalMachineId": "wrong"},
+                                     {**receipt, "instanceId": "retired", "containerId": "abc", "containerInventory": "containers",
+                                      "physicalMachineId": "wrong"},
+                                     {**receipt, "containerId": "abc", "containerInventory": "structureContainers",
+                                      "physicalMachineId": "metal-structure"},
+                                     {**receipt, "subjectCaptureId": "missing", "physicalMachineId": "wrong"}],
+                    "owner-a"),
+            capture("role-profile", [{**receipt, "physicalMachineId": "wrong"}],
+                    "owner-local", "isolated-worktree"),
+            before_capture,
+        )
+        newer, owner, _, older = report["observations"]
+        for role, expected in ((newer["facts"][0], "metal-b"), (older["facts"][0], "metal-a")):
+            for subject in (role, role["containers"][0]):
+                mapping = subject["physicalMapping"]
+                self.assertEqual("mapped", mapping["status"])
+                self.assertEqual(expected, mapping["physicalMachineId"])
+                self.assertEqual([expected], [item["physicalMachineId"] for item in mapping["profileReceipts"]])
+        self.assertEqual("unresolved", older["facts"][1]["containers"][0]["physicalMapping"]["status"])
+        self.assertEqual("unresolved", newer["facts"][0]["structureContainers"][0]["physicalMapping"]["status"])
+        self.assertEqual("metal-structure",
+                         older["facts"][0]["structureContainers"][0]["physicalMapping"]["physicalMachineId"])
+        self.assertEqual("before", older["captureId"])
+        self.assertEqual("before", owner["facts"][0]["subjectCaptureId"])
+
+    def test_container_receipt_does_not_map_reporter_or_unqualified_inventory(self):
+        role = {"runnerId": "review-1", "instanceId": "active", "containers": [{"id": "abc"}, {"id": "def"}]}
+        receipt = {"subjectCaptureId": "snapshot", "subjectProfile": "task-server-a",
+                   "physicalMachineId": "metal-a"}
+        report = self.export(
+            capture("task-server-roles", [role], captureId="snapshot"),
+            capture("role-profile", [
+                {**receipt, "containerId": "abc", "containerInventory": "containers",
+                 "runnerId": "review-1", "instanceId": "active"},
+                {**receipt, "containerId": "def", "containerInventory": "containers"},
+                {**receipt, "containerId": "def", "runnerId": "review-1", "instanceId": "active"},
+                {"subjectProfile": "task-server-a", "runnerId": "review-1",
+                 "instanceId": "active", "physicalMachineId": "legacy"},
+            ], "owner-a"),
+        )
+        row = report["observations"][0]["facts"][0]
+        self.assertEqual("unresolved", row["physicalMapping"]["status"])
+        self.assertEqual("metal-a", row["containers"][0]["physicalMapping"]["physicalMachineId"])
+        self.assertEqual("unresolved", row["containers"][1]["physicalMapping"]["status"])
+
+    def test_rejects_duplicate_role_capture_ids(self):
+        result = self.run_export([
+            capture("task-server-roles", [{}], captureId="same"),
+            capture("monolith-roles", [{}], "monolith", captureId="same"),
+        ])
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout)
 
     @unittest.skipUnless(sys.platform == "linux", "address-space limit requires Linux")
     def test_rejects_projection_fanout_within_memory_limit(self):
@@ -102,14 +177,16 @@ class HostReadinessBaselineTests(unittest.TestCase):
             ceiling = 96 * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (ceiling, ceiling))
 
-        # All arrays fit the row cap and the raw input fits the byte cap. The
-        # same inventory ID can appear in multiple independently reported views.
+        # Repeated inventory rows amplify an otherwise small receipt index.
+        # Each input array fits the row cap and the raw file fits the byte cap.
         inventory = [{"id": "container-a"}] * 128
-        roles = [{"runnerId": f"review-{i}", "containers": inventory} for i in range(128)]
-        receipts = [{"subjectProfile": "task-server-a", "containerId": "container-a",
+        roles = [{"runnerId": "review-1", "instanceId": "active", "containers": inventory}] * 128
+        receipts = [{"subjectProfile": "task-server-a", "subjectCaptureId": "snapshot", "runnerId": "review-1",
+                     "instanceId": "active", "containerInventory": "containers", "containerId": "container-a",
                      "physicalMachineId": f"metal-{i}"} for i in range(128)]
         result = self.run_export(
-            [capture("task-server-roles", roles), capture("role-profile", receipts, "owner-a")],
+            [capture("task-server-roles", roles, captureId="snapshot"),
+             capture("role-profile", receipts, "owner-a")],
             preexec_fn=limit_memory, timeout=15,
         )
         self.assertEqual(2, result.returncode, result.stderr)

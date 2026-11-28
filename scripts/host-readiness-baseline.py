@@ -45,6 +45,8 @@ ROLE_KEYS = {
     "executor:coding": "coding", "executor:review": "review", "gate-executor": "gate",
     "integration-executor": "integration", "post-work-executor": "post",
 }
+ROLE_SOURCES = ("task-server-roles", "monolith-roles")
+CONTAINER_INVENTORIES = ("containers", "structureContainers")
 
 INTEGRATION_STAGES = (
     "queueWait", "dispatchQueueWait", "gateQueueWait", "bundlePreparation", "bundleTransfer",
@@ -140,10 +142,10 @@ def role(row, physical_link):
     identity = fields(row, ids="runnerId hostId instanceId runnerVersion status",
                       numbers="protocolVersion roleMaxParallelism effectiveMaxParallelism runtimeCapacityAppliedVersion activeGateCount",
                       times="registeredAt lastSeenAt runtimeCapacityAppliedAt")
+    runner = (identity["runnerId"], identity["instanceId"])
 
-    def map_container(projected):
-        # Inventories can come from a remote runtime. Require exact container evidence.
-        return {**projected, "physicalMapping": physical_link(("container", projected["id"]))}
+    def map_container(inventory, projected):
+        return {**projected, "physicalMapping": physical_link((*runner, inventory, projected["id"]))}
 
     return {
         **identity,
@@ -170,11 +172,11 @@ def role(row, physical_link):
                                        "workerEnvelopeCpuQuotaPercent currentCeiling throttledShare",
                                booleans="sustainedThrottling"),
         "topology": topology,
-        "containers": project_rows(containers, lambda item: map_container(fields(
+        "containers": project_rows(containers, lambda item: map_container("containers", fields(
             item, ids="id name state", imageDigest=re.compile(r"sha256:[a-f0-9]{64}\Z")))),
-        "structureContainers": project_rows(structure.get("studioContainers"), lambda item: map_container(fields(
-            item, ids="id role", numbers="restarts uptimeSeconds"))),
-        "physicalMapping": physical_link(("runner", identity["runnerId"], identity["instanceId"]), physical),
+        "structureContainers": project_rows(structure.get("studioContainers"), lambda item: map_container(
+            "structureContainers", fields(item, ids="id role", numbers="restarts uptimeSeconds"))),
+        "physicalMapping": physical_link(runner, physical),
     }
 
 
@@ -192,8 +194,9 @@ def quota(row):
 
 def role_profile(row):
     return {
-        **fields(row, ids="subjectProfile runnerId hostId instanceId containerId vmId physicalMachineId "
+        **fields(row, ids="subjectProfile subjectCaptureId runnerId hostId instanceId containerId vmId physicalMachineId "
                          "releaseId runnerVersion rampStrategy",
+                 containerInventory=CONTAINER_INVENTORIES,
                  role=("coding", "review", "gate", "integration", "post", "deploy", "task-server", "web"),
                  gateTransport=("local", "ssh", "pull", "claimed"),
                  numbers="onlineCores maxParallelism activeSlots workerCpuQuotaPercent workerMemoryMaxBytes "
@@ -249,7 +252,7 @@ def monolith_queue(value):
 
 
 def project_source(kind, value, physical_link):
-    if kind in ("task-server-roles", "monolith-roles"):
+    if kind in ROLE_SOURCES:
         return project_rows(value, lambda item: role(item, physical_link))
     if kind == "task-server-quotas":
         return project_rows(value, quota)
@@ -288,26 +291,23 @@ def project_source(kind, value, physical_link):
 
 
 def topology_receipts(captures):
-    # Source profiles remain independent. An explicit receipt can cross that boundary
-    # only by naming the subject profile and exact runner instance or container ID.
+    # The receipt's capture time describes its provenance, not the subject snapshot.
     receipts = {}
     for kind, origin, payload in captures:
         if kind != "role-profile":
             continue
         for row in rows(payload):
-            receipt = fields(row, ids="subjectProfile physicalMachineId runnerId instanceId containerId")
-            scope = origin["scope"]
-            profile = receipt["subjectProfile"]
+            receipt = fields(row, ids="subjectProfile subjectCaptureId physicalMachineId runnerId instanceId containerId",
+                             containerInventory=CONTAINER_INVENTORIES)
             parent = receipt["physicalMachineId"]
-            if not profile or not parent:
+            key = (origin["scope"], receipt["subjectProfile"], receipt["subjectCaptureId"],
+                   receipt["runnerId"], receipt["instanceId"])
+            if row.get("containerId") is not None or row.get("containerInventory") is not None:
+                key += (receipt["containerInventory"], receipt["containerId"])
+            if not parent or not all(key):
                 continue
             evidence = (parent, origin["profile"], origin["capturedAt"])
-            if receipt["runnerId"] and receipt["instanceId"]:
-                key = (scope, profile, "runner", receipt["runnerId"], receipt["instanceId"])
-                receipts.setdefault(key, set()).add(evidence)
-            if receipt["containerId"]:
-                key = (scope, profile, "container", receipt["containerId"])
-                receipts.setdefault(key, set()).add(evidence)
+            receipts.setdefault(key, set()).add(evidence)
 
     return receipts
 
@@ -327,6 +327,7 @@ def physical_mapping(evidence, reported):
 def validate_captures(captures):
     if not isinstance(captures, list):
         raise ValueError("expected an array of captures")
+    role_capture_ids = set()
     for capture in rows(captures):
         kind = capture.get("kind")
         if not isinstance(kind, str) or kind not in SOURCES:
@@ -335,6 +336,12 @@ def validate_captures(captures):
                         scope=("deployment", "isolated-worktree"))
         if any(value is None for value in origin.values()):
             raise ValueError("capture requires profile, release, capturedAt and scope")
+        if kind in ROLE_SOURCES and "captureId" in capture:
+            capture_id = scalar(capture["captureId"], TOKEN)
+            if capture_id is None or capture_id in role_capture_ids:
+                raise ValueError("role capture IDs must be valid and unique")
+            role_capture_ids.add(capture_id)
+            origin["captureId"] = capture_id
         payload = capture.get("data")
         if payload is None:
             raise ValueError("capture requires data; omit an unavailable capture")
@@ -348,7 +355,7 @@ def export(captures):
     def observations():
         for kind, origin, payload in captures:
             def link(subject, reported=()):
-                key = (origin["scope"], origin["profile"], *subject)
+                key = (origin["scope"], origin["profile"], origin.get("captureId"), *subject)
                 return physical_mapping(receipts.get(key, ()), reported)
 
             yield {"kind": kind, "source": SOURCES[kind], **origin,
