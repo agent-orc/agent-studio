@@ -23,13 +23,22 @@ public sealed class HostQuotaPoller(TaskServerClient client, RunnerOptions optio
                     var claim = await client.ClaimHostQuotaAsync(
                         new(client.RunnerInstanceId, provider, key), ct);
                     if (claim is null) return; // Older Task Server or local compatibility profile.
-                    if (!claim.Granted || claim.ProbeId is null) continue;
                     var binary = provider == "claude" ? options.ClaudeCliBin : options.CodexCliBin;
+                    if (claim.Reading is { Error: null } cached && cached.SubscriptionKey == key && cached.Provider == provider)
+                        Observe(cached.ObservedAt, cached.Windows);
+                    if (!claim.Granted || claim.ProbeId is null) continue;
                     var reading = await HostQuotaReader.ReadAsync(provider, binary, ct, log);
                     await client.ReportHostQuotaAsync(new(
                         client.RunnerInstanceId, provider, key, claim.ProbeId,
                         reading.ObservedAt, reading.CliVersion, reading.Plan,
                         reading.Windows, reading.Error, reading.HostTimeZone), ct);
+                    if (reading.Error is null) Observe(reading.ObservedAt, reading.Windows);
+
+                    void Observe(DateTime at, IReadOnlyList<HostQuotaWindowDto> windows)
+                    {
+                        if (RunnerModelAcceptanceProbe.Shared.ObserveUsage(provider, key, at, windows))
+                            ProviderAuthProbe.Shared.UsageWindowChanged(binary, at);
+                    }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                 catch (Exception exception)

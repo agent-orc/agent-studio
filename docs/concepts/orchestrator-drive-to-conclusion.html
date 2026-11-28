@@ -3738,6 +3738,18 @@
           <td>Fingerprint extraction discarded message content and assertion locations. Grading required the control proof only for a product diagnosis and checked integration-branch debt earlier.</td>
           <td>Complete diagnostic blocks retain message content and assertion source locations; ambiguous blocks remain incomplete. The proof check runs before disposition shortcuts and removes unsupported product verdicts. Missing or invalid controls reach <code>ReviewInfra</code>, while matching assertions retain <code>ProductFailure</code>. Repeat bounds, per-tree envelopes and lane transitions are unchanged.</td>
         </tr>
+        <tr id="case-codex-usage-window-model-wait">
+          <td>2026-11-28</td>
+          <td><code>AGT-4373</code><br><span class="small">codex-usage-window-model-wait</span></td>
+          <td>Ready cards waiting for gpt-6.1-sol recovered after the coding host restarted.
+            The journal records AGT-4057 ending Stopped at 08:26 UTC after an operator request.
+            Its retained Codex session has no terminal provider refusal.</td>
+          <td>A structured request error could mask an explicit usage limit. Launch refusals also
+            lacked a retry deadline, and a full host left recorded card waits untouched.</td>
+          <td>Usage-window replay reaches <code>QuotaExceeded</code> and
+            <code>WaitForCapabilityRecovery</code>. A new subscription window reopens model probing.
+            The next ready advertisement clears the recorded dispatch wait.</td>
+        </tr>
       </tbody>
     </table>
 

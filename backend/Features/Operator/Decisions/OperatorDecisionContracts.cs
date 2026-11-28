@@ -25,6 +25,7 @@ public static class OperatorDecisionTypes
     public const string OperatorApprovalPending = "operator-approval.pending";
     public const string ElevationRateEnded = "elevation.rate-ended";
     public const string AuditAlert = "audit.alert";
+    public const string HostModelUnavailable = "host.model-unavailable";
     public const string HostDiskPressure = "host.disk-pressure";
     public const string ReviewHostDrift = "review-host.drift";
     public const string ReviewRetrySchedulerStalled = "review-retry.scheduler-stalled";
@@ -42,7 +43,7 @@ public static class OperatorDecisionTypes
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
-        GateHostUnreachable, OperatorApprovalPending, ElevationRateEnded, AuditAlert, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
+        GateHostUnreachable, OperatorApprovalPending, ElevationRateEnded, AuditAlert, HostModelUnavailable, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
         PostMergeRedIncident,
         CapacityUnderused, OverlapStarved, DeployCompleted, WatcherHeartbeat,
     ];
@@ -101,6 +102,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.AuditAlert => [OwnerDecide],
         OperatorDecisionTypes.OperatorApprovalPending => [OwnerDecide],
         OperatorDecisionTypes.ElevationRateEnded => [OwnerDecide],
+        OperatorDecisionTypes.HostModelUnavailable => [CapacityRead, RoutingChange],
         OperatorDecisionTypes.HostDiskPressure => [StallsInspect],
         OperatorDecisionTypes.ReviewHostDrift => [StallsInspect],
         OperatorDecisionTypes.ReviewRetrySchedulerStalled => [StallsInspect, CardInspect],

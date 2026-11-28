@@ -3,7 +3,8 @@ namespace AgentStudio.TaskServer.Contracts;
 /// <summary>Only a digest of a non-secret account identity crosses the host channel.</summary>
 public sealed record HostQuotaClaimRequest(string InstanceId, string Provider, string SubscriptionKey);
 
-public sealed record HostQuotaClaimResponse(bool Granted, string? ProbeId, DateTime? NextAt, string? Reason);
+public sealed record HostQuotaClaimResponse(bool Granted, string? ProbeId, DateTime? NextAt, string? Reason,
+    HostQuotaReadingDto? Reading = null);
 
 public sealed record HostQuotaWindowDto(string Label, double? UsedPct, DateTime? ResetAt, string? ResetLabel);
 

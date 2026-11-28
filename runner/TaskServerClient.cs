@@ -1568,6 +1568,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ct);
         _advertisementRoundTripMs = Math.Round(roundTrip.Elapsed.TotalMilliseconds, 1);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot is not null)
+        {
+            foreach (var sent in capabilities.Where(item => item.Category == "model-acceptance"))
+            {
+                var received = snapshot.Capabilities.FirstOrDefault(item => item.Key == sent.Key);
+                if (received is not null)
+                    RunnerModelAcceptanceProbe.Shared.AcknowledgeAdvertisement(sent, received.AdvertisedStatus);
+            }
+        }
         if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
             RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
