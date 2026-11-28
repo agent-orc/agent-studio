@@ -141,6 +141,28 @@ public sealed class HostAgentSupervisorTests : IDisposable
         Assert.False(Directory.Exists(codingState));
     }
 
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    public async Task Gate_rejects_state_shared_through_a_linux_bind_mount()
+    {
+        const string source = "/run/systemd/inaccessible/dir";
+        const string alias = "/run/credentials";
+        Skip.IfNot(OperatingSystem.IsLinux()
+            && Directory.Exists(source)
+            && File.ReadLines("/proc/self/mountinfo").Any(line =>
+                line.Contains(" /systemd/inaccessible/dir /run/credentials ", StringComparison.Ordinal)),
+            "Requires the systemd credentials bind mount.");
+
+        var config = CreateConfiguration(withGate: true);
+        await File.AppendAllLinesAsync(Path.Combine(_root, "coding.env"), [$"RUNNER_STATE_DIR={source}"]);
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [$"RUNNER_STATE_DIR={alias}"]);
+
+        // Inventory exercises the same validation as enable without writing to either mount path.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["inventory", config], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+    }
+
     private async Task AssertGateStateAliasRejectedAsync(string config, string alias)
     {
         await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [$"RUNNER_STATE_DIR={alias}"]);

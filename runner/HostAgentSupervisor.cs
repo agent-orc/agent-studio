@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -120,12 +121,48 @@ public static class HostAgentSupervisor
     {
         var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var gateState = ResolveStateDirectory(gate.StateDir);
-        if (pathComparer.Equals(gateState, ResolveStateDirectory(config.StateDirectory))
+        var gateIdentity = OperatingSystem.IsLinux() ? ReadLinuxStateDirectoryIdentity(gateState) : default;
+        bool SharesGateState(string path)
+        {
+            var resolved = ResolveStateDirectory(path);
+            return pathComparer.Equals(gateState, resolved)
+                || OperatingSystem.IsLinux() && gateIdentity == ReadLinuxStateDirectoryIdentity(resolved);
+        }
+
+        if (SharesGateState(config.StateDirectory)
             || options.Any(item => item.Key != "gate" && (item.Value.RunnerId == gate.RunnerId
-                || pathComparer.Equals(gateState, ResolveStateDirectory(item.Value.StateDir))))
+                || SharesGateState(item.Value.StateDir)))
             || !string.Equals(gate.Hostname, options["coding"].Hostname, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(gate.ServerUrl, options["coding"].ServerUrl, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The gate adapter needs its own runner identity and state directory on the same host and Task Server.");
+    }
+
+    private static (uint Major, uint Minor, ulong Inode, string Suffix) ReadLinuxStateDirectoryIdentity(string path)
+    {
+        const int currentDirectory = -100; // AT_FDCWD
+        const int noEntry = 2; // ENOENT
+        const uint inodeAndType = 0x101; // STATX_INO | STATX_TYPE
+        var missing = new Stack<string>();
+        var candidate = path;
+        while (true)
+        {
+            if (LinuxFileMetadata.Read(currentDirectory, candidate, 0, inodeAndType, out var metadata) == 0)
+            {
+                if ((metadata.Mask & inodeAndType) != inodeAndType || (metadata.Mode & 0xf000) != 0x4000)
+                    throw new IOException($"Could not establish the identity of state directory '{path}'.");
+                // Bind mounts share a device and inode even when their mount IDs differ.
+                return (metadata.DeviceMajor, metadata.DeviceMinor, metadata.Inode, string.Join('/', missing));
+            }
+
+            var error = Marshal.GetLastPInvokeError();
+            var parent = Path.GetDirectoryName(candidate);
+            if (error != noEntry || parent is null)
+                throw new IOException($"Could not inspect state directory '{path}'.", new Win32Exception(error));
+            // New state directories share an identity if the same path would be
+            // created under two names for an existing ancestor.
+            missing.Push(Path.GetFileName(candidate));
+            candidate = parent;
+        }
     }
 
     private static string ResolveStateDirectory(string path, int linksRemaining = 40)

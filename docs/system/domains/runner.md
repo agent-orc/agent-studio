@@ -181,13 +181,19 @@ project policy. The gate daemon uses the same capability registry as the other
 roles and publishes `gate-executor`, `gate:post-merge`, `gate:git`, and
 `gate:source-bundle`.
 
+On Linux the supervisor compares the device and inode of state directories to
+detect bind mount aliases. For a path that does not exist yet, it compares the
+nearest existing directory and the remaining path.
+
 The host inventory projects both durable gate claims, including the post-merge
 lane. A role drain closes new admission after any request already in flight,
 lets leased work and cleanup finish, then disables the role after the child
 exits with a matching zero-attempt acknowledgement. Use the
 [gate enrollment and canary runbook](../../operations/remote-hosts.md#enrol-a-gate-adapter-and-run-a-merge-canary)
 to try one project's merge gate under `RemoteGate:Transport=canary` and return
-to the bridge. The bridge remains the default.
+to the bridge. The bridge remains the default. Existing claimed workers with
+a coding or review credential must follow the
+[credential upgrade steps](../../operations/remote-hosts.md#upgrade-an-existing-claimed-gate-worker).
 
 ## Dynamic placement work container executor, DP-S3
 

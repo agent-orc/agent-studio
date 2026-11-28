@@ -143,7 +143,7 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
                     // Read the pinned link itself, then validate every directory
                     // traversed by its target. Source and release paths never
                     // permit links. No pathname is reopened after validation.
-                    if (executable && StatX(next.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) == 0
+                    if (executable && LinuxFileMetadata.Read(next.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) == 0
                         && (type.Mode & 0xf000) == 0xa000)
                     {
                         if (++links > 40) throw new InvalidDataException("Runtime capability has too many symbolic links.");
@@ -175,10 +175,10 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
         catch { handle.Dispose(); throw; }
     }
 
-    private static LinuxMetadata CheckMetadata(SafeFileHandle handle, bool directory, uint owner)
+    private static LinuxFileMetadata CheckMetadata(SafeFileHandle handle, bool directory, uint owner)
     {
         // statx with AT_EMPTY_PATH describes the pinned object, never its name.
-        if (StatX(handle.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var metadata) != 0
+        if (LinuxFileMetadata.Read(handle.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var metadata) != 0
             || (metadata.Mask & 0x101b) != 0x101b || metadata.Owner != owner
             || (metadata.Mode & 0x12) != 0 || (metadata.Mode & 0xf000) != (directory ? 0x4000 : 0x8000))
             throw new InvalidDataException("Source capability must contain only trusted, non-writable directories and regular files on one mount.");
@@ -204,7 +204,7 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
                 opened?.Invoke(name);
                 // Determine the type from this descriptor, then validate it. No
                 // path-based type check may run between opening and copying.
-                if (StatX(child.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) != 0)
+                if (LinuxFileMetadata.Read(child.DangerousGetHandle().ToInt32(), "", 0x1000, 0x17ff, out var type) != 0)
                     throw new IOException("Source capability inspection failed.");
                 var directory = (type.Mode & 0xf000) == 0x4000;
                 var metadata = CheckMetadata(child, directory, owner);
@@ -239,7 +239,7 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
         CheckMetadata(objects, directory: true, owner);
     }
 
-    private static void PreserveSnapshotPermissions(string path, LinuxMetadata metadata)
+    private static void PreserveSnapshotPermissions(string path, LinuxFileMetadata metadata)
     {
         if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Source capabilities require Linux.");
         // Preserve DAC read/traverse restrictions, including the source group.
@@ -250,16 +250,6 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
         File.SetUnixFileMode(path, (UnixFileMode)(metadata.Mode & 0x1ff));
     }
 
-    [StructLayout(LayoutKind.Explicit, Size = 256)]
-    private struct LinuxMetadata
-    {
-        [FieldOffset(0)] public uint Mask;
-        [FieldOffset(20)] public uint Owner;
-        [FieldOffset(24)] public uint Group;
-        [FieldOffset(28)] public ushort Mode;
-        [FieldOffset(144)] public ulong MountId;
-    }
-
     [DllImport("libc", EntryPoint = "chown", SetLastError = true)]
     private static extern int ChangeOwner(string path, int owner, uint group);
 
@@ -268,9 +258,6 @@ public sealed record RoleImageManifest(int SchemaVersion, Dictionary<string, Rol
 
     [DllImport("libc", EntryPoint = "readlinkat", SetLastError = true)]
     private static extern nint ReadLinkAt(int parent, string path, byte[] buffer, nuint size);
-
-    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
-    private static extern int StatX(int descriptor, string path, int flags, uint mask, out LinuxMetadata metadata);
 
     public string Serialize() => JsonSerializer.Serialize(this, Json);
 

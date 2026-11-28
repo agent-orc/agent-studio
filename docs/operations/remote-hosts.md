@@ -41,6 +41,30 @@ build and test tools required by the selected project. Use the same standalone
 Task Server that owns the Studio API's gate subjects. Keep the working bridge
 configuration available while testing.
 
+### Upgrade an existing claimed gate worker
+
+After the Task Server upgrade, `POST /api/v1/gates/claims` returns HTTP 403
+with `runner-role-mismatch` for credentials bound to `coding` or `review`,
+even if the runner advertises `gate-executor`. This applies to standalone
+workers as well as host-agent adapters and to post-merge and batch claims as
+well as merge and promotion claims. A legacy credential whose effective role
+is unset can still claim for its own executor ID within its host's project
+policy, subject to the existing scope and admission checks.
+
+Before upgrading Task Server, check the credential used by each existing
+claimed gate worker. If it is bound to coding or review, use the bridge
+switch below for new merge and promotion gates during the upgrade. A batch
+deployment using claimed execution has its own switch,
+`BatchGate__Execution=bridge`, for new batch gates. Let queued and active
+claimed work settle before upgrading if these workers are its only executors.
+Existing claimed subjects stay on the claim path.
+
+After upgrading Task Server, the owner can enrol a dedicated gate identity
+using steps 1–4 below. For a standalone worker, set the new runner ID and
+credential in its service environment with `RUNNER_ROLE=gate`. For a
+host-agent adapter, follow step 5. Confirm readiness and a successful claim
+under the gate credential before restoring claimed routing for other work.
+
 ### Enrol and enable the role
 
 1. Through the Studio edge, use an authenticated owner session to send
@@ -61,6 +85,8 @@ configuration available while testing.
    token envelope supplies the URL, installation ID, runner ID and code.
 
    ```bash
+   (
+   set -e
    umask 077
    gate_dir=/var/lib/agent-runner/gate
    mkdir -p "$gate_dir"
@@ -80,12 +106,15 @@ configuration available while testing.
    bash scripts/enrol-host-principal.sh "$(cat "$gate_dir/server-url")" \
      "$(cat "$gate_dir/installation-id")" "$gate_dir/enrolment.code" "$gate_dir/runner.token"
    rm "$gate_dir/join.token"
+   )
    ```
 
 3. Write the following literal assignments to `/etc/agent-runner/gate.env`.
    Use the issued runner ID and the same hostname and Task Server URL as the
    existing adapters. Create the gate home and make the work and state paths
-   writable by the service user.
+   writable by the service user. Use a distinct state directory. A symlink or
+   bind mount of the host agent's or another adapter's state directory is
+   still shared state.
 
    ```dotenv
    RUNNER_SERVER_URL=https://tasks.example.com
