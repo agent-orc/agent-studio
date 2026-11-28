@@ -240,7 +240,10 @@ replacement keep their selected cases, even when already marked as guard steps.
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the
 legacy generated-map path. Whole .NET routine invocations remain post-merge
-obligations in these opted-in fast reviews. The selection audit records the
+obligations in these opted-in fast reviews. Only an unfiltered invocation or
+one filtered solely by `Category!=MachineBound` is recognized as whole-project.
+Explicit class or trait selections and unrecognized filters remain selected
+even when they exactly match a declared command. The selection audit records the
 commands and their reasons without treating selection as execution: attempted
 commands and tests must come from execution receipts, and selected commands
 without receipts remain missing evidence. A narrowed check never claims a
