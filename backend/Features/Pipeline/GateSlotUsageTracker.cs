@@ -191,6 +191,12 @@ public sealed class GateSlotUsageTracker
     public TimeSpan? HeldFor(string runId)
         => _runs.TryGetValue(runId, out var run) && run.AcquiredAt is { } at ? _clock.GetUtcNow() - at : null;
 
+    internal (string GateId, DateTimeOffset SinceUtc)? ReadHolder(string project)
+        => _runs.Values.Where(run => run.AcquiredAt is not null
+                && string.Equals(run.Project, project, StringComparison.OrdinalIgnoreCase))
+            .MaxBy(run => run.AcquiredAt) is { AcquiredAt: { } since } holder
+            ? (holder.GateId, since) : null;
+
     public GateSlotBoard Board()
     {
         var total = CurrentTotal;

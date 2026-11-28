@@ -1,7 +1,8 @@
 namespace AgentStudio.OrchestrationDecisions;
 
 public sealed record IntegrationRecoveryReservation(
-    string Card, string Target, DateTimeOffset DeliveredAtUtc, IReadOnlyList<string> Paths);
+    string Card, string Target, DateTimeOffset DeliveredAtUtc, IReadOnlyList<string> Paths,
+    string? ReceiptDeliverySha = null);
 
 public enum IntegrationConflictAction { None, StartAgentRound, LeaveForHumanReview }
 
@@ -25,7 +26,12 @@ public static class IntegrationConflictPolicy
 
     public static bool MayIntegrate(string card, string target, DateTimeOffset deliveredAtUtc,
         IReadOnlyList<string>? changedPaths, IReadOnlyList<IntegrationRecoveryReservation> reservations)
-        => !reservations.Any(reservation => reservation.Card != card
+        => !BlockingReservations(card, target, deliveredAtUtc, changedPaths, reservations).Any();
+
+    public static IEnumerable<IntegrationRecoveryReservation> BlockingReservations(string card, string target,
+        DateTimeOffset deliveredAtUtc, IReadOnlyList<string>? changedPaths,
+        IReadOnlyList<IntegrationRecoveryReservation> reservations)
+        => reservations.Where(reservation => reservation.Card != card
             && reservation.Target == target && reservation.DeliveredAtUtc < deliveredAtUtc
             && (changedPaths is null || reservation.Paths.Intersect(changedPaths, StringComparer.Ordinal).Any()));
 

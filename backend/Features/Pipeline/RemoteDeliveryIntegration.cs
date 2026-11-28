@@ -406,10 +406,17 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             }
             // File admission can invoke Git. Recheck the snapshot after that
             // work so an enqueue during the read participates in selection.
-            var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray());
+            var holds = new Dictionary<RemoteDeliveryIntegrationRequest, IReadOnlyList<ObservedConflictHold>>(
+                ReferenceEqualityComparer.Instance);
+            var observedAt = _board.ObservationTime;
+            var eligible = _conflictRecovery?.Eligible(candidates.Select(item => item.Request).ToArray(),
+                (request, blockers) => holds.Add(request, blockers));
             lock (_gate)
             {
                 if (revision != projectQueue.Revision) continue;
+                projectQueue.Holds = holds;
+                projectQueue.HoldsObservedAtUtc = observedAt;
+                projectQueue.Revision++;
                 var now = DateTimeOffset.UtcNow;
                 delivery = eligible is null ? candidates.FirstOrDefault()
                     : candidates.FirstOrDefault(item => ReferenceEquals(item.Request, eligible.FirstOrDefault()));
@@ -421,9 +428,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 else
                 {
                     projectQueue.Pending.Remove(delivery);
-                    projectQueue.Revision++;
                     projectQueue.Current = delivery;
-                    projectQueue.CurrentSinceUtc = now;
+                    projectQueue.CurrentSinceUtc = _board.ObservationTime;
                 }
             }
             PublishBoard(project, projectQueue);
@@ -625,12 +631,20 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     {
         lock (_gate)
         {
+            var now = DateTimeOffset.UtcNow;
+            if (_projectQueues.TryGetValue(delivery.Request.Project, out var queue)
+                && ReferenceEquals(queue.Current, delivery))
+            {
+                queue.Current = null;
+                queue.Revision++;
+                _board.RecordCompletion(delivery.Request.Project);
+            }
             if (_deliveryReplays.TryGetValue(delivery.DeliveryKey, out var replay)
                 && ReferenceEquals(replay.Completion, delivery.Completion))
             {
                 _deliveryReplays[delivery.DeliveryKey] = replay with
                 {
-                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    CompletedAtUtc = now,
                 };
             }
         }
@@ -697,6 +711,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         public QueuedDelivery? Current { get; set; }
         public DateTimeOffset? CurrentSinceUtc { get; set; }
         public string CurrentActivity { get; set; } = DeliveryIntegrationQueueBoard.Integrating;
+        public Dictionary<RemoteDeliveryIntegrationRequest, IReadOnlyList<ObservedConflictHold>> Holds { get; set; }
+            = new(ReferenceEqualityComparer.Instance);
+        public DateTimeOffset? HoldsObservedAtUtc { get; set; }
     }
 
     /// <summary>
@@ -710,21 +727,28 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         {
             long revision;
             RemoteDeliveryIntegrationRequest[] pending;
+            Dictionary<RemoteDeliveryIntegrationRequest, IReadOnlyList<ObservedConflictHold>> holds;
+            DateTimeOffset? holdsObservedAt;
             var rows = new List<DeliveryIntegrationQueueRow>();
             lock (_gate)
             {
                 if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
                 revision = queue.Revision;
                 if (queue.Current is { } current)
-                    rows.Add(new DeliveryIntegrationQueueRow(current.Request.JobId, queue.CurrentActivity,
-                        queue.CurrentSinceUtc));
+                    rows.Add(BoardRow(current.Request, queue.CurrentActivity, queue.CurrentSinceUtc));
                 pending = queue.Pending.OrderBy(item => item, QueuedDeliveryComparer.Instance)
                     .Select(item => item.Request).ToArray();
+                holds = queue.Holds;
+                holdsObservedAt = queue.HoldsObservedAtUtc;
             }
 
             if (_conflictRecovery is not null) pending = _conflictRecovery.Order(pending).ToArray();
-            rows.AddRange(pending.Select(request => new DeliveryIntegrationQueueRow(request.JobId,
-                DeliveryIntegrationQueueBoard.Waiting, request.DeliveredAtUtc)));
+            rows.AddRange(pending.Select(request => BoardRow(request, DeliveryIntegrationQueueBoard.Waiting,
+                request.DeliveredAtUtc) with
+                {
+                    Holds = holds.GetValueOrDefault(request) ?? [],
+                    HoldsObservedAtUtc = holds.ContainsKey(request) ? holdsObservedAt : null,
+                }));
             lock (_gate)
             {
                 if (!_projectQueues.TryGetValue(project, out var active) || !ReferenceEquals(active, queue)) return;
@@ -734,6 +758,15 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             }
         }
     }
+
+    private static DeliveryIntegrationQueueRow BoardRow(RemoteDeliveryIntegrationRequest request,
+        string activity, DateTimeOffset? since)
+        => new(request.JobId, activity, since)
+        {
+            ReviewAttemptId = request.ReviewAttemptId,
+            ResultSha = request.ReviewedResultSha,
+            Target = request.IntegrationBranch,
+        };
 
     /// <summary>
     /// AGT-4020: before the head merges, the deliveries waiting behind it on
