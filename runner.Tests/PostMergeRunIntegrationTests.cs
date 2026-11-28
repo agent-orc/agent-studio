@@ -373,6 +373,82 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["fail", passed ? "pass" : "unknown"], test.Attempts.Select(attempt => attempt.Result));
     }
 
+    [Theory]
+    [InlineData("ok 1 - renewal # SKIP disabled", 0)]
+    [InlineData("ok 1 - renewal # TODO later", 0)]
+    [InlineData("not ok 1 - renewal", 1)]
+    public async Task SameNamedSiblingCannotConfirmOrClearAnUnidentifiedFailure(string firstRetryPoint, int exit)
+    {
+        var receipt = await LintReceiptAsync("lint", "ok 1 - renewal\nnot ok 2 - renewal", exit,
+            firstRetryPoint + "\nok 2 - renewal");
+        Assert.Equal("red", receipt.Status);
+        Assert.Empty(Assert.Single(receipt.Verdicts).FlakyTests!);
+        var tests = receipt.TestVerdicts!;
+        Assert.Equal(exit == 0 ? 1 : 2, tests.Count);
+        Assert.All(tests, test =>
+        {
+            Assert.Contains("renewal", test.Test);
+            Assert.Contains(test.Attempts, attempt => attempt.Result == "unknown");
+            Assert.Contains(test.Attempts, attempt => attempt.Result == "fail");
+        });
+    }
+
+    [Fact]
+    public async Task GeneratedNamesakesCanFailAtTheSameSourceLocationOnDifferentAttempts()
+    {
+        const string diagnostic = "\n  ---\n  location: 'test/renew.mjs:4:1'\n  ...";
+        var receipt = await LintReceiptAsync("lint", "not ok 1 - renewal" + diagnostic + "\nok 2 - renewal",
+            1, "ok 1 - renewal\nnot ok 2 - renewal" + diagnostic);
+        Assert.Equal(2, receipt.Failure!.FailingTests.Count);
+        Assert.All(receipt.TestVerdicts!, test => Assert.Contains(test.Attempts, attempt => attempt.Result == "unknown"));
+    }
+
+    [Fact]
+    public async Task SameNamedFailuresKeepTheirLocationAndErrorAcrossReorderedRetries()
+    {
+        static string Failure(int number, string file) => $"""
+            not ok {number} - renewal
+              ---
+              location: 'test/{file}.mjs:1:4'
+              error: '{file} error'
+              ...
+            """;
+        var initial = string.Join("\n", Failure(1, "a"), Failure(2, "b"));
+        var repeat = string.Join("\n", Failure(1, "c"), Failure(2, "a"));
+        var receipt = await LintReceiptAsync("lint", initial, 1, repeat);
+        var verdict = Assert.Single(receipt.Verdicts);
+        Assert.Equal(3, receipt.Failure!.FailingTests.Count);
+        foreach (var (file, first, retry) in new[] { ("a", "fail", "fail"), ("b", "fail", "unknown"), ("c", "unknown", "fail") })
+        {
+            var test = Assert.Single(receipt.TestVerdicts!, test => test.Test.Contains($"test/{file}.mjs:1:4"));
+            Assert.Equal([first, retry], test.Attempts.Select(attempt => attempt.Result));
+            Assert.Equal($"{file} error", verdict.FailureMessages![test.Test]);
+        }
+    }
+
+    [Theory]
+    [InlineData("ok 2 - renewal")]
+    [InlineData("TAP version 13\n1..0\nTAP version 13\nok 1 - renewal")]
+    public async Task APassInAnotherPositionCannotClearAPartialTapFailure(string repeat)
+    {
+        var receipt = await LintReceiptAsync("lint", "TAP version 13\nnot ok 1 - renewal", 0,
+            repeat.StartsWith("TAP", StringComparison.Ordinal) ? repeat : "TAP version 13\n" + repeat);
+        Assert.Equal("red", receipt.Status);
+        var test = Assert.Single(receipt.TestVerdicts!);
+        Assert.Equal(["fail", "unknown"], test.Attempts.Select(attempt => attempt.Result));
+    }
+
+    [Fact]
+    public async Task PassingChildInAnotherSuiteCannotClearAMissingChild()
+    {
+        var receipt = await LintReceiptAsync("lint", "# Subtest: suite A\n    not ok 1 - renewal", 0,
+            "# Subtest: suite B\n    ok 1 - renewal");
+        Assert.Equal("red", receipt.Status);
+        var test = Assert.Single(receipt.TestVerdicts!);
+        Assert.Contains("suite A", test.Test);
+        Assert.Equal(["fail", "unknown"], test.Attempts.Select(attempt => attempt.Result));
+    }
+
     private async Task<PostMergeRunRecord> LintReceiptAsync(string lint, string initial, int retryExit, string repeat)
     {
         var fixture = DurableFixture(lint);

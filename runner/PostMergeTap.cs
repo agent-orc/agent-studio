@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
@@ -6,28 +8,95 @@ namespace AgentRunner;
 /// <summary>Node TAP points and their first diagnostic, read before truncating command output.</summary>
 internal sealed partial class PostMergeTap(string output)
 {
-    private sealed record Point(string Name, string Result, string? Error);
+    private sealed record Point(string Name, string Result, int Document, string Number, string? Error = null, string? Location = null);
+    internal sealed record Test(string Name, string Initial, string Repeat, string? Error);
 
-    [GeneratedRegex(@"^\s*(?<result>not ok|ok)\s+\d+\s+-\s+(?<name>.+?)\s*$")]
+    [GeneratedRegex(@"^\s*(?<result>not ok|ok)\s+(?<number>\d+)\s+-\s+(?<name>.+?)\s*$")]
     private static partial Regex TestPoint();
     [GeneratedRegex(@"\s+#\s*(?:SKIP|TODO)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Directive();
 
-    private readonly Dictionary<string, Point> _points = Read(output).GroupBy(point => point.Name)
-        .ToDictionary(group => group.Key, group => group.FirstOrDefault(point => point.Result == PostMergeTestResults.Fail)
-            ?? group.First());
+    private readonly Point[] _points = Read(output).ToArray();
+    internal bool HasFailures => _points.Any(point => point.Result == PostMergeTestResults.Fail);
 
-    // The command verdict accepts up to 64 names in each list.
-    internal string[] FailedTests => _points.Values.Where(point => point.Result == PostMergeTestResults.Fail)
-        .Take(64).Select(point => point.Name).ToArray();
+    // Node emits a source location on failure, but normally omits it for passes and skips.
+    // A duplicate title without a unique location cannot establish a cross-attempt result.
+    internal IReadOnlyList<Test> Compare(PostMergeTap repeat, string checkout)
+    {
+        var initialByName = _points.ToLookup(point => point.Name);
+        var repeatByName = repeat._points.ToLookup(point => point.Name);
+        var checkoutPrefix = Path.TrimEndingDirectorySeparator(checkout) + Path.DirectorySeparatorChar;
+        var tests = new List<Test>();
+        var usedNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in _points.Concat(repeat._points).Where(point => point.Result == PostMergeTestResults.Fail)
+                     .Select(point => point.Name).Distinct(StringComparer.Ordinal))
+        {
+            var initial = initialByName[name].ToArray();
+            var retried = repeatByName[name].ToArray();
+            if (initial.Length <= 1 && retried.Length <= 1 && Compatible(initial.SingleOrDefault(), retried.SingleOrDefault()))
+            {
+                Add(name, initial.SingleOrDefault(), retried.SingleOrDefault());
+                continue;
+            }
 
-    internal string ResultOf(string name) => _points.GetValueOrDefault(name)?.Result ?? PostMergeTestResults.Unknown;
-    internal string? ErrorOf(string name) => _points.GetValueOrDefault(name)?.Error;
+            var firstLocations = initial.ToLookup(point => point.Location);
+            var retryLocations = retried.ToLookup(point => point.Location);
+            foreach (var location in firstLocations.Concat(retryLocations).Select(group => group.Key).Distinct())
+            {
+                var first = firstLocations[location].ToArray();
+                var second = retryLocations[location].ToArray();
+                var source = location?.StartsWith(checkoutPrefix, StringComparison.Ordinal) == true
+                    ? location[checkoutPrefix.Length..] : location;
+                var label = source is null ? name : $"{name} [{source}]";
+                // Skipped and passing namesakes can come from the same parameterized declaration.
+                // Without their locations, even two failures at that declaration may be different cases.
+                if (location is not null && first.Length <= 1 && second.Length <= 1
+                    && (first.Length == 0 || second.Length == 0 || !firstLocations.Contains(null) && !retryLocations.Contains(null)))
+                {
+                    Add(label, first.SingleOrDefault(), second.SingleOrDefault());
+                    continue;
+                }
+
+                for (var i = 0; i < first.Length; i++)
+                    Add($"{label} [initial {i + 1}]", first[i], null);
+                for (var i = 0; i < second.Length; i++)
+                    Add($"{label} [repeat {i + 1}]", null, second[i]);
+            }
+        }
+        return tests;
+
+        void Add(string label, Point? first, Point? second)
+        {
+            if (first?.Result != PostMergeTestResults.Fail && second?.Result != PostMergeTestResults.Fail) return;
+            // Receipt test IDs allow 256 characters. Keep generated labels distinct from literal titles.
+            var unique = ReceiptName(label);
+            for (var suffix = 2; !usedNames.Add(unique); suffix++) unique = ReceiptName($"{label} #{suffix}");
+            tests.Add(new(unique, first?.Result ?? PostMergeTestResults.Unknown,
+                second?.Result ?? PostMergeTestResults.Unknown, second?.Error ?? first?.Error));
+        }
+    }
+
+    private static string ReceiptName(string label)
+    {
+        const int maxLength = 256;
+        if (label.Length <= maxLength) return label;
+        var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(label)))[..16];
+        return $"{label[..(maxLength - digest.Length - 3)]} [{digest}]";
+    }
+
+    private static bool Compatible(Point? initial, Point? repeat)
+    {
+        if (initial is null || repeat is null) return true;
+        if (initial.Location is not null && repeat.Location is not null) return initial.Location == repeat.Location;
+        return initial.Document == repeat.Document && initial.Number == repeat.Number;
+    }
 
     private static IEnumerable<Point> Read(string output)
     {
         using var reader = new StringReader(output);
+        var parents = new List<(int Indent, string Name)>();
         Point? point = null;
+        var document = 0;
         int? diagnosticIndent = null;
         int? pointIndent = null;
         while (reader.ReadLine() is { } line)
@@ -37,6 +106,11 @@ internal sealed partial class PostMergeTap(string output)
             if (diagnosticIndent is { } depth)
             {
                 if (indent == depth && field == "...") diagnosticIndent = null;
+                if (indent == depth && point is not null && field.StartsWith("location:", StringComparison.Ordinal))
+                {
+                    var location = field[9..].Trim().Trim('\'', '"');
+                    if (!string.IsNullOrWhiteSpace(location)) point = point with { Location = location };
+                }
                 if (indent == depth && point is { Error: null } && field.StartsWith("error:", StringComparison.Ordinal))
                 {
                     var message = field[6..].Trim();
@@ -56,14 +130,28 @@ internal sealed partial class PostMergeTap(string output)
                 diagnosticIndent = indent;
                 continue;
             }
+            if (field.StartsWith("# Subtest: ", StringComparison.Ordinal))
+            {
+                parents.RemoveAll(parent => parent.Indent >= indent);
+                parents.Add((indent, field[11..]));
+                continue;
+            }
+            if (field.StartsWith("TAP version ", StringComparison.Ordinal))
+            {
+                parents.Clear();
+                document++;
+            }
             var match = TestPoint().Match(line);
             if (!match.Success) continue;
             if (point is not null) yield return point;
             pointIndent = indent;
-            var name = match.Groups["name"].Value;
-            point = name.Length <= 256 && !Directive().IsMatch(name)
-                ? new(name, match.Groups["result"].Value == "ok" ? PostMergeTestResults.Pass : PostMergeTestResults.Fail, null)
-                : null;
+            parents.RemoveAll(parent => parent.Indent >= indent);
+            var title = match.Groups["name"].Value;
+            var directive = Directive().Match(title);
+            var name = directive.Success ? title[..directive.Index] : title;
+            var result = directive.Success ? PostMergeTestResults.Unknown :
+                match.Groups["result"].Value == "ok" ? PostMergeTestResults.Pass : PostMergeTestResults.Fail;
+            point = new(string.Join(" > ", parents.Select(parent => parent.Name).Append(name)), result, document, match.Groups["number"].Value);
         }
         if (point is not null) yield return point;
     }

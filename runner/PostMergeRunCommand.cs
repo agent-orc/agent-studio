@@ -425,11 +425,10 @@ public sealed class PostMergeRunCommand
                 if (lint is not null && result.ExitCode != 0)
                 {
                     var initial = new PostMergeTap(result.Output);
-                    var failures = initial.FailedTests;
-                    if (failures.Length > 0)
+                    if (initial.HasFailures)
                     {
                         var repeat = await TimedRun(command, definition.Environment, ct);
-                        verdict = LintRetryVerdict(verdict, lint, initial, failures, repeat, tip, ledger, _recordRun);
+                        verdict = LintRetryVerdict(verdict, lint, initial.Compare(new(repeat.Output), _options.Checkout), repeat, tip, ledger, _recordRun);
                     }
                 }
                 verdicts.Add(verdict);
@@ -734,20 +733,22 @@ public sealed class PostMergeRunCommand
                 }, StringComparer.Ordinal) };
 
     private static PostMergeCommandVerdict LintRetryVerdict(PostMergeCommandVerdict initialVerdict,
-        ProjectTestSuite lint, PostMergeTap initial, string[] initialFailures,
+        ProjectTestSuite lint, IReadOnlyList<PostMergeTap.Test> observations,
         (int ExitCode, bool TimedOut, string Output, long DurationMs) repeat, string tip,
         PostMergeTestLedger ledger, Action<PostMergeTestRun> record)
     {
-        var retried = new PostMergeTap(repeat.Output);
-        var retryFailures = retried.FailedTests;
-        // Give observed retry failures priority within the receipt limit. A skipped or
-        // missing point leaves the original failure unresolved, even on a zero exit.
-        var unresolved = initialFailures.Where(test => retried.ResultOf(test) == PostMergeTestResults.Unknown);
-        var failed = retryFailures.Concat(unresolved).Take(64).ToArray();
-        var tests = failed.Union(initialFailures).Take(64).ToArray();
-        ledger.Initial(lint, lint.Command, tests, tests, tip, initial.ResultOf);
+        // Give retry failures priority within the receipt's 64-test limit.
+        var evidence = observations.OrderBy(test => test.Repeat switch
+            {
+                PostMergeTestResults.Fail => 0,
+                PostMergeTestResults.Unknown => 1,
+                _ => 2,
+            }).Take(64).ToDictionary(test => test.Name);
+        var tests = evidence.Keys.ToArray();
+        var failed = tests.Where(test => evidence[test].Repeat != PostMergeTestResults.Pass).ToArray();
+        ledger.Initial(lint, lint.Command, tests, tests, tip, test => evidence[test].Initial);
         record(new(PostMergeRunPhases.Repeat, tip, tests, repeat.ExitCode, repeat.TimedOut, repeat.Output, repeat.DurationMs)
-            { ReportedResults = tests.ToDictionary(test => test, retried.ResultOf) });
+            { ReportedResults = tests.ToDictionary(test => test, test => evidence[test].Repeat) });
 
         return initialVerdict with
         {
@@ -756,9 +757,9 @@ public sealed class PostMergeRunCommand
             Retried = true,
             OutputTail = repeat.ExitCode != 0 ? PostMergeAttributor.Excerpt(repeat.Output) : initialVerdict.OutputTail,
             FailedTests = failed,
-            FlakyTests = tests.Where(test => retried.ResultOf(test) == PostMergeTestResults.Pass).ToArray(),
+            FlakyTests = tests.Where(test => evidence[test].Repeat == PostMergeTestResults.Pass).ToArray(),
             FailureMessages = tests.ToDictionary(test => test,
-                test => retried.ErrorOf(test) ?? initial.ErrorOf(test) ?? "Not recorded in receipt."),
+                test => evidence[test].Error ?? "Not recorded in receipt."),
         };
     }
 

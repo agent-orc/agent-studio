@@ -862,8 +862,12 @@ fails with Node TAP output, its receipt retains the failed test names and first
 error lines. The runner repeats that lint command once at the same tip. Only
 tests reported failing again receive a confirmed failure. A failure first seen
 on the repeat carries its own name and diagnostic. An explicit TAP pass clears
-an initial failure. A skipped, TODO or absent test stays unresolved even when
-the repeat exits successfully. A later passing
+an initial failure when the point can be matched across attempts. Nested tests
+include their parent names. For duplicate names, the receipt uses source
+locations where they identify individual tests. Where TAP leaves the match
+ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
+A skipped, TODO or absent test stays unresolved even when the repeat exits
+successfully. A later passing
 execution of the same lint command supplies covering evidence for its base
 check. Suspect lists use the RT static test-file and
 covering-folder map, retaining build inputs and project-graph fallback when
