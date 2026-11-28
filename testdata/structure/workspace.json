@@ -1,0 +1,2792 @@
+{
+  "nodes": [
+    {
+      "id": "installation",
+      "kind": "boundary",
+      "label": "Installation",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": null
+    },
+    {
+      "id": "machine:workstation",
+      "kind": "physical",
+      "label": "Owner workstation",
+      "parentId": "installation",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": null
+    },
+    {
+      "id": "machine:debian",
+      "kind": "vm",
+      "label": "Debian VM",
+      "parentId": "machine:workstation",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": {
+          "observedAt": "2026-11-28T02:04:30.7584512Z",
+          "cpuPercent": 57.58,
+          "cpuCores": 24,
+          "load1": 14.59,
+          "load5": 9.28,
+          "load15": 7.67,
+          "memoryUsedBytes": 12016951296,
+          "memoryTotalBytes": 52637257728,
+          "disks": null,
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:04:30.7584512Z",
+          "observedBy": "review-runner-2",
+          "freshUntil": "2026-11-28T02:06:00.7584512Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:gate",
+      "kind": "container",
+      "label": "Gate host",
+      "parentId": "machine:debian",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": "gate",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": {
+          "observedAt": "2026-11-28T02:04:34.9187597Z",
+          "cpuPercent": null,
+          "cpuCores": null,
+          "load1": null,
+          "load5": null,
+          "load15": null,
+          "memoryUsedBytes": null,
+          "memoryTotalBytes": null,
+          "disks": [
+            {
+              "mount": "/var/tmp/agentstudio-remote-gates",
+              "purpose": "gate work",
+              "usedBytes": 153966235648,
+              "freeBytes": 110036619264,
+              "totalBytes": 264002854912
+            }
+          ],
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:04:34.9187597Z",
+          "observedBy": "gate SSH disk probe",
+          "freshUntil": "2026-11-28T02:06:04.9187597Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:review-1",
+      "kind": "container",
+      "label": "Review runner 1",
+      "parentId": "machine:debian",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "matched",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:10.5568144Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 50.15,
+        "memoryUsedBytes": 13541609472,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-1",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:10.5568144Z",
+        "performance": {
+          "observedAt": "2026-11-28T02:04:10.5568144Z",
+          "cpuPercent": 50.15,
+          "cpuCores": 24,
+          "load1": 15.83,
+          "load5": 9.09,
+          "load15": 7.58,
+          "memoryUsedBytes": 13541609472,
+          "memoryTotalBytes": 52637257728,
+          "disks": null,
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": {
+          "busySlots": 0,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:10.5568144Z",
+          "observedBy": "review-runner-1",
+          "freshUntil": "2026-11-28T02:05:40.5568144Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:review-2",
+      "kind": "container",
+      "label": "Review runner 2",
+      "parentId": "machine:debian",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "matched",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:30.7584512Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 57.58,
+        "memoryUsedBytes": 12016951296,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-2",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:30.7584512Z",
+        "performance": {
+          "observedAt": "2026-11-28T02:04:30.7584512Z",
+          "cpuPercent": 57.58,
+          "cpuCores": 24,
+          "load1": 14.59,
+          "load5": 9.28,
+          "load15": 7.67,
+          "memoryUsedBytes": 12016951296,
+          "memoryTotalBytes": 52637257728,
+          "disks": null,
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": {
+          "busySlots": 0,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:30.7584512Z",
+          "observedBy": "review-runner-2",
+          "freshUntil": "2026-11-28T02:06:00.7584512Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:review-3",
+      "kind": "container",
+      "label": "Review runner 3",
+      "parentId": "machine:debian",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "matched",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:15.565426Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 48.72,
+        "memoryUsedBytes": 14342885376,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-3",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:15.565426Z",
+        "performance": {
+          "observedAt": "2026-11-28T02:04:15.565426Z",
+          "cpuPercent": 48.72,
+          "cpuCores": 24,
+          "load1": 16.89,
+          "load5": 9.43,
+          "load15": 7.69,
+          "memoryUsedBytes": 14342885376,
+          "memoryTotalBytes": 52637257728,
+          "disks": null,
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": {
+          "busySlots": 2,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:15.565426Z",
+          "observedBy": "review-runner-3",
+          "freshUntil": "2026-11-28T02:05:45.565426Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:studio-server",
+      "kind": "server",
+      "label": "Studio server",
+      "parentId": "installation",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio self observation",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": "The API reports from this machine"
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": "2026-11-28T02:05:09.990714Z",
+        "performance": {
+          "observedAt": "2026-11-28T02:04:31.7324444Z",
+          "cpuPercent": 99.93,
+          "cpuCores": 12,
+          "load1": 108.46,
+          "load5": 96.98,
+          "load15": 104.6,
+          "memoryUsedBytes": 30266519552,
+          "memoryTotalBytes": 67290382336,
+          "disks": [
+            {
+              "mount": "/",
+              "purpose": "container storage",
+              "usedBytes": 416314585088,
+              "freeBytes": 76960575488,
+              "totalBytes": 493275160576
+            }
+          ],
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": "MS-7B61",
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:review-1:review-runner-1",
+      "kind": "process",
+      "label": "Review runner 1",
+      "parentId": "machine:review-1",
+      "unitId": "review-runner-1",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:10.5568144Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 50.15,
+        "memoryUsedBytes": 13541609472,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-1",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:10.5568144Z",
+        "performance": null,
+        "capacity": {
+          "busySlots": 0,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:10.5568144Z",
+          "observedBy": "review-runner-1",
+          "freshUntil": "2026-11-28T02:05:40.5568144Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:review-2:review-runner-2",
+      "kind": "process",
+      "label": "Review runner 2",
+      "parentId": "machine:review-2",
+      "unitId": "review-runner-2",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:30.7584512Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 57.58,
+        "memoryUsedBytes": 12016951296,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-2",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:30.7584512Z",
+        "performance": null,
+        "capacity": {
+          "busySlots": 0,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:30.7584512Z",
+          "observedBy": "review-runner-2",
+          "freshUntil": "2026-11-28T02:06:00.7584512Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:review-3:review-runner-3",
+      "kind": "process",
+      "label": "Review runner 3",
+      "parentId": "machine:review-3",
+      "unitId": "review-runner-3",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:15.565426Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 48.72,
+        "memoryUsedBytes": 14342885376,
+        "memoryTotalBytes": 52637257728,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "review-3",
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:15.565426Z",
+        "performance": null,
+        "capacity": {
+          "busySlots": 2,
+          "freeSlots": null,
+          "totalSlots": null,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:15.565426Z",
+          "observedBy": "review-runner-3",
+          "freshUntil": "2026-11-28T02:05:45.565426Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "machine:studio-agents",
+      "kind": "host",
+      "label": "Coding runner",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:46.1971739Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 99.59,
+        "memoryUsedBytes": 26861281280,
+        "memoryTotalBytes": 67290382336,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "studio-agents",
+        "machineKind": "physical",
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "coding",
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:46.1971739Z",
+        "performance": {
+          "observedAt": "2026-11-28T02:04:46.1971739Z",
+          "cpuPercent": 99.59,
+          "cpuCores": 12,
+          "load1": 105.65,
+          "load5": 96.94,
+          "load15": 104.47,
+          "memoryUsedBytes": 26861281280,
+          "memoryTotalBytes": 67290382336,
+          "disks": [
+            {
+              "mount": "/",
+              "purpose": "review work",
+              "usedBytes": 416529027072,
+              "freeBytes": 76746133504,
+              "totalBytes": 493275160576
+            }
+          ],
+          "networkReceiveBytesPerSecond": null,
+          "networkTransmitBytesPerSecond": null
+        },
+        "capacity": {
+          "busySlots": 14,
+          "freeSlots": 12,
+          "totalSlots": 26,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": null,
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:04:46.1971739Z",
+          "observedBy": "coding-runner, host-review-runner",
+          "freshUntil": "2026-11-28T02:06:16.1971739Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-agents:coding-runner",
+      "kind": "host-service",
+      "label": "Coding runner",
+      "parentId": "machine:studio-agents",
+      "unitId": "coding-runner",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "coding",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:46.1971739Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 99.59,
+        "memoryUsedBytes": 26861281280,
+        "memoryTotalBytes": 67290382336,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "studio-agents",
+        "machineKind": "physical",
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "coding"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:46.1971739Z",
+        "performance": null,
+        "capacity": {
+          "busySlots": 14,
+          "freeSlots": 4,
+          "totalSlots": 18,
+          "runningCards": [
+            "AGT-4018",
+            "AGT-4108",
+            "AGT-4182",
+            "AGT-4195",
+            "AGT-4198",
+            "AGT-4249",
+            "AGT-4251",
+            "AGT-4253",
+            "AGT-4254",
+            "AGT-4256",
+            "AGT-4271",
+            "AGT-4276",
+            "AGT-4326",
+            "AGT-4327"
+          ],
+          "heldSlots": null,
+          "waitingCards": [],
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "coding-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 127927193927,
+          "memoryBytes": 42906812416,
+          "cpuCoresUsed": null
+        },
+        "workers": [
+          {
+            "cardKey": "AGT-4018",
+            "resources": {
+              "cpuUsageMicroseconds": 5911012859,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4108",
+            "resources": {
+              "cpuUsageMicroseconds": 2159721521,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4182",
+            "resources": {
+              "cpuUsageMicroseconds": 4212960,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4195",
+            "resources": {
+              "cpuUsageMicroseconds": 783368675,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4198",
+            "resources": {
+              "cpuUsageMicroseconds": 907916275,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4249",
+            "resources": {
+              "cpuUsageMicroseconds": 4004017119,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4251",
+            "resources": {
+              "cpuUsageMicroseconds": 95561564,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4253",
+            "resources": {
+              "cpuUsageMicroseconds": 2769004209,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4254",
+            "resources": {
+              "cpuUsageMicroseconds": 1336216691,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4256",
+            "resources": {
+              "cpuUsageMicroseconds": 2386360419,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4271",
+            "resources": {
+              "cpuUsageMicroseconds": 1163806385,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4276",
+            "resources": {
+              "cpuUsageMicroseconds": 1371238611,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4326",
+            "resources": {
+              "cpuUsageMicroseconds": 377298727,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          },
+          {
+            "cardKey": "AGT-4327",
+            "resources": {
+              "cpuUsageMicroseconds": 8009603,
+              "memoryBytes": null,
+              "cpuCoresUsed": null
+            }
+          }
+        ],
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-agents:host-review-runner",
+      "kind": "host-service",
+      "label": "Host review runner",
+      "parentId": "machine:studio-agents",
+      "unitId": "host-review-runner",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "review",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:31.7324444Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": 99.93,
+        "memoryUsedBytes": 30266519552,
+        "memoryTotalBytes": 67290382336,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "studio-agents",
+        "machineKind": "physical",
+        "virtualization": null,
+        "containerName": null,
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-28T02:04:31.7324444Z",
+        "performance": null,
+        "capacity": {
+          "busySlots": 0,
+          "freeSlots": 8,
+          "totalSlots": 8,
+          "runningCards": [],
+          "heldSlots": null,
+          "waitingCards": [],
+          "queueLength": null
+        },
+        "release": {
+          "version": null,
+          "stableVersion": null,
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "dataLocations": null,
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        },
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 148680680036,
+          "memoryBytes": 522346496,
+          "cpuCoresUsed": null
+        },
+        "workers": [],
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-server:api",
+      "kind": "container",
+      "label": "API",
+      "parentId": "stack:machine:studio-server:studio",
+      "unitId": "api",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio self observation",
+      "role": "api",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 22968471643,
+          "memoryBytes": 10036854784,
+          "cpuCoresUsed": null
+        },
+        "workers": null,
+        "container": {
+          "id": "api",
+          "role": "api",
+          "resources": {
+            "cpuUsageMicroseconds": 22968471643,
+            "memoryBytes": 10036854784,
+            "cpuCoresUsed": null
+          },
+          "uptimeSeconds": 6675.13,
+          "imageTag": null,
+          "restarts": null
+        },
+        "api": {
+          "sample": {
+            "observedAt": "2026-11-28T02:05:09.990714Z",
+            "observedBy": "capture: rates and queue sources unavailable",
+            "freshUntil": "2026-11-28T02:06:39.990714Z"
+          },
+          "requestsPerSecond": null,
+          "requestsInFlight": null,
+          "queues": {
+            "integration": null,
+            "review": null,
+            "postMerge": null,
+            "coding": null,
+            "gate": null,
+            "queuedTasks": null
+          }
+        },
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-server:web",
+      "kind": "container",
+      "label": "Web frontend",
+      "parentId": "stack:machine:studio-server:studio",
+      "unitId": "web",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio self observation",
+      "role": "web",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 184211198,
+          "memoryBytes": 35753984,
+          "cpuCoresUsed": null
+        },
+        "workers": null,
+        "container": {
+          "id": "web",
+          "role": "web",
+          "resources": {
+            "cpuUsageMicroseconds": 184211198,
+            "memoryBytes": 35753984,
+            "cpuCoresUsed": null
+          },
+          "uptimeSeconds": 6633.88,
+          "imageTag": null,
+          "restarts": null
+        },
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-server:edge",
+      "kind": "container",
+      "label": "Edge proxy",
+      "parentId": "stack:machine:studio-server:studio",
+      "unitId": "edge",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio self observation",
+      "role": "edge",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 59433431662,
+          "memoryBytes": 36622336,
+          "cpuCoresUsed": null
+        },
+        "workers": null,
+        "container": {
+          "id": "edge",
+          "role": "edge",
+          "resources": {
+            "cpuUsageMicroseconds": 59433431662,
+            "memoryBytes": 36622336,
+            "cpuCoresUsed": null
+          },
+          "uptimeSeconds": 2264274.22,
+          "imageTag": null,
+          "restarts": null
+        },
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "component:studio-server:engine",
+      "kind": "container",
+      "label": "Orchestrator engine",
+      "parentId": "stack:machine:studio-server:studio",
+      "unitId": "engine",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio self observation",
+      "role": "engine",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 184346421,
+          "memoryBytes": 89063424,
+          "cpuCoresUsed": null
+        },
+        "workers": null,
+        "container": {
+          "id": "engine",
+          "role": "engine",
+          "resources": {
+            "cpuUsageMicroseconds": 184346421,
+            "memoryBytes": 89063424,
+            "cpuCoresUsed": null
+          },
+          "uptimeSeconds": 6631.7,
+          "imageTag": null,
+          "restarts": null
+        },
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "disk:machine:studio-server:md0",
+      "kind": "disk",
+      "label": "md0",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host block devices",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": {
+          "device": "md0",
+          "sizeBytes": 1071644672,
+          "raidLevel": "raid1",
+          "members": [
+            "nvme0n1p1",
+            "nvme1n1p1"
+          ],
+          "filesystems": []
+        },
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "disk:machine:studio-server:md1",
+      "kind": "disk",
+      "label": "md1",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host block devices",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": {
+          "device": "md1",
+          "sizeBytes": 8580497408,
+          "raidLevel": "raid1",
+          "members": [
+            "nvme0n1p2",
+            "nvme1n1p2"
+          ],
+          "filesystems": []
+        },
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "disk:machine:studio-server:md2",
+      "kind": "disk",
+      "label": "md2",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host block devices",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": {
+          "device": "md2",
+          "sizeBytes": 502309126144,
+          "raidLevel": "raid1",
+          "members": [
+            "nvme0n1p3",
+            "nvme1n1p3"
+          ],
+          "filesystems": [
+            {
+              "purpose": "runner work",
+              "path": "/",
+              "freeBytes": 76437344256,
+              "totalBytes": 493275160576,
+              "ownedBytes": null
+            }
+          ]
+        },
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "disk:machine:studio-server:nvme0n1",
+      "kind": "disk",
+      "label": "nvme0n1",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host block devices",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": {
+          "device": "nvme0n1",
+          "sizeBytes": 512110190592,
+          "raidLevel": null,
+          "members": [],
+          "filesystems": []
+        },
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "disk:machine:studio-server:nvme1n1",
+      "kind": "disk",
+      "label": "nvme1n1",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host block devices",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": {
+          "device": "nvme1n1",
+          "sizeBytes": 512110190592,
+          "raidLevel": null,
+          "members": [],
+          "filesystems": []
+        },
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "service:machine:studio-server:post-merge-window",
+      "kind": "host-service",
+      "label": "Post-merge tests",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "systemd cgroup",
+      "role": "post-merge",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": {
+          "cpuUsageMicroseconds": 12077030972,
+          "memoryBytes": 1273856,
+          "cpuCoresUsed": null
+        },
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "stack:machine:studio-server:studio",
+      "kind": "container-stack",
+      "label": "Studio stack",
+      "parentId": "machine:studio-server",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "studio.slice",
+      "role": null,
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:traffic",
+      "kind": "external",
+      "label": "Public traffic",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Studio edge configuration",
+      "role": "traffic",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:cdn",
+      "kind": "external",
+      "label": "CDN edge",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Studio edge configuration",
+      "role": "cdn",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:overlay",
+      "kind": "external",
+      "label": "Overlay network",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "Structure:GateNetwork",
+      "role": "overlay",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Structure:GateNetwork",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:source-hosting",
+      "kind": "external",
+      "label": "Source hosting",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "project repository configuration",
+      "role": "source-hosting",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "project repository configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:claude",
+      "kind": "external",
+      "label": "Claude subscription",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "runner provider registration",
+      "role": "claude",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "runner provider registration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    },
+    {
+      "id": "external:codex",
+      "kind": "external",
+      "label": "Codex subscription",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "runner provider registration",
+      "role": "codex",
+      "ownerLabel": null,
+      "otherProject": false,
+      "systemBoundaryId": null,
+      "detail": null,
+      "replicas": null,
+      "probeObservation": null,
+      "probe": null,
+      "status": null,
+      "observation": {
+        "difference": "unreachable-by-design",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "facts": {
+        "hostId": null,
+        "machineKind": null,
+        "virtualization": null,
+        "containerName": null,
+        "roles": null,
+        "lastSeenAt": null,
+        "performance": null,
+        "capacity": null,
+        "release": null,
+        "dataLocations": null,
+        "warnings": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "runner provider registration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "dmiProduct": null,
+        "detectedVm": null,
+        "detectedContainer": null,
+        "device": null,
+        "resources": null,
+        "workers": null,
+        "container": null,
+        "api": null,
+        "weeklyWindows": null
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": "machine:workstation",
+      "to": "external:overlay",
+      "kind": "overlay",
+      "label": "overlay",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:machine:workstation\u003Eexternal:overlay:overlay",
+      "facts": null
+    },
+    {
+      "from": "machine:review-1",
+      "to": "component:studio-server:api",
+      "kind": "runner-to-server",
+      "label": "runner-to-server",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:machine:review-1\u003Ecomponent:studio-server:api:runner-to-server",
+      "facts": null
+    },
+    {
+      "from": "machine:review-2",
+      "to": "component:studio-server:api",
+      "kind": "runner-to-server",
+      "label": "runner-to-server",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:machine:review-2\u003Ecomponent:studio-server:api:runner-to-server",
+      "facts": null
+    },
+    {
+      "from": "machine:review-3",
+      "to": "component:studio-server:api",
+      "kind": "runner-to-server",
+      "label": "runner-to-server",
+      "sourceRef": "Owner placement record, 2026-11-27",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": null,
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:machine:review-3\u003Ecomponent:studio-server:api:runner-to-server",
+      "facts": null
+    },
+    {
+      "from": "external:traffic",
+      "to": "external:cdn",
+      "kind": "public-route",
+      "label": "public route",
+      "sourceRef": "Studio edge configuration",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:external:traffic\u003Eexternal:cdn:public-route",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": "https",
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    },
+    {
+      "from": "external:cdn",
+      "to": "component:studio-server:edge",
+      "kind": "public-route",
+      "label": "public route",
+      "sourceRef": "Studio edge configuration",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:external:cdn\u003Ecomponent:studio-server:edge:public-route",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": "https",
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    },
+    {
+      "from": "component:studio-server:edge",
+      "to": "component:studio-server:web",
+      "kind": "public-route",
+      "label": "public route",
+      "sourceRef": "Studio edge configuration",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:component:studio-server:edge\u003Ecomponent:studio-server:web:public-route",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": "http",
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    },
+    {
+      "from": "component:studio-server:web",
+      "to": "component:studio-server:api",
+      "kind": "public-route",
+      "label": "public route",
+      "sourceRef": "Studio edge configuration",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:component:studio-server:web\u003Ecomponent:studio-server:api:public-route",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": "http",
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Studio edge configuration",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    },
+    {
+      "from": "component:studio-server:api",
+      "to": "machine:gate",
+      "kind": "gate-ssh",
+      "label": "gate ssh",
+      "sourceRef": "RemoteGate:SshHost",
+      "observation": {
+        "difference": "matched",
+        "health": "up",
+        "observedAt": "2026-11-28T02:04:34.9187597Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:component:studio-server:api\u003Emachine:gate:gate-ssh",
+      "facts": {
+        "state": "up",
+        "latencyMs": null,
+        "probedAt": "2026-11-28T02:04:34.9187597Z",
+        "transport": "ssh",
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:04:34.9187597Z",
+          "observedBy": "gate SSH disk probe",
+          "freshUntil": "2026-11-28T02:06:04.9187597Z"
+        }
+      }
+    },
+    {
+      "from": "component:studio-server:api",
+      "to": "external:overlay",
+      "kind": "overlay",
+      "label": "overlay",
+      "sourceRef": "Structure:GateNetwork",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:component:studio-server:api\u003Eexternal:overlay:overlay",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": null,
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Structure:GateNetwork",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    },
+    {
+      "from": "external:overlay",
+      "to": "machine:gate",
+      "kind": "overlay",
+      "label": "overlay",
+      "sourceRef": "Structure:GateNetwork",
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "observedAt": "2026-11-28T02:05:09.990714Z",
+        "version": null,
+        "expectedVersion": null,
+        "behind": false,
+        "cpuPercent": null,
+        "memoryUsedBytes": null,
+        "memoryTotalBytes": null,
+        "activeGates": null,
+        "detail": null
+      },
+      "id": "link:external:overlay\u003Emachine:gate:overlay",
+      "facts": {
+        "state": "not observed",
+        "latencyMs": null,
+        "probedAt": null,
+        "transport": null,
+        "addressClass": null,
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "Structure:GateNetwork",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        }
+      }
+    }
+  ],
+  "revision": 0,
+  "generatedAt": "2026-11-28T02:05:09.990714Z",
+  "schemaVersion": 3,
+  "history": {
+    "trends": [
+      {
+        "sample": {
+          "observedAt": "2026-11-28T02:04:00Z",
+          "observedBy": "retained runner telemetry",
+          "freshUntil": "2026-11-28T02:04:05Z"
+        },
+        "busySlots": 16,
+        "queuedTasks": null
+      },
+      {
+        "sample": {
+          "observedAt": "2026-11-28T02:04:05Z",
+          "observedBy": "retained runner telemetry",
+          "freshUntil": "2026-11-28T02:04:10Z"
+        },
+        "busySlots": 16,
+        "queuedTasks": null
+      },
+      {
+        "sample": {
+          "observedAt": "2026-11-28T02:04:10Z",
+          "observedBy": "retained runner telemetry",
+          "freshUntil": "2026-11-28T02:04:15Z"
+        },
+        "busySlots": 16,
+        "queuedTasks": null
+      }
+    ],
+    "events": [
+      {
+        "observedAt": "2026-11-27T23:48:15.5202277Z",
+        "observedBy": "task timeline",
+        "kind": "delivery-integrated",
+        "subject": "AGT-4248"
+      },
+      {
+        "observedAt": "2026-11-28T00:48:15.0013667+01:00",
+        "observedBy": "integration verification receipt",
+        "kind": "gate-verified",
+        "subject": "AGT-4248"
+      },
+      {
+        "observedAt": "2026-11-26T13:38:04.109898Z",
+        "observedBy": "task timeline",
+        "kind": "delivery-integrated",
+        "subject": "AGT-4024"
+      },
+      {
+        "observedAt": "2026-11-26T14:38:03.5678639+01:00",
+        "observedBy": "integration verification receipt",
+        "kind": "gate-verified",
+        "subject": "AGT-4024"
+      }
+    ],
+    "stepSeconds": 5,
+    "windowSeconds": 900
+  }
+}

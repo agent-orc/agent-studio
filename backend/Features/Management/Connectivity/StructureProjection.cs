@@ -23,10 +23,10 @@ public sealed record StructureObservation(string Difference, string Health, Date
     int? ActiveGates = null, string? Detail = null);
 /// <param name="Revision">Increases whenever a node or link of this scope changes; deltas name the revision they start from.</param>
 public sealed record StructureResponse(IReadOnlyList<StructureNode> Nodes, IReadOnlyList<StructureLink> Links,
-    long Revision = 0, DateTime? GeneratedAt = null, int SchemaVersion = StructureResponse.CurrentSchemaVersion)
+    long Revision = 0, DateTime? GeneratedAt = null, int SchemaVersion = StructureResponse.CurrentSchemaVersion, StructureHistory? History = null)
 {
     /// <summary>2 adds facts, link ids, revision and observed hosts (AGT-3954). Fields are only ever added.</summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     /// <summary>Declared links whose ends are not declared; never serialized.</summary>
     [System.Text.Json.Serialization.JsonIgnore]

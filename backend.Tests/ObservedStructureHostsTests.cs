@@ -103,7 +103,7 @@ public sealed class ObservedStructureHostsTests
             Assert.Equal("container", container.Facts!.MachineKind);
         }
         var first = projected.Nodes.Single(node => node.Id == "machine:review-1");
-        Assert.Equal(("review-1", "review-host-1", "review-host-1"), (first.Label, first.Detail, first.Facts!.ContainerName));
+        Assert.Equal(("review daemon", "review-host-1", "review-host-1"), (first.Label, first.Detail, first.Facts!.ContainerName));
         Assert.Equal("gate", projected.Nodes.Single(node => node.Id == "component:gate-1:gate-runner").Role);
         Assert.Equal("installation", projected.Nodes.Single(node => node.Id == "machine:old-host").ParentId);
         // Ids come from the reports, so a second projection of the same reports is identical.
@@ -310,7 +310,7 @@ public sealed class ObservedStructureHostsTests
         Assert.Equal(["toolchain:playwright"], warnings.MissingRequired);
         Assert.Equal(["claude"], warnings.BehindRequired);
         Assert.True(warnings.ReleaseBehind);
-        Assert.Equal([new("AGT-10", "refused", "toolchain:playwright"), new StructureBlockedCard("AGT-11", "parked", "provider-auth:claude")],
+        Assert.Equal([new("AGT-10", "refused", "toolchain:playwright", Now), new StructureBlockedCard("AGT-11", "parked", "provider-auth:claude", Now)],
             warnings.BlockedCards);
         var link = projected.Links.Single(item => item.Kind == "reverse-ssh");
         Assert.Equal(("link:machine:studio-server>machine:review-host:reverse-ssh", "down", "no-route"),

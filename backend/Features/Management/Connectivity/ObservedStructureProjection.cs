@@ -231,6 +231,7 @@ public static partial class ObservedStructureProjection
 
         if (observing)
         {
+            AddInstallation(nodes, observedLinks, hosts, context!, now);
             // Declared links that end at a host which only reports resolve now.
             var ids = nodes.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var link in declared.UnresolvedLinks ?? [])
@@ -238,7 +239,7 @@ public static partial class ObservedStructureProjection
                     observedLinks.Add(ObserveLink(link, hostReports, links, now));
             MarkLinksDown(nodes, observedLinks);
         }
-        return new(nodes, observedLinks);
+        return new(nodes, observedLinks, History: observing ? context!.Installation?.History : null);
     }
 
     private static StructureLink ObserveLink(StructureLink link,
@@ -258,8 +259,14 @@ public static partial class ObservedStructureProjection
         {
             Observation = new(stale ? "stale" : unknown ? "declared-only" : "matched", health,
                 state.LastHeartbeatAt, Detail: state.State),
-            Facts = new(health, null, state.LastProbe?.At, state.Transport ?? state.Kind),
+            Facts = new(health, null, state.LastProbe?.At, state.Transport ?? state.Kind, Sample: LinkStamp(state)),
         };
+    }
+
+    private static StructureStamp LinkStamp(RunnerLinkResource link)
+    {
+        var at = link.LastProbe?.At ?? link.LastHeartbeatAt ?? link.Since;
+        return new(at, "link supervisor", at + Fresh);
     }
 
     private static string ProbeDescription(this EnvironmentHealthView value)

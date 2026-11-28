@@ -40,6 +40,40 @@ export interface StructureNodeFacts {
   release?: StructureReleaseFacts | null;
   dataLocations?: StructureDataLocation[] | null;
   warnings?: StructureWarningFacts | null;
+  sample?: StructureStamp | null;
+  dmiProduct?: string | null;
+  detectedVm?: string | null;
+  detectedContainer?: string | null;
+  device?: StructureBlockDevice | null;
+  resources?: StructureCgroup | null;
+  workers?: { cardKey: string | null; resources: StructureCgroup | null }[] | null;
+  container?: StructureContainerReading | null;
+  api?: StructureApiFacts | null;
+  weeklyWindows?: StructureWeeklyWindow[] | null;
+}
+export interface StructureStamp { observedAt: string; observedBy: string; freshUntil: string; }
+export interface StructureCgroup {
+  cpuUsageMicroseconds: number | null; memoryBytes: number | null; cpuCoresUsed: number | null;
+}
+export interface StructureBlockDevice {
+  device: string; sizeBytes: number | null; raidLevel: string | null; members: string[];
+  filesystems: { purpose: string; path: string; freeBytes: number; totalBytes: number }[];
+}
+export interface StructureContainerReading {
+  id: string; role: string | null; resources: StructureCgroup; uptimeSeconds: number | null;
+  imageTag: string | null; restarts: number | null;
+}
+export interface StructureApiFacts {
+  sample: StructureStamp; requestsPerSecond: number | null; requestsInFlight: number | null;
+  queues: { integration: number | null; review: number | null; postMerge: number | null; coding: number | null; gate: number | null; queuedTasks: number | null };
+}
+export interface StructureWeeklyWindow {
+  sample: StructureStamp; provider: string; label: string; usedPercent: number | null; resetAt: string | null;
+}
+export interface StructureHistory {
+  trends: { sample: StructureStamp; busySlots: number | null; queuedTasks: number | null }[];
+  events: { observedAt: string; observedBy: string; kind: string; subject: string }[];
+  stepSeconds: number; windowSeconds: number;
 }
 export interface StructurePerformanceFacts {
   observedAt: string;
@@ -55,7 +89,9 @@ export interface StructurePerformanceFacts {
   networkTransmitBytesPerSecond?: number | null;
 }
 export interface StructureDiskFact { mount: string; purpose: string; usedBytes: number; freeBytes: number; totalBytes: number; }
-export interface StructureCapacityFacts { busySlots: number; freeSlots?: number | null; totalSlots?: number | null; runningCards: string[]; }
+export interface StructureCapacityFacts { busySlots: number; freeSlots?: number | null; totalSlots?: number | null; runningCards: string[];
+  heldSlots?: number | null; waitingCards?: string[] | null; queueLength?: number | null;
+}
 export interface StructureReleaseFacts {
   version?: string | null; stableVersion?: string | null;
   state: 'current' | 'behind' | 'differs' | 'unknown' | string;
@@ -68,12 +104,12 @@ export interface StructureDataLocation {
   backupCovered: boolean; gitRemoteCovered: boolean; coverage: 'backup' | 'git-remote' | 'both' | 'none';
 }
 export interface StructureToolFact { name: string; kind: 'cli' | 'toolchain' | string; version?: string | null; targetVersion?: string | null; state: 'ok' | 'behind' | 'missing' | 'unhealthy' | string; }
-export interface StructureBlockedCard { key: string; state: 'parked' | 'refused' | string; reason: string; }
+export interface StructureBlockedCard { key: string; state: 'parked' | 'refused' | string; reason: string; observedAt?: string | null; }
 export interface StructureWarningFacts {
   tools: StructureToolFact[]; missingRequired: string[]; behindRequired: string[];
   releaseBehind: boolean; pendingHostInstall: boolean; linksDown: string[]; blockedCards: StructureBlockedCard[];
 }
-export interface StructureLinkFacts { state: string; latencyMs?: number | null; probedAt?: string | null; transport?: string | null; }
+export interface StructureLinkFacts { state: string; latencyMs?: number | null; probedAt?: string | null; transport?: string | null; addressClass?: string | null; sample?: StructureStamp | null; }
 
 export interface StructureObservation {
   difference: 'matched' | 'declared-only' | 'undeclared' | 'differs' | 'stale' | 'unreachable-by-design';
@@ -108,6 +144,7 @@ export interface StructureData {
   revision?: number;
   generatedAt?: string | null;
   schemaVersion?: number;
+  history?: StructureHistory | null;
 }
 /** Changes of one scope since `baseRevision`, pushed on the Studio hub as `structureDelta`. */
 export interface StructureDelta {
@@ -120,6 +157,7 @@ export interface StructureDelta {
   removedNodes: string[];
   links: StructureLink[];
   removedLinks: string[];
+  history?: StructureHistory | null;
 }
 const linkKey = (link: StructureLink): string => link.id ?? `link:${link.from}>${link.to}:${link.kind}`;
 
@@ -145,6 +183,7 @@ export function applyStructureDelta(data: StructureData, delta: StructureDelta):
       ...delta.nodes.filter(node => !known.has(node.id))],
     links: [...data.links.filter(link => !removedLinks.has(linkKey(link))).map(link => changedLinks.get(linkKey(link)) ?? link),
       ...delta.links.filter(link => !knownLinks.has(linkKey(link)))],
+    history: delta.history ?? data.history,
     revision: delta.revision,
     generatedAt: delta.generatedAt,
   };

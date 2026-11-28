@@ -18,7 +18,7 @@ public sealed record StudioSelfObservation(string MachineId, string MachineLabel
 public sealed record StructureObservedContext(StudioSelfObservation? Studio = null,
     IReadOnlyList<StructureDataLocation>? DataLocations = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? RunningCards = null,
-    bool IncludeObservedHosts = true);
+    bool IncludeObservedHosts = true, StructureInstallationFacts? Installation = null);
 
 public static partial class ObservedStructureProjection
 {
@@ -36,7 +36,8 @@ public static partial class ObservedStructureProjection
     ];
 
     public static string RoleOf(RunnerCapabilitySnapshotDto report)
-        => report.Capabilities.Any(capability => capability.Key is CapabilityProtocol.ReviewExecutor
+        => report.Telemetry?.Structure?.Role is "coding" or "review" or "post" or "gate" ? report.Telemetry.Structure.Role
+            : report.Capabilities.Any(capability => capability.Key is CapabilityProtocol.ReviewExecutor
             or ReviewCapabilities.ReviewExecutor) ? "review"
             : report.Capabilities.Any(capability => capability.Key == GateCapabilities.Executor) ? "gate" : "coding";
 
@@ -90,7 +91,8 @@ public static partial class ObservedStructureProjection
                 var id = $"machine:{ancestor.Id}";
                 if (id == $"machine:{hostId}") break;
                 if (!Has(id))
-                    Put(new(id, ancestor.Kind == HostPlacementKinds.Vm ? "vm" : "physical", ancestor.Id, parent,
+                    Put(new(id, ancestor.Kind == HostPlacementKinds.Vm ? "vm" : "physical",
+                        ancestor.Kind == HostPlacementKinds.Vm ? "Virtual machine" : "Physical machine", parent,
                         null, null, null, "observed", ReportRef, Observation: new("undeclared", "not observed",
                             Detail: "Named by a reporting host")));
                 parent = id;
@@ -113,8 +115,9 @@ public static partial class ObservedStructureProjection
                 // A daemon on the Studio server's own kernel is an agent host on that machine,
                 // not a second machine: the machine carries the kind.
                 var kind = parent == studioId && placement?.Kind != HostPlacementKinds.Container ? "host" : KindOf(placement);
-                // The host id is the name operators know; the container name is detail.
-                var label = gate?.Name is { Length: > 0 } gateName && reports.Length == 0 ? gateName : hostId;
+                // Use the enrolled display name. The host id remains the join key.
+                var label = reports.FirstOrDefault()?.Telemetry?.Structure?.DisplayName ?? reports.FirstOrDefault()?.Name
+                    ?? gate?.Name ?? "Execution host";
                 Put(new(id, kind, label, parent, null, null, null, "observed", ReportRef,
                     Detail: placement?.ContainerName is { Length: > 0 } container && container != label ? container : null,
                     Observation: HostObservation(hostId, reports, gate, releases, now, declared: false)));
@@ -173,7 +176,7 @@ public static partial class ObservedStructureProjection
                 var state = stale ? "stale" : runnerLink.State == RunnerLinkStates.Up ? "up" : "down";
                 links.Add(new(studioId, to, runnerLink.Kind, "Runner link", "RunnerLinks",
                     new(stale ? "stale" : "undeclared", state, runnerLink.LastHeartbeatAt, Detail: runnerLink.LastError ?? runnerLink.State),
-                    id, new(state, null, runnerLink.LastProbe?.At, runnerLink.Transport ?? runnerLink.Kind)));
+                    id, new(state, null, runnerLink.LastProbe?.At, runnerLink.Transport ?? runnerLink.Kind, Sample: LinkStamp(runnerLink))));
             }
     }
 
@@ -202,6 +205,7 @@ public static partial class ObservedStructureProjection
                 LastSeenAt = machine.Facts?.LastSeenAt ?? studio.ObservedAt,
                 Performance = machine.Facts?.Performance ?? performance,
                 DataLocations = context.DataLocations,
+                Sample = new(studio.ObservedAt, SelfRef, studio.ObservedAt + Fresh),
             },
         });
         var containerized = studio.Placement?.Kind == HostPlacementKinds.Container;
@@ -370,15 +374,17 @@ public static partial class ObservedStructureProjection
             Tool(new(key["toolchain:".Length..], "toolchain", null, null, "missing"));
         var blocked = held.SelectMany(item => (item.WaitingTaskKeys ?? []).Select(key => new StructureBlockedCard(key,
                 // A key the role never offered refuses the claim; a key held back for now parks the work.
-                item.Cause == HeldCapabilityCauses.NotRegistered ? "refused" : "parked", item.Key)))
+                item.Cause == HeldCapabilityCauses.NotRegistered ? "refused" : "parked", item.Key, item.ObservedAt)))
             .Distinct().OrderBy(card => card.Key, StringComparer.Ordinal).ThenBy(card => card.Reason, StringComparer.Ordinal).ToArray();
         var ordered = tools.Values.OrderBy(tool => tool.Kind, StringComparer.Ordinal).ThenBy(tool => tool.Name, StringComparer.Ordinal).ToArray();
         var warnings = new StructureWarningFacts(ordered, missing,
             ordered.Where(tool => tool.State == "behind").Select(tool => tool.Name).ToArray(),
             release?.Behind == true, release?.PendingInstall == true, [], blocked);
 
+        var observers = reports.Select(r => r.RunnerId).Concat(gate is null ? [] : ["gate heartbeat"]).Order(StringComparer.Ordinal);
         return new(hostId, placement?.Kind, placement?.Virtualization, placement?.ContainerName, roles, lastSeen,
-            performance ? Performance(reports) : null, capacity, release, null, warnings);
+            performance ? Performance(reports) : null, capacity, release, null, warnings,
+            Sample: lastSeen is { } seen ? new(seen, string.Join(", ", observers), seen + Fresh) : null);
     }
 
     /// <summary>Names the links that are down on the nodes they touch.</summary>

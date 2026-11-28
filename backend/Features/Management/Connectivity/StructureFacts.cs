@@ -21,7 +21,13 @@ public sealed record StructureNodeFacts(
     StructureCapacityFacts? Capacity = null,
     StructureReleaseFacts? Release = null,
     IReadOnlyList<StructureDataLocation>? DataLocations = null,
-    StructureWarningFacts? Warnings = null);
+    StructureWarningFacts? Warnings = null,
+    StructureStamp? Sample = null, string? DmiProduct = null, string? DetectedVm = null, string? DetectedContainer = null,
+    AgentStudio.TaskServer.Contracts.HostBlockDevice? Device = null,
+    AgentStudio.TaskServer.Contracts.CgroupReading? Resources = null,
+    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostWorkerReading>? Workers = null,
+    AgentStudio.TaskServer.Contracts.StudioContainerReading? Container = null,
+    StructureApiFacts? Api = null, IReadOnlyList<StructureWeeklyWindow>? WeeklyWindows = null);
 
 /// <summary>Performance and network of one machine or host, as last reported.</summary>
 public sealed record StructurePerformanceFacts(
@@ -42,7 +48,8 @@ public sealed record StructureDiskFact(string Mount, string Purpose, long UsedBy
 
 /// <summary>Slots and the cards that run on the node right now.</summary>
 public sealed record StructureCapacityFacts(int BusySlots, int? FreeSlots, int? TotalSlots,
-    IReadOnlyList<string> RunningCards);
+    IReadOnlyList<string> RunningCards, int? HeldSlots = null, IReadOnlyList<string>? WaitingCards = null,
+    int? QueueLength = null);
 
 /// <param name="State">current, behind, differs or unknown.</param>
 /// <param name="PendingInstall">A host install or CLI update is requested and not finished.</param>
@@ -82,12 +89,12 @@ public sealed record StructureToolFact(string Name, string Kind, string? Version
 
 /// <param name="State">parked (waiting for a capability this node holds back) or refused (a claim was refused).</param>
 /// <param name="Reason">The capability key behind it.</param>
-public sealed record StructureBlockedCard(string Key, string State, string Reason);
+public sealed record StructureBlockedCard(string Key, string State, string Reason, DateTime? ObservedAt = null);
 
 /// <param name="State">up, down, stale or not observed.</param>
 /// <param name="LatencyMs">Round trip of the last probe, where the link is probed.</param>
 public sealed record StructureLinkFacts(string State, double? LatencyMs = null, DateTime? ProbedAt = null,
-    string? Transport = null);
+    string? Transport = null, string? AddressClass = null, StructureStamp? Sample = null);
 
 /// <summary>
 /// Changes of one structure scope since <see cref="BaseRevision"/>, sent on the
@@ -96,9 +103,9 @@ public sealed record StructureLinkFacts(string State, double? LatencyMs = null, 
 /// </summary>
 public sealed record StructureDelta(string Scope, string? Environment, long BaseRevision, long Revision,
     DateTime GeneratedAt, IReadOnlyList<StructureNode> Nodes, IReadOnlyList<string> RemovedNodes,
-    IReadOnlyList<StructureLink> Links, IReadOnlyList<string> RemovedLinks)
+    IReadOnlyList<StructureLink> Links, IReadOnlyList<string> RemovedLinks, StructureHistory? History = null)
 {
-    public bool IsEmpty => Nodes.Count == 0 && RemovedNodes.Count == 0 && Links.Count == 0 && RemovedLinks.Count == 0;
+    public bool IsEmpty => Nodes.Count == 0 && RemovedNodes.Count == 0 && Links.Count == 0 && RemovedLinks.Count == 0 && History is null;
 
     /// <summary>Changed and removed nodes and links by id. Nodes keep the order of <paramref name="current"/>.</summary>
     public static StructureDelta Between(string scope, string? environment, StructureResponse previous,
@@ -114,7 +121,7 @@ public sealed record StructureDelta(string Scope, string? Environment, long Base
         var linkIds = current.Links.Select(link => link.Id).ToHashSet(StringComparer.Ordinal);
         return new(scope, environment, previous.Revision, current.Revision, current.GeneratedAt ?? default, nodes,
             previous.Nodes.Where(node => !ids.Contains(node.Id)).Select(node => node.Id).ToArray(), links,
-            beforeLinks.Keys.Where(id => !linkIds.Contains(id)).ToArray());
+            beforeLinks.Keys.Where(id => !linkIds.Contains(id)).ToArray(), Same(previous.History, current.History) ? null : current.History);
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions Json = new(System.Text.Json.JsonSerializerDefaults.Web);
