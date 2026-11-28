@@ -246,11 +246,11 @@ public sealed class PostMergeRunStore
             if (settingsArgument.Replace(escapedQuote, "", StringComparison.Ordinal).Contains('\''))
                 return false;
             var settings = settingsArgument.Replace(escapedQuote, "'", StringComparison.Ordinal);
-            // A remote Windows runner can report drive or UNC paths. A backslash
-            // in a POSIX path is part of the filename.
-            if (settings.StartsWith(@"\\", StringComparison.Ordinal)
-                || settings.Length >= 3 && char.IsAsciiLetter(settings[0]) && settings[1] == ':'
-                    && settings[2] is '/' or '\\')
+            // Windows drive and UNC roots can use either separator, regardless
+            // of the host OS. A backslash in a POSIX path is part of the filename.
+            var uncRoot = settings is ['/' or '\\', '/' or '\\', not ('/' or '\\'), ..];
+            var driveRoot = settings is [var drive, ':', '/' or '\\', ..] && char.IsAsciiLetter(drive);
+            if (uncRoot || driveRoot)
                 settings = settings.Replace('\\', '/');
             var marker = "/post-merge-" + active.Id + "/shard-";
             var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
