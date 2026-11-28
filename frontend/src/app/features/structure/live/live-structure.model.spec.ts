@@ -22,6 +22,20 @@ describe('live structure scene (AGT-4024)', () => {
     for (const reported of ['review-1', 'gate-1', 'linux-vm', 'home-lab', 'runner-host', 'old-host']) expect(names).not.toContain(reported);
   });
 
+  it('preserves zero traffic and queue samples and identifies expired API data', () => {
+    const data = structuredClone(liveStructureFixture);
+    const api = data.nodes.find(item => item.id === 'component:studio-server:api')!;
+    const sample = { observedAt: '2026-11-17T11:55:00Z', freshUntil: '2026-11-17T11:56:00Z', observedBy: 'API' };
+    api.facts = { ...api.facts, api: { sample, requestsInFlight: 0, requestsPerSecond: 0,
+      queues: { queuedTasks: 0, review: null, coding: null, integration: null, postMerge: null, gate: null } } };
+    data.generatedAt = '2026-11-17T12:00:00Z';
+    const scene = buildLiveScene(data, NO_SOURCES);
+    const facts = nodeFacts(scene.byId.get(api.id)!, scene);
+    expect(scene.queued).toBe(0);
+    expect(facts.find(fact => fact.key === 'requests')?.values).toContain('0.0 req/s');
+    expect(facts.find(fact => fact.key === 'api-age')?.values).toContain('5 min ago');
+  });
+
   it('nests machine, virtual machine, container and the services in it', () => {
     const s = scene();
     expect(node('machine:home-lab', s).kind).toBe('machine');
