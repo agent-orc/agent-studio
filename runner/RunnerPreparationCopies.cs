@@ -7,7 +7,6 @@ namespace AgentRunner;
 internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerStateStore state, Action<string> log)
 {
     internal const long DefaultMaxBytes = 20_000_000_000;
-    private const string LinuxRunsSegment = "/caches/preparation/" + ProjectPreparationCacheSweep.RunsDirectoryName + "/";
     private const string ReleasePending = ".release-pending";
     private static readonly StringComparer Paths = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -232,12 +231,15 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             spellings.Add((root, root));
             if (physical != root) spellings.Add((physical, root));
         }
+        if (spellings.Count == 0) return referenced;
+        // Skip parsing large maps that contain no candidate directory.
+        // Include physical parents because .runs itself can be a symlink.
+        var runsDirectories = spellings.Select(s => Path.GetDirectoryName(s.Prefix)!).Distinct().ToArray();
         foreach (var process in Directory.EnumerateDirectories("/proc"))
         {
             if (!int.TryParse(Path.GetFileName(process), out _)) continue;
-            foreach (var path in ProcessPaths(process))
+            foreach (var path in ProcessPaths(process, runsDirectories))
             {
-                if (!path.Contains(LinuxRunsSegment, StringComparison.Ordinal)) continue;
                 foreach (var (prefix, root) in spellings)
                 {
                     if (path.StartsWith(prefix, StringComparison.Ordinal)
@@ -250,7 +252,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         return referenced;
     }
 
-    private static IEnumerable<string> ProcessPaths(string process)
+    private static IEnumerable<string> ProcessPaths(string process, string[] runsDirectories)
     {
         var environment = ReadProcFile(process, "environ");
         foreach (var entry in environment.Split('\0', StringSplitOptions.RemoveEmptyEntries))
@@ -263,13 +265,10 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
         // Some tools receive a package or browser path as an argument and open it later.
         var arguments = ReadProcFile(process, "cmdline");
-        if (arguments.Contains(LinuxRunsSegment, StringComparison.Ordinal))
+        foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-            foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
-                if (Path.IsPathFullyQualified(value)) yield return Path.GetFullPath(value);
-            }
+            var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
+            if (Path.IsPathFullyQualified(value)) yield return Path.GetFullPath(value);
         }
 
         if (new DirectoryInfo(Path.Combine(process, "cwd")).LinkTarget is { } cwd) yield return cwd;
@@ -282,7 +281,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
         // A loader can close the descriptor once it has mapped the file.
         var maps = ReadProcFile(process, "maps");
-        if (!maps.Contains(LinuxRunsSegment, StringComparison.Ordinal)) yield break;
+        if (!runsDirectories.Any(maps.Contains)) yield break;
         using var lines = new StringReader(maps);
         while (lines.ReadLine() is { } line)
         {
