@@ -246,7 +246,7 @@ public sealed class ConceptPromotionService
         var result = _repositoryMutations.Execute(
             source.ProjectName,
             root,
-            $"concept-accepted-{actor}",
+            ManagedRepositoryMutationService.ConceptAcceptancePrefix + actor,
             $"chore(dossier): accept concept {actor}",
             [descriptorRelative],
             () => accepted = WriteAcceptedDescriptor(descriptorPath, actor));

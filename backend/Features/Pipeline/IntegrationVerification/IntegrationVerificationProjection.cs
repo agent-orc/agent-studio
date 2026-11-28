@@ -146,6 +146,7 @@ public static class IntegrationVerificationProjection
         => records
             .Where(record => record.Passed
                              && SameBranch(record.IntegrationBranch, currentIntegrationBranch)
+                             && string.Equals(record.TreeSha, record.PublishedSha, StringComparison.OrdinalIgnoreCase)
                              && ReviewSubjectStore.IsValidResultSha(record.TreeSha))
             .OrderByDescending(record => record.RecordedAtUtc)
             .FirstOrDefault(record => branchCarries(record.TreeSha) && treeContainsDelivery(record.TreeSha));
@@ -172,7 +173,7 @@ public static class IntegrationVerificationProjection
         Evidence = IntegrationVerificationEvidence.PublishedGate,
         GateVerdict = nameof(BuildTestGateVerdict.Ok),
         Reason = $"{verdict.Reason}; published batch gate passed on {branch} tree {verdict.VerifiedSha}. "
-            + $"That tree contains this delivery, and {branch} still carries it at {tip}.",
+            + $"The published branch still carries that tree at {tip}.",
     };
 
     /// <summary>The card's verdict when it relies on <paramref name="gate"/>.</summary>
@@ -183,7 +184,7 @@ public static class IntegrationVerificationProjection
         Sha = gate.TreeSha,
         Evidence = IntegrationVerificationEvidence.PublishedGate,
         GateVerdict = gate.GateVerdict,
-        Reason = $"{gate.Describe()} That tree contains this delivery, and {currentIntegrationBranch} still carries it"
+        Reason = $"{gate.Describe()} The published branch {currentIntegrationBranch} still carries that tree"
                  + (string.IsNullOrWhiteSpace(currentIntegrationSha) ? "." : $" at {currentIntegrationSha}."),
     };
 
@@ -234,7 +235,7 @@ public static class IntegrationVerificationProjection
                   && source.StartsWith(delivery, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool HasPassingGate(IntegrationVerificationRecord record)
+    internal static bool HasPassingGate(IntegrationVerificationRecord record)
     {
         if (record.GateFailed) return false;
         if (record.Evidence is not (IntegrationVerificationEvidence.MergeGate
