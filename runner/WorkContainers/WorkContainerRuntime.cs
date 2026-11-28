@@ -66,7 +66,7 @@ public sealed class CliWorkContainerRuntime(string runtime, string? launcher = n
     public async Task<bool> IsAvailableAsync(CancellationToken ct)
     {
         try { return (await Run(["version", "--format", "{{.Server.Version}}"], TimeSpan.FromSeconds(10), ct)).Ok; }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return false; }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException) { return false; }
     }
 
     public async Task<bool> ImagePresentAsync(string image, CancellationToken ct)
@@ -92,10 +92,15 @@ public sealed class CliWorkContainerRuntime(string runtime, string? launcher = n
     public Task<WorkRuntimeResult> StartAsync(string container, CancellationToken ct)
         => Run(["start", container], CommandTimeout, ct);
 
-    private Task<ProcessResult> ExecuteAsync(IReadOnlyList<string> arguments, string? stdin, CancellationToken ct)
-        => launcher is null
-            ? ProcessRunner.RunAsync(runtime, arguments, stdin: stdin, clearEnvironment: stdin is not null, ct: ct)
-            : WorkContainerLauncherClient.RunAsync(launcher, arguments, stdin, ct);
+    private async Task<ProcessResult> ExecuteAsync(IReadOnlyList<string> arguments, string? stdin, CancellationToken ct,
+        bool daemon = false)
+    {
+        if (launcher is null)
+            return await ProcessRunner.RunAsync(runtime, arguments, stdin: stdin, clearEnvironment: stdin is not null, ct: ct);
+        var capability = daemon ? null : WorkContainerLauncherSession.CurrentToken;
+        capability ??= await WorkContainerLauncherCommand.ReadDaemonCapabilityAsync(ct);
+        return await WorkContainerLauncherClient.RunAsync(launcher, arguments, stdin, ct, capability);
+    }
 
     public async Task<WorkRuntimeResult> InjectGitTokenAsync(string container, string token, CancellationToken ct)
     {
@@ -214,7 +219,10 @@ public sealed class CliWorkContainerRuntime(string runtime, string? launcher = n
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(timeout);
-        var result = await ExecuteAsync(arguments, null, deadline.Token);
+        // Inventory is a host-daemon operation. An attempt bearer cannot invoke
+        // either listing protocol, regardless of its caller-chosen filters.
+        var result = await ExecuteAsync(arguments, null, deadline.Token,
+            daemon: arguments[0] == "ps" || arguments is ["volume", "ls", ..]);
         if (result.Success) return new(true, mergeStdErr ? result.StdOut + result.StdErr : result.StdOut);
         var detail = result.StdErr.Trim();
         return new(false, $"{runtime} {arguments[0]} exited {result.ExitCode}: {(detail.Length <= 400 ? detail : detail[^400..])}");
