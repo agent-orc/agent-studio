@@ -6,7 +6,10 @@ using System.Text.RegularExpressions;
 namespace AgentStudio.Review;
 
 /// <summary>One file under <c>results/</c> offered to the summarizer as a deliverable.</summary>
-public sealed record SummaryDeliverable(string Path, long Bytes);
+public sealed record SummaryDeliverable(string Path, long Bytes)
+{
+    internal string? ContentFingerprint { get; init; }
+}
 
 /// <summary>What the <c>{{log}}</c> slot of the summary prompt is built from.</summary>
 public sealed record SummaryLogSources(

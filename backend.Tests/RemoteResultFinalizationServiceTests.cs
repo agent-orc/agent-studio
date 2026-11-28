@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -130,6 +131,72 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Quota_deferral_survives_restart_and_acknowledgement_reuses_the_pair()
+    {
+        var oneShot = new ScriptedSummaryOneShot(SummaryAttempt.Succeeds());
+        var scanner = new MutableScanner(Task(_progressFolder, TaskStates.Progress));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var gate = new StubLoadGate(throttled: false);
+        var selection = new CapacitySelection();
+        var sha = new string('a', 40);
+        var service = Service(oneShot, scanner, timeline, gate, selection);
+
+        Assert.Equal(ResultSummaryDelivery.Pending,
+            (await service.FinalizeForAcknowledgementAsync(scanner.Single, resultSha: sha)).Delivery);
+        Assert.Equal(ResultSummaryDelivery.Pending,
+            (await service.FinalizeForAcknowledgementAsync(scanner.Single, resultSha: sha)).Delivery);
+        Assert.Single(service.Pending);
+        Assert.Equal(0, selection.Dispatches);
+        Assert.Equal(0, oneShot.SummaryCalls);
+
+        var root = MoveTo(TaskStates.AutoReview);
+        scanner.Replace(Task(root, TaskStates.AutoReview));
+        var dueAt = Assert.Single(service.Pending).NextAttemptUtc;
+        service = Service(oneShot, scanner, timeline, gate, selection);
+        for (var pass = 1; pass <= 7; pass++)
+            Assert.Equal(0, await service.RunDueRetriesAsync(dueAt.AddMinutes(10 * pass)));
+        Assert.Equal(0, Assert.Single(service.Pending).Attempts);
+        Assert.Equal(0, selection.Dispatches);
+
+        selection.Admissible = true;
+        Assert.Equal(1, await service.RunDueRetriesAsync(dueAt.AddHours(4)));
+        Assert.Equal(1, oneShot.SummaryCalls);
+        Assert.Equal(1, selection.Dispatches);
+        Assert.Empty(service.Pending);
+
+        var status = File.ReadAllText(Path.Combine(root, "status.md"));
+        Assert.Equal(sha, SummaryAssessmentStore.ReadFor(root, status)?.EvidenceVersion?.ResultSha);
+        gate.Throttled = true;
+        service = Service(oneShot, scanner, timeline, gate, selection);
+        Assert.True((await service.FinalizeForAcknowledgementAsync(scanner.Single, resultSha: sha)).Generated);
+        Assert.Equal(1, selection.Dispatches);
+        Assert.Equal(1, oneShot.SummaryCalls);
+    }
+
+    [Fact]
+    public async Task Due_retry_reuses_pair_published_while_the_summary_was_pending()
+    {
+        var oneShot = new ScriptedSummaryOneShot(SummaryAttempt.Succeeds());
+        var scanner = new MutableScanner(Task(_progressFolder, TaskStates.Progress));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var gate = new StubLoadGate(throttled: true);
+        var sha = new string('a', 40);
+        var pending = Service(oneShot, scanner, timeline, gate);
+        var plan = await pending.FinalizeForAcknowledgementAsync(scanner.Single, resultSha: sha);
+        Assert.Equal(ResultSummaryDelivery.Pending, plan.Delivery);
+        var dueAt = Assert.Single(pending.Pending).NextAttemptUtc;
+        var publisher = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance,
+            new ConfigurationBuilder().Build(), new RuntimePromptService(new ConfigurationBuilder().Build(),
+                NullLogger<RuntimePromptService>.Instance), oneShotRegistry: new CliOneShotRegistry([oneShot]));
+        Assert.True((await publisher.FinalizeAsync(scanner.Single, resultSha: sha)).Generated);
+        Assert.Equal(1, oneShot.SummaryCalls);
+
+        Assert.Equal(1, await pending.RunDueRetriesAsync(dueAt));
+        Assert.Empty(pending.Pending);
+        Assert.Equal(1, oneShot.SummaryCalls);
+    }
+
+    [Fact]
     public async Task A_refused_summary_input_is_neither_retried_nor_queued()
     {
         var refusal = OrchestratorPromptBoundary.FailurePrefix + "oversize-orchestrator-prompt";
@@ -182,7 +249,8 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
         ICliOneShot oneShot,
         ITaskScanner scanner,
         TimelineLog timeline,
-        ILoadThrottleGate gate)
+        ILoadThrottleGate gate,
+        IModelSelectionService? selection = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -199,7 +267,7 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
             NullLogger<SummaryGenerationService>.Instance,
             configuration,
             new RuntimePromptService(configuration, NullLogger<RuntimePromptService>.Instance),
-            oneShotRegistry: new CliOneShotRegistry([oneShot]));
+            oneShotRegistry: new CliOneShotRegistry([oneShot], modelSelection: selection));
         return new RemoteResultFinalizationService(
             summaries,
             scanner,
@@ -207,6 +275,29 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
             configuration,
             NullLogger<RemoteResultFinalizationService>.Instance,
             gate);
+    }
+
+    private sealed class CapacitySelection : IModelSelectionService
+    {
+        public bool Admissible { get; set; }
+        public int Dispatches { get; private set; }
+
+        public ModelSelectionDecision Select(ModelSelectionCall call)
+        {
+            if (!call.Preview) Dispatches++;
+            var route = new SelectionRoute(CliTypes.Claude, call.Request.Pins.Model, call.Request.Pins.ThinkingLevel);
+            var result = new SelectionResult
+            {
+                Outcome = Admissible ? SelectionOutcome.Primary : SelectionOutcome.Wait,
+                Route = route,
+                Primary = route,
+                Rule = SelectionRules.Capacity,
+                Reason = Admissible ? "Capacity available." : "Waiting for quota.",
+            };
+            return new ModelSelectionDecision(result, QuotaAdmissionPlan.From(result));
+        }
+
+        public bool IsOperatorSwitchActive(string? cliType) => false;
     }
 
     private sealed class MutableScanner(TaskInfo task) : ITaskScanner

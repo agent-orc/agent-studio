@@ -602,7 +602,7 @@ public static class TaskRunnerEndpoints
 
             // Fire-and-forget — the frontend polls summaryState until it flips
             // out of "generating", same path the post-run summary uses.
-            _ = summaries.GenerateAsync(info);
+            _ = summaries.GenerateAsync(info, runOutcome: null, force: true);
             return Results.Accepted();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 

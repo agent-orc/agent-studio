@@ -127,6 +127,7 @@ public class ProjectRunner
     private readonly RemoteDispatchRejectionStore? _dispatchRejections;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
+    private readonly RemoteResultFinalizationService? _resultFinalization;
     private readonly RuntimePromptService _prompts;
 
     // Runtime prompt-registry template names. Every instruction/role prose
@@ -505,7 +506,8 @@ public class ProjectRunner
         IModelSelectionService? modelSelection = null,
         TaskIntegrationStatusService? dependencyIntegration = null,
         TaskListGitProjectionCache? dependencyGitProjection = null,
-        OverlapDispatchGuard? overlapGuard = null)
+        OverlapDispatchGuard? overlapGuard = null,
+        RemoteResultFinalizationService? resultFinalization = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -520,6 +522,7 @@ public class ProjectRunner
         _sessions = sessions;
         _router = router;
         _summaryService = summaryService;
+        _resultFinalization = resultFinalization;
         _prompts = prompts;
         _transitions = transitions;
         _chatLog = chatLog;
@@ -7227,10 +7230,10 @@ public class ProjectRunner
                     // summary-side failure retries only this application step;
                     // bounded exhaustion records Degraded and still permits the
                     // completed core run to enter review.
-                    await _summaryService.FinalizeAsync(
-                        activeInfo,
-                        terminalOutcome,
-                        CancellationToken.None);
+                    if (_resultFinalization is not null)
+                        await _resultFinalization.FinalizeLocalAsync(activeInfo, terminalOutcome);
+                    else
+                        await _summaryService.FinalizeAsync(activeInfo, terminalOutcome);
                 }
                 if (LocalStopRequested(jobId)) return;
                 // Drop a completion marker BEFORE the move so a crash between

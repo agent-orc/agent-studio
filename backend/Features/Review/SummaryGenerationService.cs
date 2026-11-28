@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
+using AgentStudio.Persistence;
+using AgentStudio.Tasks;
 using AgentStudio.Shared;
 using AgentStudio.Runner;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,17 +12,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace AgentStudio.Review;
 
 /// <summary>
-/// The closing Result assessment step (<c>post-summary-assessment</c>,
-/// AGT-3046). Builds the post-run <c>status.md</c> protocol and the structured
-/// <c>summary-assessment.json</c> by handing the tail of the CLI output log and
-/// the card's evidence bundle to a one-shot CLI call whose CLI, model and
-/// thinking level come from the project's pipeline step settings (default
-/// Claude Opus 5.5, low). The log, task prompt head, deliverables and final
-/// agent messages are fitted into the orchestrator prompt limit by
-/// <see cref="SummaryPromptFit"/>. Normal completion awaits the bounded
-/// Result-finalization gate. State is in-memory only; after a
-/// backend restart, jobs fall back to <c>None|Ready|Degraded</c> based on the
-/// presence and provenance marker of <c>status.md</c> on disk.
+/// Produces the closing Result and its bound assessment from durable run evidence.
+/// A valid pair can be reused after restart. Where evidence already supplies a
+/// usable Result, the assessment policy can publish it without a model call.
 /// </summary>
 public sealed class SummaryGenerationService
 {
@@ -29,7 +23,7 @@ public sealed class SummaryGenerationService
     private const int PromptHeadroomBytes = 256;
     private const int MaxTaskPromptReadBytes = 256 * 1024;
     private const int ModelTimeoutSeconds = 180;
-    private const int MaxProtocolAttempts = 2;
+    private const int MaxDeltaBytes = 8 * 1024;
     private static readonly Regex ProtocolImagePathRegex = new(
         @"(?<![\w./\\-])(?<path>(?:results|attachments)[/\\][^\s`'""<>)\]]+\.(?:png|jpe?g|gif|webp|bmp|svg))(?:[.,;:!?])?(?![\w./\\-])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -44,6 +38,7 @@ public sealed class SummaryGenerationService
     private readonly ProjectSettingsService? _projectSettings;
     private readonly TimelineLog? _timeline;
     private readonly ConcurrentDictionary<string, TaskSummaryState> _states = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _generationLocks = new();
     private readonly ConcurrentDictionary<string, int> _promptBytes = new();
     private int _shortenedPrompts;
     private int _degradedSummaries;
@@ -89,12 +84,8 @@ public sealed class SummaryGenerationService
     public int DegradedSummaryCount => Volatile.Read(ref _degradedSummaries);
 
     /// <summary>
-    /// Pure inflight check used by <see cref="GenerateAsync"/> and exposed
-    /// for tests. A job is considered "still generating" when its previous
-    /// state is <see cref="TaskSummaryStatus.Generating"/> AND the
-    /// <see cref="TaskSummaryState.StartedAt"/> is younger than the model
-    /// timeout. Older Generating entries are treated as stuck and
-    /// overwritten so the user can recover via the regenerate button.
+    /// Legacy timeout predicate for a summary state snapshot. Publication uses
+    /// a per-task gate so only one writer can finalize a given Result at a time.
     /// </summary>
     public static bool IsInflight(TaskSummaryState? prev, DateTime nowUtc, int timeoutSeconds)
     {
@@ -107,131 +98,77 @@ public sealed class SummaryGenerationService
     public Task GenerateAsync(TaskInfo info, CancellationToken ct = default)
         => GenerateAsync(info, runOutcome: null, ct);
 
-    /// <summary>
-    /// Awaited post-core gate for the application-owned Result document. Only
-    /// summary generation is retried. Exhaustion records a typed degraded state
-    /// and returns normally so the already completed core run remains
-    /// reviewable and is never reissued for a summary-side failure.
-    /// </summary>
-    public async Task<ResultFinalizationOutcome> FinalizeAsync(
-        TaskInfo info,
-        TerminalRunOutcome? runOutcome = null,
-        CancellationToken ct = default,
-        string? resultSha = null)
+    public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome,
+        CancellationToken ct = default, string? resultSha = null, bool force = false)
     {
-        var maxAttempts = Math.Clamp(
-            _configuration.GetValue(
-                "SummaryGeneration:FinalizationMaxAttempts",
-                DefaultFinalizationMaxAttempts),
-            1,
-            10);
-        string? error = null;
-        var attempts = 0;
-        // The degraded log reports the size of this finalization's prompt only.
-        _promptBytes.TryRemove(info.TaskKey, out _);
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        var gate = _generationLocks.GetOrAdd(info.TaskKey, _ => new SemaphoreSlim(1));
+        if (!await gate.WaitAsync(0, ct)) return;
+        try
         {
-            attempts = attempt;
-            await GenerateAsync(info, runOutcome, ct, resultSha);
-            var state = GetState(info.TaskKey);
-            var statusPath = Path.Combine(info.FolderPath, "status.md");
-            var statusMarkdown = File.Exists(statusPath)
-                ? await File.ReadAllTextAsync(statusPath, ct)
-                : string.Empty;
-            var generated = state?.Status == TaskSummaryStatus.Ready
-                            && !string.IsNullOrWhiteSpace(statusMarkdown)
-                            && !statusMarkdown.Contains(
-                                AgentStudio.Tasks.TaskTransitionService.ResultScaffoldMarker,
-                                StringComparison.Ordinal);
-            if (generated)
-            {
-                _states[info.TaskKey] = state! with
-                {
-                    Attempt = attempt,
-                    MaxAttempts = maxAttempts,
-                };
-                return new ResultFinalizationOutcome(
-                    TaskSummaryStatus.Ready,
-                    attempt,
-                    maxAttempts,
-                    null);
-            }
-
-            error = state?.ErrorMessage ?? "Generated status.md is missing.";
-            if (error.StartsWith("waiting for a host with ", StringComparison.Ordinal)) break;
-            // Structural failures have already consumed their one retry with
-            // identical inputs. Do not multiply that budget in finalization.
-            if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal)) break;
-            // The boundary refuses the same prompt again (AGT-3410).
-            if (ResultFinalizationPolicy.IsInputRefusal(error)) break;
-            _logger.LogWarning(
-                "Result finalization retry taskKey={TaskKey} jobId={JobId} attempt={Attempt}/{MaxAttempts} error={Error}",
-                info.TaskKey,
-                info.Id,
-                attempt,
-                maxAttempts,
-                error);
+            await GenerateCoreAsync(info, runOutcome, resultSha, force, ct);
         }
-
-        var previous = GetState(info.TaskKey) ?? new TaskSummaryState();
-        if (TaskModes.IsReportOnly(info.Mode)
-            && TryUseAgentReportStatus(info, error, out var fallback))
+        finally
         {
-            _states[info.TaskKey] = previous with
+            gate.Release();
+        }
+    }
+
+    /// <summary>Finalizes only the application-owned Result for an already completed core run.</summary>
+    public async Task<ResultFinalizationOutcome> FinalizeAsync(
+        TaskInfo info, TerminalRunOutcome? runOutcome = null, CancellationToken ct = default, string? resultSha = null,
+        bool hostThrottled = false)
+    {
+        var gate = _generationLocks.GetOrAdd(info.TaskKey, _ => new SemaphoreSlim(1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            var maxAttempts = Math.Clamp(_configuration.GetValue(
+                "SummaryGeneration:FinalizationMaxAttempts", DefaultFinalizationMaxAttempts), 1, 10);
+            var attempts = 0;
+            GenerationResult generation;
+            _promptBytes.TryRemove(info.TaskKey, out _);
+            do
             {
-                Status = TaskSummaryStatus.Ready,
-                FinishedAt = DateTime.UtcNow,
-                ErrorMessage = error,
+                generation = await GenerateCoreAsync(info, runOutcome, resultSha, false, ct, hostThrottled);
+                if (generation.Deferred)
+                {
+                    _states[info.TaskKey] = _states[info.TaskKey] with
+                    {
+                        Status = TaskSummaryStatus.Degraded,
+                        Attempt = attempts,
+                        MaxAttempts = maxAttempts,
+                    };
+                    return new ResultFinalizationOutcome(TaskSummaryStatus.Degraded, attempts, maxAttempts, generation.Error)
+                    { Deferred = true, EvidenceDigest = generation.EvidenceDigest };
+                }
+                if (!generation.Reused) attempts++;
+                if (generation.Error is null)
+                {
+                    _states[info.TaskKey] = _states[info.TaskKey] with { Attempt = attempts, MaxAttempts = maxAttempts };
+                    return new ResultFinalizationOutcome(TaskSummaryStatus.Ready, attempts, maxAttempts, null)
+                    { EvidenceDigest = generation.EvidenceDigest };
+                }
+            }
+            while (attempts < maxAttempts && !ResultFinalizationPolicy.IsUnretryable(generation.Error));
+
+            _states[info.TaskKey] = _states[info.TaskKey] with
+            {
+                Status = TaskSummaryStatus.Degraded,
                 Attempt = attempts,
                 MaxAttempts = maxAttempts,
             };
+            var degradedTotal = Interlocked.Increment(ref _degradedSummaries);
             _logger.LogWarning(
-                "Result finalization used agent-authored {Source} for {JobId} after summary failure: {Error}",
-                fallback, info.Id, error);
-            return new ResultFinalizationOutcome(TaskSummaryStatus.Ready, attempts, maxAttempts, error);
+                "Result finalization degraded taskKey={TaskKey} attempts={Attempts} promptBytes={PromptBytes} limitBytes={LimitBytes} degradedTotal={DegradedTotal} error={Error}",
+                info.TaskKey, attempts, _promptBytes.GetValueOrDefault(info.TaskKey),
+                OrchestratorPromptBoundary.MaxPromptBytes, degradedTotal, generation.Error);
+            return new ResultFinalizationOutcome(TaskSummaryStatus.Degraded, attempts, maxAttempts, generation.Error)
+            { EvidenceDigest = generation.EvidenceDigest };
         }
-        _states[info.TaskKey] = previous with
+        finally
         {
-            Status = TaskSummaryStatus.Degraded,
-            FinishedAt = DateTime.UtcNow,
-            ErrorMessage = error,
-            Attempt = attempts,
-            MaxAttempts = maxAttempts,
-        };
-        var degradedTotal = Interlocked.Increment(ref _degradedSummaries);
-        _logger.LogWarning(
-            "Result finalization degraded taskKey={TaskKey} jobId={JobId} attempts={Attempts} promptBytes={PromptBytes} limitBytes={LimitBytes} degradedTotal={DegradedTotal} error={Error}",
-            info.TaskKey,
-            info.Id,
-            attempts,
-            _promptBytes.TryGetValue(info.TaskKey, out var promptBytes) ? promptBytes : null,
-            OrchestratorPromptBoundary.MaxPromptBytes,
-            degradedTotal,
-            error);
-        return new ResultFinalizationOutcome(
-            TaskSummaryStatus.Degraded,
-            attempts,
-            maxAttempts,
-            error);
-    }
-
-    private bool TryUseAgentReportStatus(TaskInfo info, string? error, out string source)
-    {
-        var restored = TryRestoreAgentReportStatus(info, out source, _resultVersions);
-        if (restored)
-        {
-            try
-            {
-                _timeline?.Append(info.FolderPath, TimelineEventKinds.ResultSummaryPending,
-                    TimelineActors.System,
-                    $"Summary assessment failed ({ResultFinalizationPolicy.Limit(error) ?? "unknown error"}); using {source} for review.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not record report summary fallback event for {JobId}", info.Id);
-            }
+            gate.Release();
         }
-        return restored;
     }
 
     /// <summary>Restore agent-authored report evidence after a failed summary, including on a later recovery pass.</summary>
@@ -282,117 +219,230 @@ public sealed class SummaryGenerationService
         }
     }
 
-    public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome,
-        CancellationToken ct = default, string? resultSha = null)
+    private async Task<GenerationResult> GenerateCoreAsync(
+        TaskInfo info, TerminalRunOutcome? runOutcome, string? resultSha, bool force, CancellationToken ct,
+        bool hostThrottled = false)
     {
         var key = info.TaskKey;
-        var runIndex = _fileGenerationIndex?.CurrentRunIndex(info.FolderPath);
-
-        // Inflight guard: if a previous GenerateAsync for the same job is
-        // still inside its generation and format-retry window, dropping this duplicate avoids
-        // racing two subprocesses against the same status.md (manual
-        // Regenerate clicked while the post-run auto-call is still in
-        // flight, or the runner re-fires after a missed completion). The
-        // outstanding call will publish either Ready or Failed when it
-        // returns; the user-visible spinner stays where it was.
-        if (_states.TryGetValue(key, out var prev) && IsInflight(prev, DateTime.UtcNow, ModelTimeoutSeconds * MaxProtocolAttempts))
+        var startedAt = DateTime.UtcNow;
+        string? digest = null;
+        GenerationResult Failed(string error, bool deferred = false, bool reused = false)
         {
-            _logger.LogDebug("Skipping summary generation for {JobId}: prior call still in flight (started {StartedAt:o})",
-                info.Id, prev.StartedAt);
-            return;
+            Fail(key, error);
+            return new GenerationResult(error, deferred, reused, digest);
         }
 
-        _states[key] = new TaskSummaryState
-        {
-            Status = TaskSummaryStatus.Generating,
-            StartedAt = DateTime.UtcNow
-        };
-
+        _states[key] = new TaskSummaryState { Status = TaskSummaryStatus.Generating, StartedAt = startedAt };
         try
         {
-            var logPath = TaskPaths.CliOutputLog(info.FolderPath);
-            if (!File.Exists(logPath))
-            {
-                Fail(key, "No CLI output to summarise yet. The task has not been run (logs/cli-output.log is missing). Start it once, then try again.");
-                return;
-            }
-
-            var rawLog = await File.ReadAllTextAsync(logPath, ct);
-            runOutcome ??= TerminalRunOutcomeClassifier.TryClassifyRenderedLog(rawLog)?.Outcome;
+            var folder = info.FolderPath;
+            var subject = ReviewSubjectStore.Read(folder);
+            if (ReviewSubjectStore.IsValidResultSha(resultSha) && subject is not null
+                && !string.Equals(resultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase))
+                return Failed(ResultFinalizationPolicy.SupersededResult);
+            resultSha ??= subject?.ResultSha;
+            resultSha = ReviewSubjectStore.IsValidResultSha(resultSha) ? resultSha!.ToLowerInvariant() : null;
+            var logPath = TaskPaths.CliOutputLog(folder);
+            var authoredStatus = ReadAuthoredStatus(folder);
+            var logVersion = File.GetLastWriteTimeUtc(logPath);
+            var hasLog = File.Exists(logPath);
+            var rawLog = hasLog ? await File.ReadAllTextAsync(logPath, ct) : "";
+            var classification = TerminalRunOutcomeClassifier.TryClassifyRenderedLog(rawLog);
+            runOutcome ??= classification?.Outcome;
             var outcomeLabel = runOutcome?.ProtocolResult ?? "unknown";
-            var selection = ResolveStepSelection(info);
             var evidence = SummaryEvidenceAssembler.ReadFromFolder(info, _pipelineLog, _timeline, outcomeLabel);
-            var prompt = BuildPrompt(info, rawLog, outcomeLabel, evidence, selection);
-
-            var result = await RunValidatedSummaryAsync(prompt, info, selection, recordPipeline: true, ct);
-            if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
+            var dossierPath = TaskModes.IsConcept(info.Mode) ? ConceptDossierContract.Read(folder).RepoRelativePath : null;
+            var sources = ReadLogSources(info, rawLog, fingerprintArtifacts: true);
+            var (version, facts, canonicalLog) = SummaryEvidenceVersion.Capture(info, resultSha, evidence, sources, authoredStatus, dossierPath);
+            digest = version.Digest;
+            var target = Path.Combine(folder, "status.md");
+            var prior = ReadValidResult(folder, target);
+            if (!force && prior?.Assessment.EvidenceVersion is { } previousVersion
+                && previousVersion.Schema == version.Schema && previousVersion.Digest == digest)
             {
-                Fail(key, result.Error ?? "Empty summary response");
-                return;
+                Ready(key, startedAt, prior.Markdown.Length);
+                return new GenerationResult(null, false, true, digest);
             }
 
-            var summary = result.Summary;
-            if (runOutcome != null)
-            {
-                summary = ApplyOutcomeResultLine(summary, runOutcome.ProtocolResult);
-            }
+            var summary = force ? null : SummaryEvidenceResult.Compose(
+                info, authoredStatus, rawLog, runOutcome, classification?.AgentOutcome, evidence);
+            if (summary is not null && SummaryProtocolValidation.Validate(summary) is not null)
+                summary = null;
 
-            if (TaskModes.IsConcept(info.Mode))
+            SummaryModelResult? result = null;
+            SummaryStepSelection? selection = null;
+            var runIndex = _pipelineLog?.Read(folder)?.Attempt ?? _fileGenerationIndex?.CurrentRunIndex(folder);
+            if (summary is null)
             {
-                var dossier = AgentStudio.Tasks.ConceptDossierContract.Read(info.FolderPath);
-                if (!string.IsNullOrWhiteSpace(dossier.RepoRelativePath))
+                if (!force && SummaryFormatRejection.Read(folder, digest) is { } rejection)
+                    return Failed(rejection, reused: true);
+                if (ResultFinalizationPolicy.Admit(finalizeRequested: true, hostThrottled) == ResultSummaryAdmission.Defer)
+                    return Failed(ResultSummaryPendingReasons.LoadThrottle, deferred: true);
+                if (!hasLog)
+                    return Failed("No CLI output to summarise yet. Start the task once, then try again.");
+
+                selection = ResolveStepSelection(info);
+                var request = SummaryRequest(info, selection, "");
+                if (PreviewDeferral(request) is { } quotaError) return Failed(quotaError, deferred: true);
+
+                var delta = !force && prior?.Assessment.EvidenceVersion is { } baseline
+                    ? version.DeltaFrom(baseline, facts, canonicalLog, prior.Markdown, prior.Assessment.Outcome, MaxDeltaBytes)
+                    : null;
+                var prompt = BuildPrompt(info, sources, outcomeLabel, evidence, selection, delta);
+                result = await RunValidatedSummaryAsync(prompt, info, selection, recordPipeline: true, ct);
+                if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
                 {
-                    summary = AgentStudio.Tasks.ConceptDossierContract.PreserveReferenceInStatus(
-                        summary,
-                        dossier.RepoRelativePath);
+                    var error = result.Error ?? "Empty summary response";
+                    if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal))
+                        RecordFormatRejection(info, digest, error);
+                    return Failed(error, result.Deferred || ResultFinalizationPolicy.IsWaitingForHost(error));
                 }
+                summary = result.Summary;
             }
 
-            summary = ApplyProtocolImageReferences(summary, rawLog, info.FolderPath, out var appendedImageCount);
-            summary = AppendImmutableResultSha(
-                summary, resultSha ?? ReviewSubjectStore.Read(info.FolderPath)?.ResultSha);
-            if (appendedImageCount > 0)
+            if (runOutcome is not null) summary = ApplyOutcomeResultLine(summary, runOutcome.ProtocolResult);
+            if (!string.IsNullOrWhiteSpace(dossierPath))
+                summary = ConceptDossierContract.PreserveReferenceInStatus(summary, dossierPath);
+            summary = ApplyProtocolImageReferences(summary, rawLog, folder);
+            summary = AppendImmutableResultSha(summary, resultSha);
+            if (SummaryProtocolValidation.Validate(summary) is { } invalid)
             {
-                _logger.LogInformation("Summary protocol image references appended for {JobId}: {ImageCount} references",
-                    info.Id, appendedImageCount);
+                if (result is not null) RecordFormatRejection(info, digest, invalid);
+                return Failed(invalid);
             }
 
-            // The assessment is bound to this exact status.md text, so writing it first
-            // closes the window where a fetch sees the new status.md without its block.
-            WriteAssessment(info, evidence, summary, result);
-            var target = Path.Combine(info.FolderPath, "status.md");
-            if (_resultVersions is not null)
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(folder)) return Failed("The task folder moved during summary generation.");
+            var currentSubject = ReviewSubjectStore.Read(folder);
+            if (currentSubject?.RunAttemptId != subject?.RunAttemptId || currentSubject?.ResultSha != subject?.ResultSha
+                || File.GetLastWriteTimeUtc(logPath) != logVersion)
+                return Failed(ResultFinalizationPolicy.SupersededResult);
+
+            var now = DateTime.UtcNow;
+            var assessment = result is null
+                ? SummaryAssessmentPolicy.Assess(SummaryEvidenceAssembler.WithStatusHeader(evidence, summary), now)
+                : BuildAssessment(evidence, summary, result.AssessmentJson, result.Usage?.Model ?? result.Model, now);
+            PublishResult(info, target, summary, assessment with { EvidenceVersion = version }, prior, runIndex, now);
+
+            if (result is not null && selection is not null)
             {
-                _resultVersions.Replace(
-                    info.FolderPath,
-                    summary,
-                    ResultProducer.RunAttempt(runIndex?.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                    info.State,
-                    result.EndedAt,
-                    TimelineActors.Agent);
+                RegisterGeneratedStatus(info, result, selection, runIndex);
             }
             else
             {
-                WriteAllTextWithRetry(target, summary);
+                _pipelineLog?.RecordStep(folder, new PipelineStepExecution
+                {
+                    StepId = PipelineCatalogue.SummaryAssessmentStepId,
+                    Kind = StepKind.Orchestrator,
+                    Attempt = runIndex,
+                    StartedAt = startedAt,
+                    CompletedAt = now,
+                    Status = PipelineStepStatus.Passed,
+                    CostBasis = StepCostBasis.Deterministic,
+                    VerdictSummary = "Composed from run evidence and the assessment policy.",
+                });
             }
-            RegisterGeneratedStatus(info, result, selection, runIndex);
             RecordBrokenImageReferences(info, summary);
-
-            _states[key] = new TaskSummaryState
-            {
-                Status = TaskSummaryStatus.Ready,
-                StartedAt = _states[key].StartedAt,
-                FinishedAt = DateTime.UtcNow,
-                BytesWritten = summary.Length
-            };
+            Ready(key, startedAt, summary.Length);
             _logger.LogInformation("Summary written for {JobId} ({Bytes} bytes)", info.Id, summary.Length);
+            return new GenerationResult(null, false, false, digest);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            Fail(key, "Summary generation was cancelled.");
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Summary generation failed for {JobId}", info.Id);
-            Fail(key, ex.Message);
+            return Failed(ex.Message);
         }
     }
+
+    private void PublishResult(TaskInfo info, string target, string summary, SummaryAssessment assessment,
+        PublishedResult? prior, int? runIndex, DateTime now)
+    {
+        var folder = info.FolderPath;
+        SummaryAssessmentStore.Write(folder, assessment, summary);
+        try
+        {
+            if (_resultVersions is not null)
+                _resultVersions.Replace(folder, summary,
+                    ResultProducer.RunAttempt(runIndex?.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    info.State, now, TimelineActors.Agent);
+            else
+                new AtomicJsonFileWriter().ReplaceExisting(target, summary);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The new assessment is already bound to its text. If publication
+            // stopped before replacing the document, restore the previous binding.
+            if (prior is not null)
+            {
+                try
+                {
+                    if (File.Exists(target) && BoundedFileRead.TryReadAllText(target, BoundedFileRead.EvidenceTextBytes, out var current)
+                        && SummaryAssessmentStore.Fingerprint(current) == prior.Assessment.StatusFingerprint)
+                        SummaryAssessmentStore.Write(folder, prior.Assessment, prior.Markdown);
+                }
+                catch (Exception rollback) when (rollback is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(rollback, "Could not restore the prior assessment for {TaskKey}", info.TaskKey);
+                }
+            }
+
+            throw;
+        }
+    }
+
+    private void RecordFormatRejection(TaskInfo info, string digest, string error)
+    {
+        try
+        {
+            SummaryFormatRejection.Write(info.FolderPath, digest, error);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not persist summary format rejection for {TaskKey}", info.TaskKey);
+        }
+    }
+
+    private void Ready(string key, DateTime startedAt, int length)
+        => _states[key] = new TaskSummaryState
+        {
+            Status = TaskSummaryStatus.Ready,
+            StartedAt = startedAt,
+            FinishedAt = DateTime.UtcNow,
+            BytesWritten = length,
+        };
+
+    private static string? ReadAuthoredStatus(string folder)
+    {
+        var path = Path.Combine(TaskPaths.ResultsDir(folder), "status.md");
+        return File.Exists(path) && BoundedFileRead.TryReadAllText(path, BoundedFileRead.EvidenceTextBytes, out var markdown)
+            && !string.IsNullOrWhiteSpace(markdown)
+            && !markdown.Contains(TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal)
+            ? OrchestratorPromptBoundary.Redact(markdown.Trim()) : null;
+    }
+
+    internal static bool HasValidResult(string folder)
+        => ReadValidResult(folder, Path.Combine(folder, "status.md")) is not null;
+
+    private static PublishedResult? ReadValidResult(string folder, string path)
+    {
+        if (!File.Exists(path) || !BoundedFileRead.TryReadAllText(path, BoundedFileRead.EvidenceTextBytes, out var markdown)
+            || markdown.Contains(TaskTransitionService.ResultScaffoldMarker, StringComparison.Ordinal)
+            || SummaryProtocolValidation.Validate(markdown) is not null)
+            return null;
+
+        var assessment = SummaryAssessmentStore.ReadFor(folder, markdown);
+        return assessment is { Version: 1, Inconsistencies: not null }
+            && SummaryOutcomes.IsKnown(assessment.Outcome) && SummaryOutcomes.IsKnown(assessment.PolicyOutcome)
+            ? new PublishedResult(markdown, assessment) : null;
+    }
+
+    private sealed record PublishedResult(string Markdown, SummaryAssessment Assessment);
+    private sealed record GenerationResult(string? Error, bool Deferred, bool Reused, string? EvidenceDigest);
 
     /// <summary>
     /// One-shot interim summary against the current cli-output.log. Unlike
@@ -435,7 +485,9 @@ public sealed class SummaryGenerationService
         // to feed the classifier. Say so explicitly instead of guessing one.
         var selection = ResolveStepSelection(info);
         var evidence = SummaryEvidenceAssembler.ReadFromFolder(info, _pipelineLog, _timeline, "in progress");
-        var prompt = BuildPrompt(info, rawLog, "in progress", evidence, selection);
+        if (PreviewDeferral(SummaryRequest(info, selection, "")) is { } quotaError)
+            return InterimSummaryResult.Failure(quotaError);
+        var prompt = BuildPrompt(info, ReadLogSources(info, rawLog), "in progress", evidence, selection);
 
         var sw = Stopwatch.StartNew();
         var result = await RunValidatedSummaryAsync(prompt, info, selection, recordPipeline: false, ct);
@@ -472,7 +524,8 @@ public sealed class SummaryGenerationService
     /// prompt is logged with its size and the running count.
     /// </summary>
     private string BuildPrompt(
-        TaskInfo info, string rawLog, string outcome, SummaryEvidenceBundle evidence, SummaryStepSelection selection)
+        TaskInfo info, SummaryLogSources sources, string outcome, SummaryEvidenceBundle evidence, SummaryStepSelection selection,
+        string? delta = null)
     {
         var slots = BuildSummarySlots(info, "", outcome);
         // Budget evidence against the template and metadata before reserving
@@ -482,12 +535,13 @@ public sealed class SummaryGenerationService
             _prompts.RenderUnrecorded(RuntimePromptService.SummaryProtocol, slots));
         var evidenceBudget = Math.Min(SummaryEvidenceAssembler.MaxPromptEvidenceBytes,
             Math.Max(0, (OrchestratorPromptBoundary.MaxPromptBytes - templateBytes - PromptHeadroomBytes) / 2));
-        slots["evidence"] = SummaryEvidenceAssembler.ToPromptJson(evidence, evidenceBudget);
+        slots["evidence"] = delta is not null && Encoding.UTF8.GetByteCount(delta) <= evidenceBudget
+            ? delta : SummaryEvidenceAssembler.ToPromptJson(evidence, evidenceBudget);
         var fixedBytes = Encoding.UTF8.GetByteCount(
             _prompts.RenderUnrecorded(RuntimePromptService.SummaryProtocol, slots));
-        var excerpt = SummaryPromptFit.Fit(
-            ReadLogSources(info, rawLog),
-            OrchestratorPromptBoundary.MaxPromptBytes - fixedBytes - PromptHeadroomBytes);
+        var excerpt = slots["evidence"] == delta
+            ? new SummaryLogExcerpt("Use the prior Result and evidence delta above.", 0, [])
+            : SummaryPromptFit.Fit(sources, OrchestratorPromptBoundary.MaxPromptBytes - fixedBytes - PromptHeadroomBytes);
         slots["log"] = excerpt.Text;
         var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol, slots,
             new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryAssessmentStepId, selection.Model));
@@ -514,7 +568,7 @@ public sealed class SummaryGenerationService
     }
 
     /// <summary>Reads the task prompt and the <c>results/</c> inventory; an unreadable source stays empty.</summary>
-    private SummaryLogSources ReadLogSources(TaskInfo info, string rawLog)
+    private SummaryLogSources ReadLogSources(TaskInfo info, string rawLog, bool fingerprintArtifacts = false)
     {
         string? taskPrompt = null;
         var deliverables = new List<SummaryDeliverable>();
@@ -528,16 +582,26 @@ public sealed class SummaryGenerationService
             {
                 var name = Path.GetFileName(file);
                 if (name is TaskPaths.ReviewEvidenceFileName or TaskPaths.ReviewObservationsFileName) continue;
-                deliverables.Add(new SummaryDeliverable(
-                    Path.Combine(TaskPaths.ResultsDirName, Path.GetRelativePath(resultsDir, file)),
-                    new FileInfo(file).Length));
+                var deliverable = new SummaryDeliverable(
+                    Path.Combine(TaskPaths.ResultsDirName, Path.GetRelativePath(resultsDir, file)).Replace('\\', '/'),
+                    new FileInfo(file).Length);
+                if (fingerprintArtifacts)
+                {
+                    using var stream = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    deliverable = deliverable with
+                    {
+                        ContentFingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream)),
+                    };
+                }
+
+                deliverables.Add(deliverable);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _logger.LogWarning(ex, "Summary prompt sources partly unreadable for {JobId}", info.Id);
         }
-        return new SummaryLogSources(rawLog, taskPrompt, deliverables);
+        return new SummaryLogSources(rawLog, taskPrompt, deliverables.OrderBy(item => item.Path, StringComparer.Ordinal).ToArray());
     }
 
     /// <summary>
@@ -610,29 +674,6 @@ public sealed class SummaryGenerationService
         return ResolveStepSelection(settings);
     }
 
-    /// <summary>
-    /// Reconciles the evidence bundle with the generated status.md header and
-    /// the model's structured block, then persists the result. Best-effort: an
-    /// assessment failure never fails the Result document.
-    /// </summary>
-    private void WriteAssessment(TaskInfo info, SummaryEvidenceBundle evidence, string statusMarkdown, SummaryModelResult result)
-    {
-        try
-        {
-            var assessment = BuildAssessment(evidence, statusMarkdown, result.AssessmentJson, result.Usage?.Model ?? result.Model, DateTime.UtcNow);
-            SummaryAssessmentStore.Write(info.FolderPath, assessment, statusMarkdown);
-            if (assessment.FallbackReason is not null)
-            {
-                _logger.LogInformation("Summary assessment for {JobId} used the policy fallback: {Reason}",
-                    info.Id, assessment.FallbackReason);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Summary assessment could not be written for {JobId}", info.Id);
-        }
-    }
-
     /// <summary>Pure assembly of the persisted assessment; exposed for tests.</summary>
     public static SummaryAssessment BuildAssessment(
         SummaryEvidenceBundle evidence, string statusMarkdown, string? assessmentJson, string? model, DateTime generatedAt)
@@ -646,61 +687,57 @@ public sealed class SummaryGenerationService
     private async Task<SummaryModelResult> RunValidatedSummaryAsync(
         string prompt, TaskInfo info, SummaryStepSelection selection, bool recordPipeline, CancellationToken ct)
     {
-        var evidence = new List<string>();
-        var pipelineAttempt = _pipelineLog?.Read(info.FolderPath)?.Attempt;
-        var step = new PipelineStepExecution
+        var attempt = recordPipeline ? _pipelineLog?.Read(info.FolderPath)?.Attempt : null;
+        ct.ThrowIfCancellationRequested();
+        var result = await RunModelAsync(prompt, info, selection, ct);
+        ct.ThrowIfCancellationRequested();
+        if (result.Deferred || ResultFinalizationPolicy.IsWaitingForHost(result.Error)) return result;
+        if (result.Ok)
         {
-            StepId = PipelineCatalogue.SummaryAssessmentStepId, Kind = StepKind.Orchestrator, Attempt = pipelineAttempt,
-            StartedAt = DateTime.UtcNow,
-        };
-        var usage = new OrchestratorTokenUsage();
-        for (var attempt = 1; ; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var result = await RunModelAsync(prompt, info, selection, ct);
-            if (result.Ok)
-            {
-                // The structured block is peeled off before validation so the
-                // prose is checked exactly as status.md will store it.
-                var split = SummaryAssessmentParser.Split(result.Summary);
-                result = result with { Summary = split.Markdown.Trim(), AssessmentJson = split.AssessmentJson };
-            }
-            var validationError = result.Ok ? SummaryProtocolValidation.Validate(result.Summary) : null;
-            if (validationError is not null)
+            var split = SummaryAssessmentParser.Split(result.Summary);
+            result = result with { Summary = split.Markdown.Trim(), AssessmentJson = split.AssessmentJson };
+            if (SummaryProtocolValidation.Validate(result.Summary) is { } validationError)
                 result = result with { Ok = false, Error = validationError };
-
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
-                result.DurationMs, ok: result.Ok, cliType: result.EffectiveCliType ?? selection.Cli,
-                project: info.ProjectName, jobId: info.Id, thinkingLevel: selection.ThinkingLevel);
-            evidence.Add($"Attempt {attempt}: {(result.Ok ? "passed" : result.Error ?? "generation failed")}");
-            usage = Accumulate(usage, result.Usage);
-            step = StepModelUsage.From(usage, result.Model, selection.ThinkingLevel, selection.ModelSource).ApplyTo(step with
-            {
-                Status = result.Ok ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-                CompletedAt = result.EndedAt,
-                DurationMs = step.DurationMs + result.DurationMs,
-                Reason = result.Error,
-                VerdictSummary = string.Join("\n", evidence),
-            });
-            if (recordPipeline) _pipelineLog?.RecordStep(info.FolderPath, step);
-            if (validationError is null || attempt == MaxProtocolAttempts) return result;
-
-            _logger.LogWarning(
-                "Summary protocol rejected taskKey={TaskKey} attempt={Attempt}; retrying once: {Error}",
-                info.TaskKey, attempt, validationError);
         }
+
+        AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
+            result.DurationMs, ok: result.Ok, cliType: result.EffectiveCliType ?? selection.Cli,
+            project: info.ProjectName, jobId: info.Id, thinkingLevel: selection.ThinkingLevel);
+        if (recordPipeline)
+        {
+            var step = StepModelUsage.From(result.Usage, result.Model, selection.ThinkingLevel, selection.ModelSource)
+                .ApplyTo(new PipelineStepExecution
+                {
+                    StepId = PipelineCatalogue.SummaryAssessmentStepId,
+                    Kind = StepKind.Orchestrator,
+                    Attempt = attempt,
+                    StartedAt = result.StartedAt,
+                    Status = result.Ok ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                    CompletedAt = result.EndedAt,
+                    DurationMs = result.DurationMs,
+                    Reason = result.Error,
+                    VerdictSummary = $"Attempt 1: {(result.Ok ? "passed" : result.Error ?? "generation failed")}",
+                });
+            _pipelineLog?.RecordStep(info.FolderPath, step);
+        }
+        return result;
     }
 
-    private static OrchestratorTokenUsage Accumulate(OrchestratorTokenUsage total, OrchestratorTokenUsage? next)
-        => next is null ? total : total with
+    private string? PreviewDeferral(CliOneShotRequest request)
+        => _oneShotRegistry?.PreviewAdmission(request) is { ShouldLaunch: false } admission
+            ? $"[quota-deferred] {admission.Reason}" : null;
+
+    private static CliOneShotRequest SummaryRequest(TaskInfo info, SummaryStepSelection selection, string prompt)
+        => new(selection.Cli, selection.Model, prompt)
         {
-            Model = string.IsNullOrWhiteSpace(next.Model) ? total.Model : next.Model,
-            ThinkingLevel = string.IsNullOrWhiteSpace(next.ThinkingLevel) ? total.ThinkingLevel : next.ThinkingLevel,
-            InputTokens = total.InputTokens + next.InputTokens,
-            OutputTokens = total.OutputTokens + next.OutputTokens,
-            CacheReadTokens = total.CacheReadTokens + next.CacheReadTokens,
-            CacheCreationTokens = total.CacheCreationTokens + next.CacheCreationTokens,
-            InputIncludesCached = next.InputIncludesCached ?? total.InputIncludesCached,
+            ThinkingLevel = selection.ThinkingLevel,
+            WorkingDirectory = Directory.Exists(info.FolderPath) ? info.FolderPath : null,
+            Timeout = TimeSpan.FromSeconds(ModelTimeoutSeconds),
+            Source = AdHocUsageSources.SummaryGeneration,
+            Project = info.ProjectName,
+            JobId = info.Id,
+            StepId = PipelineCatalogue.SummaryAssessmentStepId,
+            RecordUsage = false,
         };
 
     private async Task<SummaryModelResult> RunModelAsync(
@@ -714,18 +751,7 @@ public sealed class SummaryGenerationService
         var oneShot = _oneShotRegistry?.Get(selection.Cli);
         if (oneShot != null)
         {
-            var r = await oneShot.RunAsync(new CliOneShotRequest(
-                CliType: selection.Cli, Model: model, Prompt: prompt)
-            {
-                ThinkingLevel = selection.ThinkingLevel,
-                WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : null,
-                Timeout = TimeSpan.FromSeconds(ModelTimeoutSeconds),
-                Source = AdHocUsageSources.SummaryGeneration,
-                Project = info.ProjectName,
-                JobId = info.Id,
-                StepId = PipelineCatalogue.SummaryAssessmentStepId,
-                RecordUsage = false, // We record below with parsed text + usage
-            }, ct).ConfigureAwait(false);
+            var r = await oneShot.RunAsync(SummaryRequest(info, selection, prompt), ct).ConfigureAwait(false);
 
             sw.Stop();
             var endedAt = DateTime.UtcNow;
@@ -737,7 +763,7 @@ public sealed class SummaryGenerationService
                 CliType = effectiveCli,
             };
             if (!r.Ok) return SummaryModelResult.Failure(effectiveModel, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds)
-                with { Usage = effectiveUsage, EffectiveCliType = effectiveCli };
+                with { Usage = effectiveUsage, EffectiveCliType = effectiveCli, Deferred = r.QuotaDeferred || r.HostWaiting };
             return SummaryModelResult.Success(effectiveModel, effectiveUsage, r.ParsedText.Trim(), startedAt, endedAt,
                 (long)r.Duration.TotalMilliseconds) with { EffectiveCliType = effectiveCli };
         }
@@ -1015,32 +1041,6 @@ public sealed class SummaryGenerationService
         return refs;
     }
 
-    private static void WriteAllTextWithRetry(string filePath, string content)
-    {
-        const int maxAttempts = 8;
-        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-        IOException? last = null;
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                using var stream = new FileStream(
-                    filePath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.ReadWrite | FileShare.Delete);
-                stream.Write(bytes, 0, bytes.Length);
-                return;
-            }
-            catch (IOException ex) when (attempt < maxAttempts - 1)
-            {
-                last = ex;
-                Thread.Sleep(50 * (attempt + 1));
-            }
-        }
-        if (last != null) throw last;
-    }
-
     private sealed record SummaryModelResult(
         bool Ok,
         string? Summary,
@@ -1054,6 +1054,7 @@ public sealed class SummaryGenerationService
         /// <summary>Raw JSON of the trailing assessment block, peeled off the prose.</summary>
         public string? AssessmentJson { get; init; }
         public string? EffectiveCliType { get; init; }
+        public bool Deferred { get; init; }
 
         public static SummaryModelResult Success(
             string model,
@@ -1081,6 +1082,8 @@ public sealed record ResultFinalizationOutcome(
     string? Error)
 {
     public bool Generated => Status == TaskSummaryStatus.Ready;
+    public bool Deferred { get; init; }
+    public string? EvidenceDigest { get; init; }
 }
 
 /// <summary>

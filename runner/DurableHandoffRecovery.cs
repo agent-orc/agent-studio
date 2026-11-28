@@ -239,7 +239,7 @@ public sealed class DurableHandoffRecovery
         }
         try
         {
-            artifactPartial |= await TransferArtifactsBeforeSettlementAsync(outbox, manifest, ct);
+            artifactPartial |= await TransferArtifactsBeforeSettlementAsync(outbox, manifest, envelope.ResultSha, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -317,6 +317,7 @@ public sealed class DurableHandoffRecovery
     private async Task<bool> TransferArtifactsBeforeSettlementAsync(
         DurableRunOutbox outbox,
         DurableArtifactManifest manifest,
+        string resultSha,
         CancellationToken ct)
     {
         var results = Path.Combine(
@@ -438,7 +439,8 @@ public sealed class DurableHandoffRecovery
                 outbox.Authority.RunId,
                 outbox.Authority.Fence,
                 IdempotencyKey: $"artifact-finalize:{outbox.Authority.RunId}",
-                FinalizeResult: true), ct);
+                FinalizeResult: true,
+                ResultSha: resultSha), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

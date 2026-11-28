@@ -9,16 +9,18 @@ public sealed class SummaryGenerationFinalizationTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Read_only_failed_summary_uses_agent_status_or_final_message(bool hasStatusFile)
+    public async Task Read_only_result_uses_agent_status_or_final_message_without_a_call(bool hasStatusFile)
     {
         var root = Path.Combine(Path.GetTempPath(), "report-summary-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "logs"));
         Directory.CreateDirectory(Path.Combine(root, "results"));
         await File.WriteAllTextAsync(Path.Combine(root, "logs", "cli-output.log"),
-            "[assistant/final] Agent completed the research report. [[TASK_DONE]]\n");
+            "[assistant/final] Compared both ledgers and found that receipt coverage differs. [[TASK_DONE]]\n");
         if (hasStatusFile)
             await File.WriteAllTextAsync(Path.Combine(root, "results", "status.md"),
-                "# Research status\n\nThe agent wrote this result.\n");
+                "# Research status\n\nCompared two ledgers for the same evidence window.\n"
+                + "- The selector and usage receipts cover different calls.\n"
+                + "- Partial receipt coverage prevents a complete reconciliation.\n");
         try
         {
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -26,9 +28,10 @@ public sealed class SummaryGenerationFinalizationTests
                 ["PromptTemplates:RuntimePath"] = Path.Combine(Directory.GetCurrentDirectory(), "prompts", "runtime"),
                 ["SummaryGeneration:FinalizationMaxAttempts"] = "1",
             }).Build();
+            var oneShot = new WaitingOneShot();
             var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance,
                 config, new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance),
-                oneShotRegistry: new CliOneShotRegistry([new WaitingOneShot()]));
+                oneShotRegistry: new CliOneShotRegistry([oneShot]));
             var task = new TaskInfo
             {
                 Id = "report-summary", TaskKey = "REPORT-1", Mode = TaskModes.Research,
@@ -41,7 +44,12 @@ public sealed class SummaryGenerationFinalizationTests
             Assert.True(result.Generated);
             Assert.Equal(1, result.Attempt);
             var status = await File.ReadAllTextAsync(Path.Combine(root, "status.md"));
-            Assert.Contains(hasStatusFile ? "The agent wrote this result." : "Agent completed the research report.", status);
+            Assert.Contains(hasStatusFile ? "The selector and usage receipts cover different calls."
+                : "Compared both ledgers and found that receipt coverage differs.", status);
+            if (hasStatusFile) Assert.Contains("Partial receipt coverage prevents a complete reconciliation.", status);
+            Assert.Null(SummaryProtocolValidation.Validate(status));
+            Assert.Equal(0, oneShot.Calls);
+            Assert.Equal(SummaryAssessmentSources.Policy, SummaryAssessmentStore.ReadFor(root, status)?.Source);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -73,9 +81,42 @@ public sealed class SummaryGenerationFinalizationTests
             };
             var outcome = await service.FinalizeAsync(task);
             Assert.False(outcome.Generated);
-            Assert.Equal(1, outcome.Attempt);
+            Assert.True(outcome.Deferred);
+            Assert.Equal(0, outcome.Attempt);
             Assert.Equal("waiting for a host with model-acceptance:claude:claude-sonnet-5", outcome.Error);
             Assert.Equal(1, oneShot.Calls);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Explicit_blocker_keeps_the_reason_and_completed_lane_contradiction()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "blocked-result-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(TaskPaths.LogsDir(root));
+        try
+        {
+            await File.WriteAllTextAsync(TaskPaths.CliOutputLog(root),
+                "[12:00:00.000] [stdout] [[TASK_BLOCKED: Waiting for the upstream review receipt.]]\n");
+            var configuration = new ConfigurationBuilder().Build();
+            var oneShot = new WaitingOneShot();
+            var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance,
+                configuration, new RuntimePromptService(configuration, NullLogger<RuntimePromptService>.Instance),
+                oneShotRegistry: new CliOneShotRegistry([oneShot]));
+            var task = new TaskInfo
+            {
+                Id = "blocked", TaskKey = "BLOCKED-1", Title = "Verify delivery", Mode = TaskModes.Coding,
+                State = TaskStates.Completed, FolderPath = root, WatchPath = root, ProjectName = "test",
+            };
+
+            Assert.True((await service.FinalizeAsync(task)).Generated);
+            Assert.Equal(0, oneShot.Calls);
+            var status = await File.ReadAllTextAsync(Path.Combine(root, "status.md"));
+            Assert.Null(SummaryProtocolValidation.Validate(status));
+            Assert.Contains("Waiting for the upstream review receipt.", status);
+            var assessment = Assert.IsType<SummaryAssessment>(SummaryAssessmentStore.ReadFor(root, status));
+            Assert.Contains(assessment.Inconsistencies, item =>
+                item.Kind == SummaryInconsistencyKinds.FailureVersusCompleted);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

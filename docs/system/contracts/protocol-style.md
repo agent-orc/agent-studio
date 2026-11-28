@@ -11,14 +11,14 @@ A finished job exposes two views of what happened:
 | Artefact | Audience | Generator | File |
 |----------|----------|-----------|------|
 | **Activity Log** | Live observer / debugger | Streamed by the CLI driver, parsed by the frontend | `logs/cli-output.log` (raw) |
-| **Protocol** | Reviewer ("what did the agent do?") | Haiku one-shot summary of the log tail, with a deterministic transition scaffold when that summary is missing | `status.md` |
+| **Protocol** | Reviewer ("what did the agent do?") | Composition from sufficient run evidence or a one-shot summary of the log tail, with a marked transition scaffold when a Result is missing | `status.md` |
 
 Keep the boundary clean:
 
 - The Activity Log is **mechanical**. Every tool call, every command, every diff snippet. Do not curate it.
 - The Protocol is **editorial**. 5 to 10 bullet points the reviewer can scan in 30 seconds. It is regenerated from the log on demand and overwritten on the next run, so do not hand-edit it.
 
-> ⚠ Agents must **never write `status.md` themselves.** It is application-owned. [`SummaryGenerationService`](../../../backend/Features/Review/SummaryGenerationService.cs) rewrites it from CLI output, while `TaskTransitionService` may create a marked fallback scaffold at a review or terminal transition. Anything written by hand can be lost.
+> ⚠ Agents must **never write `status.md` themselves.** It is application-owned. [`SummaryGenerationService`](../../../backend/Features/Review/SummaryGenerationService.cs) writes it from run evidence, while `TaskTransitionService` may create a marked fallback scaffold at a review or terminal transition. Anything written by hand can be lost.
 
 ---
 
@@ -119,7 +119,9 @@ mechanic remain unchanged.
 
 Remote coding runs preserve the same application ownership. After the runner
 flushes `cli-output.log`, its final artifact upload carries Result-finalization
-intent through both transports. The compatibility endpoint awaits bounded
+intent through both transports. The compatibility upload carries the worktree's
+result SHA when available, so the summary can bind to it before run settlement.
+The compatibility endpoint awaits bounded
 `SummaryGenerationService` attempts against that durable log. V1 runs execute
 the Task Server's `post-result-finalization` step and persist `status.md` as an
 application-generated artifact from durable run events and deliverables. The
@@ -133,12 +135,27 @@ Generated model output is validated before the deterministic Result rewrite or
 any `status.md` replacement. It must start with `# Status`, carry valid Result
 and Case fields and a nonempty Duration, and include nonempty Overview (Problem
 and Solution), What Was Done, and Open Items sections. Greetings, empty sections,
-and unfilled prompt placeholders fail generation. A malformed response receives
-one retry with the identical prompt; exhausted format retries leave the previous
-Result untouched and are not repeated by the finalization loop. The `summary`
-pipeline step records failure reasons and both attempt outcomes, and ad-hoc usage
-records mark rejected responses as failed. Interim summaries use the same
-validation without changing the stored Result or pipeline step.
+and unfilled prompt placeholders fail generation. A malformed final response
+records a format rejection for that evidence version and preserves the previous
+Result. A changed version or an explicit regenerate can request a fresh summary.
+Interim summaries use the same validation and leave the stored Result and
+pipeline step untouched.
+
+Finalization stores the evidence digest and immutable result SHA alongside the
+assessment's status fingerprint. Re-acknowledgement and scheduled recovery
+reuse a matching, valid pair. The existing assessment policy supplies
+deterministic classifications and inconsistencies, including when an
+agent-authored status or explicit blocker supplies enough text to compose the
+Result locally. When a compatible prior pair exists, a bounded evidence delta
+may replace the full log render. A new SHA, a changed base source, a missing
+or invalid prior pair, or an oversized delta uses the full bounded prompt.
+Regenerate explicitly requests a full prompt.
+
+Capacity checks happen before prompt rendering. A deferred local or remote
+finalization saves one pending record for the card's current evidence version
+in `logs/result-summary-pending.json`. The scheduler reopens it after restart
+and checks for admissible capacity without consuming retry budget or recording
+a summary execution for the deferral.
 
 Hard rules:
 

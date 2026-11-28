@@ -170,6 +170,9 @@ public sealed record CliOneShotResult(
     /// <summary>True when admission intentionally did not launch a provider.</summary>
     public bool QuotaDeferred { get; init; }
 
+    /// <summary>True when the transport cannot place the job on a compatible host.</summary>
+    public bool HostWaiting { get; init; }
+
     /// <summary>Convenience: zero-token empty failure used when a child
     /// could not be started at all.</summary>
     public static CliOneShotResult SpawnFailure(string error, DateTime requestedAt, DateTime completedAt) => new(
@@ -238,6 +241,18 @@ public sealed class CliOneShotRegistry
         return impl;
     }
 
+    /// <summary>Check the same routes as dispatch without emitting a selection or reserving capacity.</summary>
+    internal QuotaAdmissionPlan? PreviewAdmission(CliOneShotRequest request)
+    {
+        var source = request.StepId ?? request.Source ?? "one-shot";
+        return _byCli.ContainsKey(request.CliType)
+            ? _selection?.Select(DispatchSelectionCall(request, source) with { Preview = true }).Admission
+            : null;
+    }
+
+    private ModelSelectionCall DispatchSelectionCall(CliOneShotRequest request, string source)
+        => SelectionCallFor(request, source) with { HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli) };
+
     private async Task<CliOneShotResult> DispatchAsync(
         CliOneShotRequest request,
         CancellationToken ct)
@@ -246,10 +261,7 @@ public sealed class CliOneShotRegistry
             return await _byCli[request.CliType].RunAsync(request, ct).ConfigureAwait(false);
 
         var source = request.StepId ?? request.Source ?? "one-shot";
-        var plan = _selection.Select(SelectionCallFor(request, source) with
-        {
-            HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli),
-        }).Admission;
+        var plan = _selection.Select(DispatchSelectionCall(request, source)).Admission;
         var task = TaskFrom(request);
         if (task is not null)
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
@@ -337,7 +349,8 @@ public sealed class CliOneShotRegistry
         try
         {
             var result = await implementation.RunAsync(effective, ct).ConfigureAwait(false);
-            _selection.RecordExecution(plan.SelectionEventId, effective.CliType, !result.Ok && result.ExitCode != 0);
+            if (!result.QuotaDeferred && !result.HostWaiting)
+                _selection.RecordExecution(plan.SelectionEventId, effective.CliType, !result.Ok && result.ExitCode != 0);
             return result with
             {
                 QuotaAdmission = plan,
