@@ -362,7 +362,11 @@ for claim recovery before materializing, including when the predecessor faults
 or is independently cancelled. Shutdown cancellation still stops the wait.
 Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
