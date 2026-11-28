@@ -1,12 +1,12 @@
-using AgentStudio.TaskServer.Contracts;
-
-namespace AgentRunner;
-
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentRunner.WorkContainers;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
+
+namespace AgentRunner;
 
 /// <summary>
 /// Runs exactly one task end-to-end on the remote host (RM-5 MVP). The lifecycle:
@@ -112,7 +112,8 @@ public sealed class RemoteTaskRunner
         string? freshRunReason = null,
         IReadOnlyList<string>? requiredCapabilities = null,
         // AGT-3056: "review-fix-round" makes the base required for the worktree.
-        string? continuationBaseReason = null)
+        string? continuationBaseReason = null,
+        string? claimSubjectId = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -157,6 +158,7 @@ public sealed class RemoteTaskRunner
             PreviousSession = previousSession,
             MechanicalDelta = mechanicalDelta,
             FreshRunReason = freshRunReason,
+            ClaimSubjectId = claimSubjectId,
         });
         return await RunPersistedAsync(
             slot,
@@ -1194,6 +1196,45 @@ public sealed class RemoteTaskRunner
             $"{OneLine(exception.InnerException?.Message ?? exception.Message)}; " +
             $"worktree={exception.WorktreePath}; host={host}");
 
+    private async Task VerifyClaimedGitReadAsync(PersistedRunnerSlot slot, GitWorkspace workspace, CancellationToken ct)
+    {
+        var settings = WorkContainerSettings.FromEnvironment(Environment.GetEnvironmentVariable,
+            WorkContainerSettings.HostCores(), HostMemory.Read().TotalBytes,
+            Path.Combine(_options.StateDir, "work-containers"));
+        if (!OperatingSystem.IsLinux() || settings.Mode != WorkContainerMode.Canary
+            || settings.Launcher is not { Length: > 0 } launcher)
+            throw new InvalidOperationException("The Git-read canary requires Linux canary mode and a restricted launcher socket.");
+        var image = RoleImageManifest.TryLoad(settings.ImageManifestPath)?.Resolve("coding")
+            ?? throw new InvalidOperationException("The Git-read canary requires a pinned coding image.");
+        var version = await _client.GetHostAllocationVersionAsync(_options.Hostname, ct);
+        var grant = new WorkContainerGrant(version, _client.AcknowledgedWorkAllocationVersion,
+            WorkContainerShadow.ProvisionalGrantHalfCores);
+        var receipt = await RunClaimedGitReadAsync(slot, workspace.RepositoryUrl, workspace.BaseSha, settings,
+            new CliWorkContainerRuntime(settings.Runtime, launcher), image, grant, ct);
+        ct.ThrowIfCancellationRequested();
+        if (receipt.Outcome != "succeeded" || !receipt.ShaVerified || !receipt.CleanupVerified
+            || receipt.SecretDeletionStatus != "container-tmpfs-removed")
+            throw new InvalidOperationException($"Checkout or credential cleanup failed ({receipt.Outcome}, {receipt.SecretDeletionStatus}).");
+    }
+
+    internal Task<WorkContainerReceipt> RunClaimedGitReadAsync(PersistedRunnerSlot slot,
+        string? repositoryUrl, string? exactSha, WorkContainerSettings settings, IWorkContainerRuntime runtime,
+        string image, WorkContainerGrant grant, CancellationToken ct, Func<HostMemory>? readMemory = null,
+        TimeProvider? clock = null)
+    {
+        if (_options.Role != "coding" || slot.Lease.Hostname != _options.Hostname
+            || GitHubRepositoryName.TryParse(repositoryUrl) is not { } repository || exactSha is null)
+            throw new InvalidOperationException("The Git-read canary requires a coding claim, GitHub source and exact commit.");
+        // The checkout canary is a fixed command. The detached coding worker's
+        // existing platform-owned result handoff retains publication authority.
+        var attempt = new WorkContainerAttempt(_options.Hostname, _options.Role, slot.AttemptId,
+            slot.Lease.LeaseId, slot.Lease.FencingToken,
+            slot.Lease.AuthorityEpoch > 0 ? slot.Lease.AuthorityEpoch : slot.Lease.FencingToken,
+            RepositoryIdentityContract.FromUrl(repository.CloneUrl)!, repository.CloneUrl, exactSha, ["/bin/true"]);
+        return new WorkContainerExecutor(runtime, settings, readMemory, clock, _log,
+            _client.CreateClaimGitCredentialSource(slot)).RunAsync(attempt, image, grant, ct);
+    }
+
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, ArtifactTransferLimitsResponse artifactLimits,
@@ -1254,6 +1295,19 @@ public sealed class RemoteTaskRunner
             throw new RemoteClaimPreparationException(DescribePreparationFailure(ex), ex);
         }
         shipper.Add("system", $"[runner] working tree ready on branch '{branch}'");
+        if (string.Equals(_options.WorkContainerGitReadTask, taskKey, StringComparison.OrdinalIgnoreCase))
+        {
+            using var checkoutStop = CancellationTokenSource.CreateLinkedTokenSource(stopRun.Token, daemonShutdown);
+            try
+            {
+                await VerifyClaimedGitReadAsync(slot, workspace, checkoutStop.Token);
+                shipper.Add("system", $"[runner] container checkout verified for {workspace.BaseSha}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new RemoteClaimPreparationException("Claimed Git-read canary failed. " + OneLine(ex.Message), ex);
+            }
+        }
         var projectPreparation = await ProjectPreparationExecutor.RunAsync(
                 workspace.RepoPath,
                 workspace.PreparationCachePath,

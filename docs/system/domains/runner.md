@@ -232,8 +232,15 @@ worker. `canary` enables `agent-host work-container run`. Detached coding and
 review workers keep the process executor until provider attempt tokens exist. DP-S5 adds an opt-in coding canary:
 the host obtains a one-use Task Server exchange capability after a live claim,
 injects a one-repository read token through runtime stdin into the container's
-private tmpfs, and revokes it on teardown. The Git helper accepts only the
-claimed GitHub repository path. Windows has an encrypted-volume and ACL file
+private tmpfs, and revokes it on teardown. AGT-4448 adds an explicit,
+single-task daemon checkout canary. The broker checks the credential-free
+GitHub HTTPS origin against the project's registered repository. Under the
+live coding lease, the container fetches the prepared input SHA directly into
+its private checkout. The daemon records the SHA, issuance ID, successful
+credential refreshes and deletion. The canary runs a fixed checkout command.
+The coding worker and its platform-owned result handoff stay on the existing
+execution path. The Git helper accepts only the claimed GitHub repository path.
+Windows has an encrypted-volume and ACL file
 adapter; no production placement changes are enabled by this slice. Provider
 account sharing remains closed until separate refresh-boundary probes pass.
 See the

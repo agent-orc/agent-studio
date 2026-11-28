@@ -2939,6 +2939,82 @@ lease and fence. The broker requests one registered repository with
 `contents:read`, records issuance metadata, and revokes on teardown; an
 unavailable issuer leaves at most the token's one-hour expiry backstop.
 
+#### Daemon checkout canary for one coding claim
+
+After AGT-4106, AGT-4107, AGT-4113 and AGT-4147 are integrated and the selected
+host has passed launcher and work-zone validation, use one test task with a
+registered private GitHub repository. The coding daemon must be enrolled with
+Task Server, have its server allocation applied and have platform Git access
+to prepare and publish for that same registered repository. The input commit
+must be fetchable from GitHub. Give the test card a fresh published base and
+hold it until the host is ready. The isolated checkout runs a fixed command
+before project preparation and the coding CLI. The platform publishes the
+coding result through its existing fenced result handoff.
+
+On the Task Server, finish the provisioning above and enable issuance in a
+named override. Apply the restart during the approved maintenance window.
+
+```sh
+sudo systemctl edit --drop-in=80-attempt-git-read.conf agent-task-server.service
+# Enter the following in the editor, then save.
+# [Service]
+# Environment=TaskServer__AttemptCredentialCanaryEnabled=true
+sudo systemctl restart agent-task-server.service
+```
+
+On a standalone coding host, apply a separate override. Replace `PILOT-1`
+with the test task key. For the host supervisor, set the same variables in the
+coding role's configured environment file and restart `agent-host.service`
+after draining. Use the network name covered by the applied work-zone policy
+if it differs from `agent-work`.
+
+```sh
+sudo test -S /run/agent-work-launcher.sock
+sudo systemctl edit --drop-in=80-attempt-git-read.conf agent-host.service
+# Enter the following in the editor, then save.
+# [Service]
+# Environment=RUNNER_WORK_CONTAINER_MODE=canary
+# Environment=RUNNER_WORK_CONTAINER_NETWORK=agent-work
+# Environment=RUNNER_WORK_CONTAINER_LAUNCHER=/run/agent-work-launcher.sock
+# Environment=RUNNER_WORK_CONTAINER_GIT_READ_TASK=PILOT-1
+sudo systemctl restart agent-host.service
+sudo journalctl -u agent-host.service --since "10 minutes ago" --no-pager
+```
+
+Queue the selected card for the enrolled coding host once registration and
+capacity are ready. After it runs, match the attempt and fence from the daemon
+log to the JSON below. The default location is
+`$RUNNER_STATE_DIR/work-containers/receipts`. A running claim may complete
+before its token needs a refresh.
+
+```sh
+printf 'Path to the selected attempt receipt: '
+IFS= read -r receipt
+jq -e '
+  select(.outcome == "succeeded" and .shaVerified and .cleanupVerified
+         and .secretDeletionStatus == "container-tmpfs-removed")
+  | {attemptId, fence, exactSha, credentialIssuanceId, credentialRefreshCount,
+     credentialRevocationStatus, secretDeletionStatus}
+' "$receipt"
+```
+
+After the pilot drains, remove only the overrides created for it and reload
+both services on their respective hosts. For a supervised role configured
+through its role file, remove the canary variables there and restore any
+previous values before restarting the host service.
+
+```sh
+# Coding host
+sudo rm /etc/systemd/system/agent-host.service.d/80-attempt-git-read.conf
+sudo systemctl daemon-reload
+sudo systemctl restart agent-host.service
+
+# Task Server
+sudo rm /etc/systemd/system/agent-task-server.service.d/80-attempt-git-read.conf
+sudo systemctl daemon-reload
+sudo systemctl restart agent-task-server.service
+```
+
 Install a released role image manifest, or roll it back, with:
 
 ```sh

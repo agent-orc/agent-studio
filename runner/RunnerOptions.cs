@@ -71,6 +71,9 @@ public sealed class RunnerOptions
     /// <summary>Fallback git remote for one-shot runs and the daemon startup capability probe.</summary>
     public string? GitRemote { get; init; }
 
+    /// <summary>One task key selected for the fenced Git-read checkout canary.</summary>
+    public string? WorkContainerGitReadTask { get; init; }
+
     /// <summary>
     /// Optional write-only URL for the daemon startup capability probe and legacy
     /// one-shot runs. Project-scoped clones always use their registry URL for both
@@ -573,6 +576,8 @@ public sealed class RunnerOptions
                     ? certificateSha
                     : null,
             GitRemote = Val("git-remote", "RUNNER_GIT_REMOTE").Trim() is { Length: > 0 } gitRemote ? gitRemote : null,
+            WorkContainerGitReadTask = Val("work-container-git-read-task", "RUNNER_WORK_CONTAINER_GIT_READ_TASK")
+                .Trim() is { Length: > 0 } gitReadTask ? gitReadTask : null,
             GitPushRemote = Val("git-push-remote", "RUNNER_GIT_PUSH_REMOTE").Trim() is { Length: > 0 } gitPushRemote ? gitPushRemote : null,
             WorkspaceGitRemote = Val("workspace-git-remote", "RUNNER_WORKSPACE_GIT_REMOTE").Trim() is { Length: > 0 } workspaceRemote ? workspaceRemote : null,
             WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")

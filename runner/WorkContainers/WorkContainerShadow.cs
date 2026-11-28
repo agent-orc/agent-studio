@@ -50,7 +50,8 @@ public static class WorkContainerShadow
                 log?.Invoke($"[work-container] shadow: role image manifest unreadable: {ex.Message}");
             }
             var selection = WorkExecutorSelectionPolicy.Select(OperatingSystem.IsWindows(), OperatingSystem.IsLinux(),
-                settings.Mode, RuntimeSocketPresent(settings.Runtime), RoleImageManifest.IsPinned(image));
+                settings.Mode, settings.Launcher is { } launcher ? File.Exists(launcher) : RuntimeSocketPresent(settings.Runtime),
+                RoleImageManifest.IsPinned(image));
             if (settings.Mode == WorkContainerMode.Contained)
             {
                 // SM-11: the contained decision is the selection; the detached CLI worker

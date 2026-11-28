@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using AgentStudio.TaskServer.Contracts;
+using AgentRunner.WorkContainers;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -391,6 +392,20 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     public string ClientId { get; private set; } = string.Empty;
 
     public bool UsesDurableTaskServer => _useV1;
+
+    internal long AcknowledgedWorkAllocationVersion => _restoredCapacityFromCache
+        ? 0 : _centralRuntimeCapacityVersion ?? 0;
+
+    internal IWorkContainerCredentialSource CreateClaimGitCredentialSource(PersistedRunnerSlot slot)
+    {
+        if (!UsesDurableTaskServer || !_usesServiceCredential || slot.ClaimSubjectId is not { Length: > 0 } subject
+            || !_v1Leases.TryGetValue(slot.TaskKey, out var authority)
+            || authority.RunId != slot.AttemptId || authority.InstanceId != slot.LeaseInstanceId
+            || authority.Lease.RunnerId != slot.Lease.RunnerId || authority.Lease.LeaseId != slot.Lease.LeaseId
+            || authority.Lease.FencingToken != slot.Lease.FencingToken)
+            throw new InvalidOperationException("The Git checkout requires a live, service-authenticated coding claim.");
+        return new TaskServerWorkCredentialSource(_http, authority.Lease.RunnerId, authority.InstanceId, subject);
+    }
     public bool UsesHostOrchestrator => _useV1 && _supportsHostOrchestrator;
     internal bool HasAcceptedHostWork(string taskKey)
         => _hostAcceptedWork.ContainsKey(taskKey);

@@ -2,13 +2,14 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.TaskServer.AttemptCredentials;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 using Microsoft.Data.Sqlite;
 
 namespace AgentStudio.TaskServer;
 
 public sealed record AttemptCredentialIdentity(string HostId, string Role, string SubjectId,
     string AttemptId, string RunnerId, string InstanceId, string LeaseId, long Fence, long Epoch,
-    string StorageMode = "linux-tmpfs");
+    string StorageMode = "linux-tmpfs", string? RepositorySource = null);
 public sealed record AttemptCredentialCapability(string IssuanceId, string Capability, DateTime ExpiresAtUtc);
 public sealed record AttemptCredentialMaterial(string IssuanceId, string Token, string RepositoryId,
     DateTime ExpiresAtUtc, string StorageMode);
@@ -72,7 +73,16 @@ public sealed partial class TaskServerStore
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new TaskServerConflictException("repository-unregistered", "Claimed task has no registered repository.");
-        return (reader.GetString(0), reader.GetString(1));
+        var repositoryUrl = reader.GetString(1);
+        // Older manual clients omit RepositorySource and still receive only
+        // the registered repository's token. Current clients bind the checkout too.
+        if (identity.RepositorySource is { } source
+            && (GitHubRepositoryName.TryParse(repositoryUrl) is not { } registered
+                || !string.Equals(source, registered.CloneUrl, StringComparison.OrdinalIgnoreCase)
+                || GitHubRepositoryName.TryParse(source)?.CloneUrl != source))
+            throw new TaskServerConflictException("credential-repository-mismatch",
+                "The checkout source must match the claimed project's registered GitHub repository.");
+        return (reader.GetString(0), repositoryUrl);
     }
 
     public async Task<AttemptCredentialCapability> CreateAttemptCredentialCapabilityAsync(
@@ -151,11 +161,11 @@ public sealed partial class TaskServerStore
         {
             if (token.ExpiresAtUtc > UtcNow.AddHours(1))
                 throw new InvalidDataException("Issuer expiry exceeds the one-hour backstop.");
-            await roots.WriteAsync("issued-" + issuanceId, token.Value, ct);
             await InWriteTransactionAsync(async (connection, transaction) =>
             {
-                await ValidateCredentialIdentityAsync(connection, transaction, identity, ct);
-                await ExecuteAsync(connection, """
+                if (await ValidateCredentialIdentityAsync(connection, transaction, identity, ct) != (repositoryId, repositoryUrl))
+                    throw new TaskServerConflictException("credential-repository-mismatch", "The registered repository changed during exchange.");
+                var changed = await ExecuteAsync(connection, """
                     UPDATE attempt_credential_issuances
                        SET issued_at = $now, expires_at = $expires,
                            lease_expiry_at = (SELECT expires_at FROM leases WHERE run_id = $run)
@@ -163,6 +173,9 @@ public sealed partial class TaskServerStore
                     """, ct, transaction, ("$now", Iso(UtcNow)),
                     ("$expires", Iso(token.ExpiresAtUtc)), ("$id", issuanceId),
                     ("$run", identity.AttemptId));
+                if (changed != 1)
+                    throw new TaskServerConflictException("credential-already-closed", "The credential was closed during exchange.");
+                await roots.WriteAsync("issued-" + issuanceId, token.Value, ct);
             }, ct);
         }
         catch
@@ -399,13 +412,16 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException("lease-not-renewed", "Renew the attempt lease before refreshing the credential.");
         }, ct);
         var token = await issuer.IssueReadAsync(repositoryId, repositoryUrl, ct);
+        string? oldToken = null;
+        var replacedRoot = false;
         try
         {
             if (token.ExpiresAtUtc > UtcNow.AddHours(1))
                 throw new InvalidDataException("Issuer expiry exceeds the one-hour backstop.");
             await InWriteTransactionAsync(async (connection, transaction) =>
             {
-                await ValidateCredentialIdentityAsync(connection, transaction, identity, ct);
+                if (await ValidateCredentialIdentityAsync(connection, transaction, identity, ct) != (repositoryId, repositoryUrl))
+                    throw new TaskServerConflictException("credential-repository-mismatch", "The registered repository changed during renewal.");
                 var changed = await ExecuteAsync(connection, """
                     UPDATE attempt_credential_issuances
                        SET issued_at = $now, expires_at = $expires, lease_expiry_at = $leaseExpiry
@@ -415,16 +431,28 @@ public sealed partial class TaskServerStore
                     ("$id", issuanceId), ("$previous", Iso(previousLeaseExpiry)));
                 if (changed != 1)
                     throw new TaskServerConflictException("credential-renewal-race", "Another renewal changed this issuance.");
+                // Keep the root swap serialized with revocation intent.
+                oldToken = await roots.ReadAsync("issued-" + issuanceId, ct);
+                await roots.WriteAsync("issued-" + issuanceId, token.Value, ct);
+                replacedRoot = true;
             }, ct);
-            var oldToken = await roots.ReadAsync("issued-" + issuanceId, ct);
-            await roots.WriteAsync("issued-" + issuanceId, token.Value, ct);
-            if (oldToken is not null) await issuer.RevokeAsync(oldToken, ct);
         }
         catch
         {
-            await issuer.RevokeAsync(token.Value, CancellationToken.None);
+            await TryRevokeSupersededTokenAsync(token.Value, issuer);
             throw;
         }
+        finally
+        {
+            if (replacedRoot && oldToken is not null)
+                await TryRevokeSupersededTokenAsync(oldToken, issuer);
+        }
         return new AttemptCredentialMaterial(issuanceId, token.Value, repositoryId, token.ExpiresAtUtc, identity.StorageMode);
+    }
+
+    private static async Task TryRevokeSupersededTokenAsync(string token, IRepositoryTokenIssuer issuer)
+    {
+        try { await issuer.RevokeAsync(token, CancellationToken.None); }
+        catch (Exception) { /* The issuer's one-hour expiry bounds an unavailable revoke. */ }
     }
 }

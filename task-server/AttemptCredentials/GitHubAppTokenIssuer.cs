@@ -16,9 +16,12 @@ public interface IRepositoryTokenIssuer
 }
 
 /// <summary>Requests a single-repository GitHub App installation token with contents:read.</summary>
-public sealed class GitHubAppTokenIssuer(HttpClient http, IAttemptRootSecretStore roots, GitHubAppBroker? broker = null)
+public sealed class GitHubAppTokenIssuer(
+    HttpClient http, IAttemptRootSecretStore roots, GitHubAppBroker? broker = null, TimeProvider? clock = null)
     : IRepositoryTokenIssuer
 {
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+
     public async Task<IssuedRepositoryToken> IssueReadAsync(string repositoryKey, string repositoryUrl, CancellationToken ct)
     {
         var rootName = "github-app-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(repositoryKey))).ToLowerInvariant();
@@ -39,7 +42,7 @@ public sealed class GitHubAppTokenIssuer(HttpClient http, IAttemptRootSecretStor
         var repositoryId = root.RepositoryId;
         using var key = RSA.Create();
         key.ImportFromPem(root.PrivateKeyPem);
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.GetUtcNow();
         var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new { alg = "RS256", typ = "JWT" }));
         var body = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -67,7 +70,7 @@ public sealed class GitHubAppTokenIssuer(HttpClient http, IAttemptRootSecretStor
         var token = json.GetProperty("token").GetString();
         var expiry = json.GetProperty("expires_at").GetDateTime().ToUniversalTime();
         var permissions = json.GetProperty("permissions");
-        if (string.IsNullOrWhiteSpace(token) || expiry <= DateTime.UtcNow
+        if (string.IsNullOrWhiteSpace(token) || expiry <= _clock.GetUtcNow().UtcDateTime
             || permissions.EnumerateObject().Any(p => p.Name is not ("contents" or "metadata") || p.Value.GetString() != "read")
             || !permissions.TryGetProperty("contents", out _))
             throw new InvalidDataException("GitHub App token scope or expiry did not match the read request.");

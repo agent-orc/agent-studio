@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentRunner.WorkContainers;
 
@@ -138,6 +139,9 @@ public static class WorkContainerLaunchPlanner
         foreach (var (name, value) in attempt.Environment ?? new Dictionary<string, string>())
         {
             ValidateEnvironment(name);
+            if (credentialRequired && (environment.ContainsKey(name)
+                || name.StartsWith("AGENT_", StringComparison.Ordinal) || name.StartsWith("GIT_", StringComparison.Ordinal)))
+                throw new ArgumentException($"Environment '{name}' is reserved for the brokered checkout.");
             environment[name] = value;
         }
         // SM-11: the repository mirror belongs to an earlier attempt UID and the
@@ -151,12 +155,13 @@ public static class WorkContainerLaunchPlanner
         };
         if (credentialRequired)
         {
-            if (!attempt.RepositorySource.StartsWith("https://github.com/", StringComparison.Ordinal)
-                || !attempt.RepositorySource.EndsWith(".git", StringComparison.Ordinal))
+            if (GitHubRepositoryName.TryParse(attempt.RepositorySource)?.CloneUrl != attempt.RepositorySource)
                 throw new ArgumentException("Brokered Git credentials require a canonical GitHub HTTPS source.");
             environment["AGENT_SECRET_REQUIRED"] = "1";
+            environment["GIT_TERMINAL_PROMPT"] = "0";
             gitConfig.Add(("credential.helper", "/usr/local/bin/agent-git-credential-helper"));
             gitConfig.Add(("credential.useHttpPath", "true"));
+            gitConfig.Add(("http.followRedirects", "false"));
         }
         environment["GIT_CONFIG_COUNT"] = gitConfig.Count.ToString(CultureInfo.InvariantCulture);
         for (var index = 0; index < gitConfig.Count; index++)
@@ -245,6 +250,12 @@ public static class WorkContainerLaunchPlanner
           done
         fi
         echo "AGENT_PHASE materialize"
+        if [ "${AGENT_SECRET_REQUIRED:-0}" = 1 ]; then
+          # Fetch the pinned commit directly into the private attempt checkout.
+          git init --quiet /work/repo
+          git -C /work/repo fetch --quiet --no-tags "$AGENT_REPOSITORY_SOURCE" "$AGENT_EXPECTED_SHA"
+          echo "AGENT_CACHE repo miss"
+        else
         mirror="/cache/repo/$AGENT_REPOSITORY_KEY.git"
         # The entry shell is PID 1 in every container, so its process ID is not unique across attempts.
         unique="$(cat /proc/sys/kernel/random/uuid)"
@@ -263,6 +274,7 @@ public static class WorkContainerLaunchPlanner
         fi
         # --shared borrows mirror objects; the attempt volume holds only the checkout.
         git clone --quiet --shared --no-checkout "$mirror" /work/repo
+        fi
         if ! git -C /work/repo -c advice.detachedHead=false checkout --quiet --detach "$AGENT_EXPECTED_SHA" 2>/dev/null; then
           echo "AGENT_SHA_MISMATCH expected=$AGENT_EXPECTED_SHA actual=unavailable"
           exit 86

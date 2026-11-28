@@ -54,7 +54,8 @@ public sealed record PersistedRunnerSlot(
     string? ResumeRejectionReason = null,
     string? FreshRunReason = null,
     int ModelCapacityRetryAttempts = 0,
-    Guid? PreparationCopyId = null);
+    Guid? PreparationCopyId = null,
+    string? ClaimSubjectId = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore

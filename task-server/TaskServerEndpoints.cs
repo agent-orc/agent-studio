@@ -595,7 +595,7 @@ public static class TaskServerEndpoints
             HttpContext context, string runId, AttemptCredentialIdentity identity,
             TaskServerStore store, CancellationToken ct) =>
         {
-            if (!OwnsCredentialAttempt(context, runId, identity)) return Results.Forbid();
+            if (!await OwnsCredentialAttemptAsync(context, runId, identity, store)) return Results.Forbid();
             context.Response.Headers.CacheControl = "no-store";
             return await InvokeAsync(() => store.CreateAttemptCredentialCapabilityAsync(identity, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
@@ -604,7 +604,7 @@ public static class TaskServerEndpoints
             TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
             CancellationToken ct) =>
         {
-            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            if (!await OwnsCredentialAttemptAsync(context, runId, request.Identity, store)) return Results.Forbid();
             context.Response.Headers.CacheControl = "no-store";
             return await InvokeAsync(() => store.ExchangeAttemptCredentialAsync(
                 request.Identity, request.IssuanceId, request.Capability, issuer, roots, ct));
@@ -614,7 +614,7 @@ public static class TaskServerEndpoints
             TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
             CancellationToken ct) =>
         {
-            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            if (!await OwnsCredentialAttemptAsync(context, runId, request.Identity, store)) return Results.Forbid();
             context.Response.Headers.CacheControl = "no-store";
             return await InvokeAsync(() => store.RenewAttemptCredentialAsync(
                 request.Identity, request.IssuanceId, issuer, roots, ct));
@@ -624,7 +624,7 @@ public static class TaskServerEndpoints
             TaskServerStore store, IRepositoryTokenIssuer issuer, IAttemptRootSecretStore roots,
             CancellationToken ct) =>
         {
-            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            if (!await OwnsCredentialAttemptAsync(context, runId, request.Identity, store)) return Results.Forbid();
             context.Response.Headers.CacheControl = "no-store";
             return await InvokeAsync(() => store.RevokeAttemptCredentialAsync(
                 request.Identity, request.IssuanceId, issuer, roots, ct));
@@ -633,7 +633,7 @@ public static class TaskServerEndpoints
             HttpContext context, string runId, AttemptCredentialDeletionRequest request,
             TaskServerStore store, CancellationToken ct) =>
         {
-            if (!OwnsCredentialAttempt(context, runId, request.Identity)) return Results.Forbid();
+            if (!await OwnsCredentialAttemptAsync(context, runId, request.Identity, store)) return Results.Forbid();
             return await InvokeAsync(() => store.RecordAttemptCredentialDeletionAsync(request, ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         runs.MapPost("/{runId}/executor-receipt", async (
@@ -1568,11 +1568,13 @@ public static class TaskServerEndpoints
         return Math.Max(1, (budget - reserve) / 4 * 3);
     }
 
-    private static bool OwnsCredentialAttempt(HttpContext context, string runId, AttemptCredentialIdentity identity)
+    private static async Task<bool> OwnsCredentialAttemptAsync(
+        HttpContext context, string runId, AttemptCredentialIdentity identity, TaskServerStore store)
         => context.TaskServerPrincipal() is
             { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
            && string.Equals(boundRunner, identity.RunnerId, StringComparison.Ordinal)
-           && string.Equals(runId, identity.AttemptId, StringComparison.Ordinal);
+           && string.Equals(runId, identity.AttemptId, StringComparison.Ordinal)
+           && await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding) is null;
 
     internal static int ProtocolVersion(HttpContext context)
         => int.TryParse(

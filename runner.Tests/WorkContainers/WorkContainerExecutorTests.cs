@@ -223,9 +223,13 @@ public class WorkContainerExecutorTests : IDisposable
         public int? ExitCode { get; init; } = 0;
         public string Log { get; init; } = "2026-10-28T10:00:00Z AGENT_PHASE exit 0";
         public bool BlockWait { get; init; }
+        public Task? WaitUntil { get; init; }
         public bool RemovalFails { get; init; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource WaitEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? InjectedToken { get; private set; }
+        public Action<string>? OnTokenInjected { get; init; }
+        public IReadOnlyList<string>? CreateArguments { get; private set; }
         private readonly Lock _gate = new();
 
         private void Call(string text) { lock (_gate) Calls.Add(text); }
@@ -245,6 +249,7 @@ public class WorkContainerExecutorTests : IDisposable
         public Task<WorkRuntimeResult> CreateContainerAsync(IReadOnlyList<string> args, CancellationToken ct)
         {
             Call("create-container");
+            CreateArguments = args;
             string Label(string name) => args.First(value => value.StartsWith(name + "=", StringComparison.Ordinal))[(name.Length + 1)..];
             Containers.Add(new(new("container", args[args.ToList().IndexOf("--name") + 1], Label(WorkContainerLaunchPlanner.AttemptLabel),
                 Label(WorkContainerLaunchPlanner.LeaseLabel), long.Parse(Label(WorkContainerLaunchPlanner.FenceLabel)), false),
@@ -269,12 +274,15 @@ public class WorkContainerExecutorTests : IDisposable
         {
             InjectedToken = token;
             Call("inject-secret");
+            OnTokenInjected?.Invoke(token);
             return Task.FromResult(WorkRuntimeResult.Success);
         }
 
         public async Task<int?> WaitAsync(string container, CancellationToken ct)
         {
             Call($"wait {container}");
+            WaitEntered.TrySetResult();
+            if (WaitUntil is not null) await WaitUntil.WaitAsync(ct);
             if (BlockWait) await Task.Delay(Timeout.Infinite, ct);
             return ExitCode;
         }

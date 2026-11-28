@@ -1,3 +1,9 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.AttemptCredentials;
 using AgentStudio.TaskServer.Contracts;
@@ -9,6 +15,72 @@ namespace TaskServer.Tests;
 
 public sealed class AttemptCredentialBrokerTests
 {
+    [Fact]
+    public async Task GitHub_installation_token_reads_one_private_repository_and_is_denied_push()
+    {
+        const string repositoryId = "test-repository";
+        const string repositoryUrl = "https://github.com/example/private.git";
+        var roots = new MemoryRoots();
+        using var key = RSA.Create();
+        var rootKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(repositoryId))).ToLowerInvariant();
+        await roots.WriteAsync("github-app-" + rootKey, JsonSerializer.Serialize(
+            new GitHubAppRoot(1, 10, 123, repositoryUrl, key.ExportRSAPrivateKeyPem())), default);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 28, 10, 0, 0, TimeSpan.Zero));
+        using var github = new GitHubInstallationDouble(clock);
+        using var http = new HttpClient(github);
+        var issuer = new GitHubAppTokenIssuer(http, roots, clock: clock);
+
+        var token = await issuer.IssueReadAsync(repositoryId, repositoryUrl, default);
+        Assert.Equal(123, token.RepositoryId);
+        Assert.Equal([123L], github.RepositoryIds);
+        Assert.Equal(new KeyValuePair<string, string>("contents", "read"), Assert.Single(github.Permissions!));
+
+        async Task<HttpStatusCode> AccessAsync(string url, string service)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url + "/info/refs?service=" + service);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+            using var response = await http.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, await AccessAsync(repositoryUrl, "git-upload-pack"));
+        Assert.Equal(HttpStatusCode.Forbidden, await AccessAsync(repositoryUrl, "git-receive-pack"));
+        Assert.Equal(HttpStatusCode.Forbidden, await AccessAsync("https://github.com/example/other.git", "git-upload-pack"));
+    }
+
+    private sealed class GitHubInstallationDouble(TimeProvider clock) : HttpMessageHandler
+    {
+        private readonly string _token = Guid.NewGuid().ToString("N");
+        public long[]? RepositoryIds { get; private set; }
+        public Dictionary<string, string>? Permissions { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!;
+            if (request.Method == HttpMethod.Post)
+            {
+                Assert.Equal("https://api.github.com/app/installations/10/access_tokens", url.AbsoluteUri);
+                var body = await request.Content!.ReadFromJsonAsync<JsonElement>(ct);
+                RepositoryIds = body.GetProperty("repository_ids").Deserialize<long[]>();
+                Permissions = body.GetProperty("permissions").Deserialize<Dictionary<string, string>>();
+                return new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        token = _token, expires_at = clock.GetUtcNow().AddMinutes(30), permissions = Permissions,
+                        repositories = RepositoryIds!.Select(id => new { id }),
+                    }),
+                };
+            }
+
+            var id = url.AbsolutePath == "/example/private.git/info/refs" ? 123 : 456;
+            var contents = Permissions!.GetValueOrDefault("contents");
+            var allowed = request.Headers.Authorization?.Parameter == _token && RepositoryIds!.Contains(id)
+                && (contents == "write" || contents == "read" && url.Query == "?service=git-upload-pack");
+            return new HttpResponseMessage(allowed ? HttpStatusCode.OK : HttpStatusCode.Forbidden);
+        }
+    }
+
     [Fact]
     public async Task One_use_exchange_is_bound_to_live_claim_and_stale_fence_cannot_fetch_or_renew()
     {
@@ -33,10 +105,22 @@ public sealed class AttemptCredentialBrokerTests
         var claim = await store.ClaimAsync(new ClaimRequest("runner", "instance"), "test", default);
         Assert.True(claim.Status == "claimed", $"Claim was {claim.Status}: {claim.PlacementReason}");
         var identity = new AttemptCredentialIdentity("host", "coding", claim.Task!.TaskId,
-            claim.Run!.RunId, "runner", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, claim.Lease.Fence);
+            claim.Run!.RunId, "runner", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, claim.Lease.Fence,
+            RepositorySource: repositoryUrl);
         var roots = new MemoryRoots();
         var issuer = new FakeIssuer();
+        var wrongRepository = identity with { RepositorySource = "https://github.com/example/other.git" };
+        Assert.Equal("credential-repository-mismatch", (await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.CreateAttemptCredentialCapabilityAsync(wrongRepository, default))).Code);
+        Assert.Equal("stale-fence", (await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.CreateAttemptCredentialCapabilityAsync(identity with { LeaseId = "different-lease" }, default))).Code);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            store.CreateAttemptCredentialCapabilityAsync(identity with { Role = "review" }, default));
+        Assert.Equal(0, issuer.Issued);
         var capability = await store.CreateAttemptCredentialCapabilityAsync(identity, default);
+        Assert.Equal("credential-repository-mismatch", (await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ExchangeAttemptCredentialAsync(wrongRepository, capability.IssuanceId, capability.Capability,
+                issuer, roots, default))).Code);
         var material = await store.ExchangeAttemptCredentialAsync(identity,
             capability.IssuanceId, capability.Capability, issuer, roots, default);
         Assert.Equal("linux-tmpfs", material.StorageMode);
@@ -54,8 +138,11 @@ public sealed class AttemptCredentialBrokerTests
         Assert.Equal("lease-not-renewed", notRenewed.Code);
         await store.RenewLeaseAsync(claim.Run.RunId, new LeaseRenewRequest(
             "runner", "instance", claim.Lease.LeaseId, claim.Lease.Fence, 240), "test", default);
+        Assert.Equal("credential-repository-mismatch", (await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.RenewAttemptCredentialAsync(wrongRepository, capability.IssuanceId, issuer, roots, default))).Code);
         var refreshed = await store.RenewAttemptCredentialAsync(identity, capability.IssuanceId, issuer, roots, default);
         Assert.NotEqual(material.Token, refreshed.Token);
+        Assert.Equal(capability.IssuanceId, refreshed.IssuanceId);
         Assert.Single(issuer.Revoked);
         var receipt = await store.RevokeAttemptCredentialAsync(identity, capability.IssuanceId, issuer, roots, default);
         Assert.Equal("revoked", receipt.RevocationStatus);
@@ -63,9 +150,35 @@ public sealed class AttemptCredentialBrokerTests
         var deletion = await store.RecordAttemptCredentialDeletionAsync(new AttemptCredentialDeletionRequest(
             identity, capability.IssuanceId, "container-tmpfs-removed"), default);
         Assert.Equal("container-tmpfs-removed", deletion.DeletionStatus);
+        Assert.Equal(capability.IssuanceId, deletion.IssuanceId);
     }
 
     private sealed record LiveClaim(TaskServerStore Store, AttemptCredentialIdentity Identity, ClaimResponse Claim, string ProjectId);
+
+    [Fact]
+    public async Task Failed_refresh_write_preserves_the_current_root_and_can_retry_on_the_same_lease()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 28, 10, 0, 0, TimeSpan.Zero));
+        var (store, identity, claim, _) = await ClaimAsync(temp.Path, clock);
+        var roots = new MemoryRoots();
+        var issuer = new FakeIssuer();
+        var current = await IssueAsync(store, identity, issuer, roots);
+        await store.RenewLeaseAsync(claim.Run!.RunId, new LeaseRenewRequest(
+            "runner", "instance", claim.Lease!.LeaseId, claim.Lease.Fence, 240), "test", default);
+
+        roots.FailWrites = true;
+        await Assert.ThrowsAsync<IOException>(() =>
+            store.RenewAttemptCredentialAsync(identity, current.IssuanceId, issuer, roots, default));
+        Assert.Equal(current.Token, await roots.ReadAsync("issued-" + current.IssuanceId, default));
+        Assert.DoesNotContain(current.Token, issuer.Revoked);
+
+        roots.FailWrites = false;
+        var refreshed = await store.RenewAttemptCredentialAsync(identity, current.IssuanceId, issuer, roots, default);
+        Assert.Equal(current.IssuanceId, refreshed.IssuanceId);
+        Assert.Equal(refreshed.Token, await roots.ReadAsync("issued-" + current.IssuanceId, default));
+        Assert.Contains(current.Token, issuer.Revoked);
+    }
 
     private static async Task<LiveClaim> ClaimAsync(string dataDirectory, TimeProvider clock, string prefix = "PROJ")
     {
@@ -355,6 +468,7 @@ public sealed class AttemptCredentialBrokerTests
         public Func<string, Exception?>? ReadFailure { get; set; }
         public Func<string, Exception?>? DeleteFailure { get; set; }
         public bool DeleteBeforeFailure { get; set; }
+        public bool FailWrites { get; set; }
         public Task<string?> ReadAsync(string name, CancellationToken ct)
         {
             if (ReadFailure?.Invoke(name) is { } failure) throw failure;
@@ -362,6 +476,7 @@ public sealed class AttemptCredentialBrokerTests
         }
         public Task WriteAsync(string name, string value, CancellationToken ct)
         {
+            if (FailWrites) throw new IOException("Root file write failed.");
             Values[name] = value;
             return Task.CompletedTask;
         }

@@ -902,7 +902,8 @@ public sealed class RemoteRunnerDaemon
                                     permitClaim.PreviousSession,
                                     permitClaim.MechanicalDelta,
                                     permitClaim.FreshRunReason,
-                                    continuationBaseReason: permitClaim.ContinuationBaseReason))));
+                                    continuationBaseReason: permitClaim.ContinuationBaseReason,
+                                    claimSubjectId: permitClaim.JobId))));
                         idleWatchdog.RecordActiveSlots(active.Count);
                         continue;
                     }
@@ -998,7 +999,8 @@ public sealed class RemoteRunnerDaemon
                                 claim.MechanicalDelta,
                                 claim.FreshRunReason,
                                 claim.RequiredCapabilities,
-                                claim.ContinuationBaseReason)));
+                                claim.ContinuationBaseReason,
+                                claimSubjectId: claim.JobId)));
                         admittedCardKeys.TryAdd(claim.TaskKey, 0);
                         idleWatchdog.RecordActiveSlots(active.Count);
                     }
