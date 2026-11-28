@@ -270,9 +270,6 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
     public async Task LintReceiptRecordsTapDiagnosticsAndOnlyConfirmsObservedRepeats(bool reproduced)
     {
         const string lint = "bash scripts/npm-frontend.sh run lint";
-        var fixture = DurableFixture(lint);
-        using var http = fixture.Http;
-        var calls = new List<string>();
         const string tap = """
             TAP version 13
             # Subtest: rotates (false)
@@ -289,21 +286,15 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
                 not ok 99 - quoted test output
               ...
             """;
-        Task<(int, bool, string)> Execute(string command, CancellationToken _)
-        {
-            calls.Add(command);
-            var output = calls.Count == 1 || reproduced ? tap + "\n#" + new string('x', 3000) : "lint setup failed";
-            return Task.FromResult((1, false, output));
-        }
-        Assert.Equal(1, await DurableWorker(http, calls, executor: Execute).ExecuteJournalAsync(fixture.Journal, default));
-        var receipt = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+        var initial = tap + "\n#" + new string('x', 3000);
+        var receipt = await LintReceiptAsync(lint, initial, 1, reproduced ? initial : "lint setup failed");
         Assert.Equal("red", receipt.Status);
-        Assert.Equal([lint, lint], calls);
         var verdict = Assert.Single(receipt.Verdicts);
         Assert.True(verdict.Retried);
         Assert.Contains(verdict.SuiteId!, receipt.SuiteSelection!.SelectedSuites);
         Assert.Equal(lint, receipt.SuiteSelection.SuiteCommands[verdict.SuiteId!]);
         Assert.DoesNotContain("EADDRINUSE", verdict.OutputTail);
+        if (!reproduced) Assert.Equal("lint setup failed", receipt.Failure!.LogExcerpt);
         Assert.Equal("listen EADDRINUSE: address already in use", verdict.FailureMessages!["rotates (false)"]);
         Assert.Equal("test timed out after 60000ms", verdict.FailureMessages["renewal"]);
         Assert.Equal(["rotates (false)", "renewal"], receipt.Failure!.FailingTests);
@@ -314,6 +305,87 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             Assert.Equal(["fail", reproduced ? "fail" : "unknown"], test.Attempts.Select(attempt => attempt.Result));
             Assert.All(test.Attempts, attempt => Assert.Equal(receipt.TipSha, attempt.Sha));
         });
+    }
+
+    [Fact]
+    public async Task LintReceiptNamesTheRetryFailureAndKeepsEachMeasuredAttempt()
+    {
+        const string initial = """
+            not ok 1 - recovered
+              ---
+              error: 'first attempt error'
+              ...
+            ok 2 - switched
+            """;
+        const string repeat = """
+            ok 1 - recovered
+            not ok 2 - switched
+              ---
+              error: 'second attempt error'
+              ...
+            not ok 3 - new failure
+              ---
+              error: 'only seen on repeat'
+              ...
+            """;
+        var receipt = await LintReceiptAsync("lint", initial, 1, repeat);
+        var verdict = Assert.Single(receipt.Verdicts);
+        Assert.Equal(["switched", "new failure"], verdict.FailedTests);
+        Assert.Equal(verdict.FailedTests, receipt.Failure!.FailingTests);
+        Assert.Equal(["recovered"], verdict.FlakyTests);
+        Assert.Equal("first attempt error", verdict.FailureMessages!["recovered"]);
+        Assert.Equal("second attempt error", verdict.FailureMessages["switched"]);
+        Assert.Equal("only seen on repeat", verdict.FailureMessages["new failure"]);
+        Assert.Contains("only seen on repeat", receipt.Failure.LogExcerpt);
+        var attempts = receipt.TestVerdicts!.ToDictionary(test => test.Test,
+            test => test.Attempts.Select(attempt => attempt.Result).ToArray());
+        Assert.Equal(["fail", "pass"], attempts["recovered"]);
+        Assert.Equal(["pass", "fail"], attempts["switched"]);
+        Assert.Equal(["unknown", "fail"], attempts["new failure"]);
+    }
+
+    [Fact]
+    public async Task LintReceiptKeepsNewRetryFailuresWithinTheFocusedRunLimit()
+    {
+        var initial = string.Join("\n", Enumerable.Range(1, 64).Select(n => $"not ok {n} - initial {n}"));
+        var repeat = string.Join("\n", Enumerable.Range(1, 64).Select(n => $"not ok {n} - retry {n}"));
+        var receipt = await LintReceiptAsync("lint", initial, 1, repeat);
+        Assert.Equal(64, Assert.Single(receipt.FocusedRuns!).Tests);
+        Assert.Equal(Enumerable.Range(1, 64).Select(n => $"retry {n}"), receipt.Failure!.FailingTests);
+        Assert.All(receipt.TestVerdicts!, test =>
+            Assert.Equal(["unknown", "fail"], test.Attempts.Select(attempt => attempt.Result)));
+    }
+
+    [Theory]
+    [InlineData("ok 1 - original # SKIP disabled")]
+    [InlineData("not ok 1 - original # TODO later")]
+    [InlineData("ok 1 - unrelated")]
+    [InlineData("ok 1 - original")]
+    public async Task SuccessfulLintRetryRequiresAnObservedPassToClearTheFailure(string repeat)
+    {
+        var receipt = await LintReceiptAsync("lint", "not ok 1 - original", 0, repeat);
+        var passed = repeat == "ok 1 - original";
+        var verdict = Assert.Single(receipt.Verdicts);
+        Assert.Equal(passed ? "green" : "red", receipt.Status);
+        Assert.Equal(passed ? [] : new[] { "original" }, verdict.FailedTests);
+        Assert.Equal(passed ? new[] { "original" } : [], verdict.FlakyTests);
+        var test = Assert.Single(receipt.TestVerdicts!);
+        Assert.Equal(["fail", passed ? "pass" : "unknown"], test.Attempts.Select(attempt => attempt.Result));
+    }
+
+    private async Task<PostMergeRunRecord> LintReceiptAsync(string lint, string initial, int retryExit, string repeat)
+    {
+        var fixture = DurableFixture(lint);
+        using var http = fixture.Http;
+        var calls = new List<string>();
+        Task<(int, bool, string)> Execute(string command, CancellationToken _)
+        {
+            calls.Add(command);
+            return Task.FromResult(calls.Count == 1 ? (1, false, initial) : (retryExit, false, repeat));
+        }
+        await DurableWorker(http, calls, executor: Execute).ExecuteJournalAsync(fixture.Journal, default);
+        Assert.Equal([lint, lint], calls);
+        return Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
     }
 
     [Fact]

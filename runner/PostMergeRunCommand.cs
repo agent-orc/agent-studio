@@ -422,23 +422,17 @@ public sealed class PostMergeRunCommand
                 var result = await TimedRun(command, definition.Environment, ct);
                 var lint = lintChecks.GetValueOrDefault(command);
                 var verdict = Verdict(command, result) with { SuiteId = lint?.Id };
-                verdicts.Add(verdict);
                 if (lint is not null && result.ExitCode != 0)
                 {
-                    var messages = PostMergeTap.FailureMessages(result.Output);
-                    if (messages.Count > 0)
+                    var initial = new PostMergeTap(result.Output);
+                    var failures = initial.FailedTests;
+                    if (failures.Length > 0)
                     {
-                        var tests = messages.Keys.ToArray();
-                        verdicts[verdictStart] = verdict with { FailedTests = tests, FailureMessages = messages };
-                        ledger.Initial(lint, command, tests, tests, tip);
                         var repeat = await TimedRun(command, definition.Environment, ct);
-                        var run = PostMergeTap.Repeat(tip, tests, repeat);
-                        _recordRun(run);
-                        verdicts[verdictStart] = verdicts[verdictStart] with { ExitCode = repeat.ExitCode,
-                            TimedOut = repeat.TimedOut, Retried = true,
-                            FlakyTests = tests.Where(test => run.ResultOf(test) == PostMergeTestResults.Pass).ToArray() };
+                        verdict = LintRetryVerdict(verdict, lint, initial, failures, repeat, tip, ledger, _recordRun);
                     }
                 }
+                verdicts.Add(verdict);
             }
             if (suite is not null)
             {
@@ -738,6 +732,35 @@ public sealed class PostMergeRunCommand
                     var error = TestFailureMessages.FirstError(result.Output, test);
                     return error[..Math.Min(error.Length, 2000)];
                 }, StringComparer.Ordinal) };
+
+    private static PostMergeCommandVerdict LintRetryVerdict(PostMergeCommandVerdict initialVerdict,
+        ProjectTestSuite lint, PostMergeTap initial, string[] initialFailures,
+        (int ExitCode, bool TimedOut, string Output, long DurationMs) repeat, string tip,
+        PostMergeTestLedger ledger, Action<PostMergeTestRun> record)
+    {
+        var retried = new PostMergeTap(repeat.Output);
+        var retryFailures = retried.FailedTests;
+        // Give observed retry failures priority within the receipt limit. A skipped or
+        // missing point leaves the original failure unresolved, even on a zero exit.
+        var unresolved = initialFailures.Where(test => retried.ResultOf(test) == PostMergeTestResults.Unknown);
+        var failed = retryFailures.Concat(unresolved).Take(64).ToArray();
+        var tests = failed.Union(initialFailures).Take(64).ToArray();
+        ledger.Initial(lint, lint.Command, tests, tests, tip, initial.ResultOf);
+        record(new(PostMergeRunPhases.Repeat, tip, tests, repeat.ExitCode, repeat.TimedOut, repeat.Output, repeat.DurationMs)
+            { ReportedResults = tests.ToDictionary(test => test, retried.ResultOf) });
+
+        return initialVerdict with
+        {
+            ExitCode = repeat.ExitCode == 0 && failed.Length > 0 ? initialVerdict.ExitCode : repeat.ExitCode,
+            TimedOut = repeat.TimedOut,
+            Retried = true,
+            OutputTail = repeat.ExitCode != 0 ? PostMergeAttributor.Excerpt(repeat.Output) : initialVerdict.OutputTail,
+            FailedTests = failed,
+            FlakyTests = tests.Where(test => retried.ResultOf(test) == PostMergeTestResults.Pass).ToArray(),
+            FailureMessages = tests.ToDictionary(test => test,
+                test => retried.ErrorOf(test) ?? initial.ErrorOf(test) ?? "Not recorded in receipt."),
+        };
+    }
 
     private async Task<(int ExitCode, bool TimedOut, string Output, long DurationMs)> TimedRun(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)

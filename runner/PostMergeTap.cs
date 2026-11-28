@@ -4,7 +4,7 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>Node TAP points and their first diagnostic, read before truncating command output.</summary>
-internal static partial class PostMergeTap
+internal sealed partial class PostMergeTap(string output)
 {
     private sealed record Point(string Name, string Result, string? Error);
 
@@ -13,27 +13,23 @@ internal static partial class PostMergeTap
     [GeneratedRegex(@"\s+#\s*(?:SKIP|TODO)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Directive();
 
-    internal static Dictionary<string, string> FailureMessages(string output)
-        => Read(output).Where(point => point.Result == PostMergeTestResults.Fail).DistinctBy(point => point.Name)
-            .Take(64).ToDictionary(point => point.Name, point => point.Error ?? "Not recorded in receipt.");
+    private readonly Dictionary<string, Point> _points = Read(output).GroupBy(point => point.Name)
+        .ToDictionary(group => group.Key, group => group.FirstOrDefault(point => point.Result == PostMergeTestResults.Fail)
+            ?? group.First());
 
-    internal static PostMergeTestRun Repeat(string tip, IReadOnlyList<string> tests,
-        (int ExitCode, bool TimedOut, string Output, long DurationMs) repeat)
-    {
-        // Lint can stop before it reaches the original failing tests. Keep those outcomes unknown.
-        var outcomes = Read(repeat.Output).Where(point => tests.Contains(point.Name))
-            .GroupBy(point => point.Name).ToDictionary(group => group.Key,
-                group => group.Any(point => point.Result == PostMergeTestResults.Fail)
-                    ? PostMergeTestResults.Fail : PostMergeTestResults.Pass);
-        return new(PostMergeRunPhases.Repeat, tip, tests, repeat.ExitCode, repeat.TimedOut, repeat.Output, repeat.DurationMs)
-            { ReportedResults = outcomes };
-    }
+    // The command verdict accepts up to 64 names in each list.
+    internal string[] FailedTests => _points.Values.Where(point => point.Result == PostMergeTestResults.Fail)
+        .Take(64).Select(point => point.Name).ToArray();
+
+    internal string ResultOf(string name) => _points.GetValueOrDefault(name)?.Result ?? PostMergeTestResults.Unknown;
+    internal string? ErrorOf(string name) => _points.GetValueOrDefault(name)?.Error;
 
     private static IEnumerable<Point> Read(string output)
     {
         using var reader = new StringReader(output);
         Point? point = null;
         int? diagnosticIndent = null;
+        int? pointIndent = null;
         while (reader.ReadLine() is { } line)
         {
             var field = line.TrimStart();
@@ -55,7 +51,7 @@ internal static partial class PostMergeTap
                 }
                 continue;
             }
-            if (point is not null && field == "---")
+            if (field == "---" && indent > pointIndent)
             {
                 diagnosticIndent = indent;
                 continue;
@@ -63,6 +59,7 @@ internal static partial class PostMergeTap
             var match = TestPoint().Match(line);
             if (!match.Success) continue;
             if (point is not null) yield return point;
+            pointIndent = indent;
             var name = match.Groups["name"].Value;
             point = name.Length <= 256 && !Directive().IsMatch(name)
                 ? new(name, match.Groups["result"].Value == "ok" ? PostMergeTestResults.Pass : PostMergeTestResults.Fail, null)
