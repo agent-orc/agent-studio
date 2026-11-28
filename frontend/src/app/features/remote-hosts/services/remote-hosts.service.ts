@@ -546,13 +546,16 @@ export class RemoteHostsService {
           const nextTelemetry = preserveLongTelemetry && host.telemetry?.window === '14d'
             ? mergeRecentTelemetry(host.telemetry, telemetry)
             : telemetry;
-          return { ...host, stats, telemetry: nextTelemetry, telemetryLoading: false };
+          const diskPressureReason = fresh
+            ? telemetry.findings.find(finding => finding.kind === 'disk-pressure' && finding.isActive)?.detail
+            : null;
+          return { ...host, stats, telemetry: nextTelemetry, telemetryLoading: false, diskPressureReason };
         });
         this.log('telemetry-hydrated', { hostId, points: telemetry.points.length, findings: telemetry.findings.length,
           durationMs: Math.round(performance.now() - startedAt) });
       },
       error: error => {
-        this.patch(hostId, host => ({ ...host, stats: null, telemetry: null, telemetryLoading: false }));
+        this.patch(hostId, host => ({ ...host, stats: null, telemetry: null, telemetryLoading: false, diskPressureReason: null }));
         this.log('telemetry-hydrate-failed', { hostId, message: error?.message ?? 'unknown',
           durationMs: Math.round(performance.now() - startedAt) });
       },
