@@ -157,6 +157,7 @@ export function fakeOperatorAgentsService(agents: OperatorAgent[] = operatorAgen
     rearm: vi.fn(() => Promise.resolve(true)),
     verifying: signal(false),
     load: vi.fn(() => Promise.resolve()),
+    refresh: vi.fn(() => Promise.resolve()),
     loadActivity: vi.fn(() => Promise.resolve()),
     filterSession: vi.fn((sessionId: string | null) => {
       sessionFilter.set(sessionId);

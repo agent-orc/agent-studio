@@ -56,6 +56,49 @@ describe('OperatorAgentsService', () => {
     expect(await rearming).toBe(true);
   });
 
+  it('refreshes quietly, skips overlapping reads, and retains facts after a transient failure', async () => {
+    const initial = service.load();
+    const skipped = service.refresh();
+    http.expectOne(OPERATORS).flush(operatorAgents());
+    await Promise.all([initial, skipped]);
+    const refreshing = service.refresh();
+    expect(service.state()).toBe('ready');
+    expect(service.agents()).toHaveLength(2);
+    await service.refresh();
+    http.expectOne(OPERATORS).flush({}, { status: 503, statusText: 'Unavailable' });
+    await refreshing;
+    expect(service.state()).toBe('ready');
+    expect(service.agents()).toHaveLength(2);
+    expect(service.error()).toBeNull();
+    const recovered = service.refresh();
+    http.expectOne(OPERATORS).flush([]);
+    await recovered;
+    expect(service.agents()).toEqual([]);
+  });
+
+  it('does not let an older refresh overwrite newer session facts', async () => {
+    const older = service.refresh();
+    const oldRequest = http.expectOne(OPERATORS);
+    const newer = service.load();
+    http.expectOne(OPERATORS).flush([]);
+    oldRequest.flush(operatorAgents());
+    await Promise.all([older, newer]);
+    expect(service.agents()).toEqual([]);
+  });
+
+  it('clears cached facts after a background refusal and stops automatic retries', async () => {
+    const initial = service.load();
+    http.expectOne(OPERATORS).flush(operatorAgents());
+    await initial;
+    const refreshing = service.refresh();
+    http.expectOne(OPERATORS).flush({}, { status: 403, statusText: 'Forbidden' });
+    await refreshing;
+    expect(service.state()).toBe('denied');
+    expect(service.agents()).toEqual([]);
+    await service.refresh();
+    http.expectNone(OPERATORS);
+  });
+
   it('loads the operator agents and marks the sections available', async () => {
     const loading = service.load();
     http.expectOne(OPERATORS).flush(operatorAgents());
