@@ -67,6 +67,9 @@ control measurements. An aborted host, changed assertion, absent base test or
 unavailable control remains explicit incomplete evidence. Shared base failures
 keep their existing disposition. Parameterized cases that cannot be identified
 by an exact method filter also remain incomplete.
+Assertion fingerprints require the exact test heading and preserve assertion
+values, including whitespace, durations, timestamps, identifiers and ports.
+Console decoration and checkout paths are normalized separately from those values.
 
 When a deterministic command is red on a stale merge base and the fetched target
 has advanced, the review host measures the command on a clean target checkout.

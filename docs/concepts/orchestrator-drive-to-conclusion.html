@@ -3628,6 +3628,13 @@
           <td>Whole-run environment attribution hid the completed candidate-only assertion when another test failed on the base.</td>
           <td>The repair collects at most three exact-test control pairs using each checkout's pinned envelope. A matching candidate assertion and an observed passing base control supply the existing <code>ProductFailure</code> decision. Aborted, missing or mismatched controls remain <code>ReviewInfra</code>; rejected proofs also lose their product verdict before grading. Shared base failures retain their disposition. No lane transition rule changes.</td>
         </tr>
+        <tr id="case-review-assertion-fingerprint-collision">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-fingerprint-collision</span></td>
+          <td>No CLI crashed. A synthetic mixed-run regression changed an asserted duration from <code>1 ms</code> to <code>2 ms</code> in the exact candidate repeat. With a passing base control, the original fingerprint still charged <code>ProductFailure</code>.</td>
+          <td>Command-output normalization removed assertion values and whitespace before hashing. Substring test-name matching could also select a sibling method or parameterized case.</td>
+          <td>Assertion fingerprints preserve values and require an exact test heading. Changed assertions remain incomplete evidence and reach <code>ReviewInfra</code>; matching assertions retain the existing product-failure path. Repeat bounds, checkout envelopes and transition rules are unchanged.</td>
+        </tr>
       </tbody>
     </table>
 

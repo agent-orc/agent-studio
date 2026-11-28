@@ -78,26 +78,33 @@ internal static partial class ReviewTestFailureAttribution
     internal static string? AssertionFingerprint(
         string attemptRoot, string stepId, string test, ProcessResult process)
     {
-        var lines = (process.StdOut + "\n" + process.StdErr).Replace("\r", "").Split('\n')
-            .Select(line => XunitPrefix().Replace(AnsiEscape().Replace(line, ""), "").Trim()).ToArray();
-        var start = Array.FindIndex(lines, line => line.Contains(test, StringComparison.Ordinal)
-            && (line.StartsWith("Failed ", StringComparison.Ordinal) || line.EndsWith("[FAIL]", StringComparison.Ordinal)));
+        var lines = (process.StdOut + "\n" + process.StdErr).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
+            .Select(line => XunitPrefix().Replace(AnsiEscape().Replace(line, ""), "")).ToArray();
+        var start = Array.FindIndex(lines, line =>
+        {
+            var heading = line.Trim();
+            return heading == test + " [FAIL]" || heading == "Failed " + test
+                || (heading.StartsWith("Failed " + test + " [", StringComparison.Ordinal)
+                    && heading.EndsWith("]", StringComparison.Ordinal));
+        });
         if (start < 0) return null;
         var diagnostic = lines.Skip(start + 1).TakeWhile(line =>
-            !line.StartsWith("Failed ", StringComparison.Ordinal)
-            && !line.StartsWith("Passed ", StringComparison.Ordinal)
-            && !line.StartsWith("Failed!", StringComparison.Ordinal)
-            && !line.StartsWith("Passed!", StringComparison.Ordinal)
-            && !line.EndsWith("[FAIL]", StringComparison.Ordinal)
-            && line != "Stack Trace:" && !line.StartsWith("at ", StringComparison.Ordinal)
-            && !line.StartsWith("Test Run ", StringComparison.Ordinal)
-            && !line.StartsWith("Total tests:", StringComparison.Ordinal))
-            .Where(line => line.Length > 0 && line != "Error Message:").ToArray();
-        if (diagnostic.Length == 0) return null;
-        // Expected and actual values often follow the assertion header on separate lines.
-        var message = string.Join('\n', diagnostic);
-        var normalized = Regex.Replace(FailureOutputNormalizer.StripVolatile(
-            ReviewFailureFingerprint.NormalizePaths(attemptRoot, message)), @"\s+", " ").Trim();
+        {
+            var metadata = line.Trim();
+            return !metadata.StartsWith("Failed ", StringComparison.Ordinal)
+                && !metadata.StartsWith("Passed ", StringComparison.Ordinal)
+                && !metadata.StartsWith("Failed!", StringComparison.Ordinal)
+                && !metadata.StartsWith("Passed!", StringComparison.Ordinal)
+                && !metadata.EndsWith("[FAIL]", StringComparison.Ordinal)
+                && metadata != "Stack Trace:" && !metadata.StartsWith("at ", StringComparison.Ordinal)
+                && !metadata.StartsWith("Test Run ", StringComparison.Ordinal)
+                && !metadata.StartsWith("Total tests:", StringComparison.Ordinal);
+        }).SkipWhile(line => string.IsNullOrWhiteSpace(line) || line.Trim() == "Error Message:");
+        var message = string.Join('\n', diagnostic).Trim('\n');
+        if (string.IsNullOrWhiteSpace(message)) return null;
+        // Whitespace, times, GUIDs and ports can be asserted values. Only remove
+        // known console framing and checkout paths, not data from the assertion.
+        var normalized = ReviewFailureFingerprint.NormalizePaths(attemptRoot, message);
         return ReviewFailureFingerprint.Prefix + Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(stepId + "\n" + test + "\n" + normalized))).ToLowerInvariant();
     }
@@ -134,7 +141,7 @@ internal static partial class ReviewTestFailureAttribution
     [GeneratedRegex(@"\x1b\[[0-?]*[ -/]*[@-~]")]
     private static partial Regex AnsiEscape();
 
-    [GeneratedRegex(@"^\s*\[xUnit\.net [^\]]+\]\s*")]
+    [GeneratedRegex(@"^[ \t]*\[xUnit\.net [^\]]+\][ \t]?")]
     private static partial Regex XunitPrefix();
 
     [GeneratedRegex(@"\[(?:UnobservedTaskException|UnhandledException)\](?:\s+terminating=\w+)?\s+(?<cause>[\w.]+(?:Exception|Error)\b[^\r\n]*)")]

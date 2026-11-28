@@ -308,6 +308,57 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("elapsed 1 ms", "elapsed 2 ms")]
+    [InlineData("2026-11-28T03:50:00Z", "2026-11-28T03:51:00Z")]
+    [InlineData("03:50:00", "03:51:00")]
+    [InlineData("12345678-1234-1234-1234-123456789abc", "12345678-1234-1234-1234-123456789abd")]
+    [InlineData("http://localhost:5030", "http://localhost:5031")]
+    [InlineData("port 5030", "port 5031")]
+    [InlineData("a  b", "a b")]
+    [InlineData("a\tb", "a b")]
+    [InlineData("a\rb", "ab")]
+    [InlineData("a\nb", "a b")]
+    [InlineData("a\n\nb", "a\nb")]
+    [InlineData(" value ", "value")]
+    public void Assertion_fingerprints_preserve_asserted_values(string firstValue, string repeatValue)
+    {
+        static string? Fingerprint(string value) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1,
+                "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure\n" + value
+                + "\n  Stack Trace:\n   at Product.Tests.A()", ""));
+
+        var first = Fingerprint(firstValue);
+        var repeat = Fingerprint(repeatValue);
+
+        Assert.NotNull(first);
+        Assert.NotNull(repeat);
+        Assert.NotEqual(first, repeat);
+        var proof = new ReviewAssertionEvidenceDto("Product.Tests.A", "FullyQualifiedName=Product.Tests.A",
+            first, repeat, null, null, null);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence,
+            ReviewTestFailureAttribution.DiagnoseAssertions([proof]).Classification);
+    }
+
+    [Theory]
+    [InlineData("Failed Product.Tests.Again [1 ms]")]
+    [InlineData("Product.Tests.Again [FAIL]")]
+    [InlineData("Failed Product.Tests.A(value: 1) [1 ms]")]
+    [InlineData("Product.Tests.A(value: 1) [FAIL]")]
+    public void Assertion_fingerprints_require_the_exact_test_heading(string otherHeading)
+    {
+        static string? Fingerprint(string output) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1, output, ""));
+        var other = otherHeading + "\n  Error Message:\nAssert.True() Failure\n  Stack Trace:\n   at Other()\n";
+        const string selected = "  Failed Product.Tests.A [2 ms]\n  Error Message:\nAssert.False() Failure\n";
+
+        Assert.Null(Fingerprint(other));
+        Assert.NotNull(Fingerprint(selected));
+        Assert.Equal(Fingerprint(selected), Fingerprint(other + selected));
+        Assert.Equal(Fingerprint(selected), Fingerprint(selected.Replace(
+            "Failed Product.Tests.A [2 ms]", "Product.Tests.A [FAIL]", StringComparison.Ordinal)));
+    }
+
+    [Theory]
     [InlineData("Product.Tests.A", "FullyQualifiedName=Product.Tests.A")]
     [InlineData("Product.Tests.A(value: 1)", null)]
     [InlineData("Product.Tests.A|FullyQualifiedName~Other", null)]
@@ -324,6 +375,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [Theory]
     [InlineData("matching", "ProductFailure")]
     [InlineData("different", "ReviewInfra")]
+    [InlineData("different-duration", "ReviewInfra")]
+    [InlineData("different-whitespace", "ReviewInfra")]
     [InlineData("absent", "ReviewInfra")]
     [InlineData("aborted", "ReviewInfra")]
     [InlineData("unavailable", "ReviewInfra")]
@@ -375,6 +428,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
               if grep -q subject product.txt || [ "$PROJECT_ASSERTION_CANDIDATE" = delivery ]; then
                 actual=409
                 [ 'CONTROL' = different ] && actual=500
+                case 'CONTROL' in
+                  different-duration) case "$PWD" in *baseline-clean-*) actual='2 ms';; *) actual='1 ms';; esac;;
+                  different-whitespace) case "$PWD" in *baseline-clean-*) actual='a b';; *) actual='a  b';; esac;;
+                esac
                 printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual %s\n' "$actual"
                 [ 'CONTROL' = aborted ] && printf 'Test Run Aborted\n'
                 exit 1
@@ -388,7 +445,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
               exit 0
             fi
             if grep -q subject product.txt || [ "$PROJECT_ASSERTION_CANDIDATE" = delivery ]; then
-              printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual 409\n'
+              actual=409
+              [ 'CONTROL' = different-duration ] && actual='1 ms'
+              [ 'CONTROL' = different-whitespace ] && actual='a  b'
+              printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual %s\n' "$actual"
               case "$PWD" in
                 *clean-repeat-*) other=C; [ 'CONTROL' = repeat-aborted ] && printf 'Test Run Aborted\n';;
                 *) other=B; [ 'CONTROL' = initial-aborted ] && printf 'Test Run Aborted\n';;
