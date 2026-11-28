@@ -2079,6 +2079,11 @@ Settings > Credentials classifies each inventory entry as `short-lived` or
 window of at most 24 hours is short-lived; other entries are long-lived. A provider login
 stays long-lived when it can refresh an access token. Probe observations do not
 claim a creation date or a real credential use.
+A provider login is one entry per host and provider, whatever number of
+roles on that host advertise it, and it carries the same kind as the host
+registry's record for that login. An active registry record replaces the
+advertised entry, so each login produces one set of warnings; an inactive
+registry record does not hide a login the host still advertises.
 
 The installation inventory joins Task Server host registry and principal
 metadata with Studio's secret provider, external-store credential bindings and

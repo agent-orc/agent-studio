@@ -47,21 +47,44 @@ public static class CredentialLifecyclePolicy
         }
     }
 
-    /// <summary>Capability advertisements prove login health, not creation, expiry or last real use.</summary>
+    /// <summary>
+    /// Capability advertisements prove login health, not creation, expiry or last real use. A login belongs to the
+    /// host, so several roles of one host yield one entry, and the kind matches the registry's kind for the provider.
+    /// </summary>
     public static IReadOnlyList<CredentialInventoryItemDto> ProviderLogins(IReadOnlyList<RunnerCapabilitySnapshotDto> hosts)
         => hosts.SelectMany(host => host.Capabilities
-            .Where(capability => capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal))
-            .Select(capability =>
+                .Where(capability => capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal))
+                .Select(capability => (Host: host, Provider: capability.Key["provider-auth:".Length..],
+                    Healthy: capability.IsFresh && capability.HealthState == "healthy")))
+            .GroupBy(login => (login.Host.HostId, login.Provider))
+            .OrderBy(group => group.Key.HostId, StringComparer.Ordinal).ThenBy(group => group.Key.Provider, StringComparer.Ordinal)
+            .Select(group =>
             {
-                var provider = capability.Key["provider-auth:".Length..];
-                return new CredentialInventoryItemDto($"provider-login:{host.RunnerId}:{provider}", "provider", host.HostId,
-                    provider == "codex" ? "codex_chatgpt_login" : provider + "_login",
-                    $"{provider} login on {host.Name}", [], null, null, null, null,
-                    capability.IsFresh && capability.HealthState == "healthy" ? "ok" : "missing", false,
+                var (hostId, provider) = group.Key;
+                var name = group.Select(login => login.Host.Name).Order(StringComparer.Ordinal).First();
+                return new CredentialInventoryItemDto($"provider-login:{hostId}:{provider}", "provider", hostId,
+                    ProviderLoginKind(provider), $"{provider} login on {name}", [], null, null, null, null,
+                    group.Any(login => login.Healthy) ? "ok" : "missing", false,
                     "Host-owned provider login. Refreshing an access token does not rotate this login.", [],
-                    Holder: host.RunnerId, Target: provider, Refreshable: true);
-            }))
-            .DistinctBy(item => item.Id).ToArray();
+                    Holder: hostId, Target: provider, Refreshable: true);
+            })
+            .ToArray();
+
+    public static string ProviderLoginKind(string provider) => provider switch
+    {
+        "claude" => "claude_native_login",
+        "codex" => "codex_chatgpt_login",
+        _ => provider + "_login",
+    };
+
+    /// <summary>
+    /// An active registry entry for the same host and kind already carries the login, so the capability entry is
+    /// dropped to avoid a second warning. An inactive registry entry does not hide the advertised login.
+    /// </summary>
+    public static IReadOnlyList<CredentialInventoryItemDto> MergeProviderLogins(
+        IReadOnlyList<CredentialInventoryItemDto> items, IReadOnlyList<CredentialInventoryItemDto> logins)
+        => [.. items, .. logins.Where(login => !items.Any(item =>
+            item.Active && item.HostId == login.HostId && item.Kind == login.Kind))];
 }
 
 public sealed record CredentialLifecycleWarningDto(string CredentialId, string Holder, string Target,

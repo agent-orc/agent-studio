@@ -161,6 +161,42 @@ public sealed class CredentialInventoryTests
     }
 
     [Fact]
+    public async Task Provider_login_is_one_entry_per_host_and_uses_the_registry_kind()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Now);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        foreach (var runner in new[] { "provider-runner-a", "provider-runner-b" })
+        {
+            await store.RegisterRunnerAsync(runner, new RegisterRunnerRequest(runner, "host-shared",
+                "instance-" + runner, "1.0", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), "test", default);
+            await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(runner, "instance-" + runner,
+                CapabilityProtocol.CurrentSchemaVersion, clock.GetUtcNow().UtcDateTime, 300, 1,
+                [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                 new AdvertisedCapabilityDto("provider-auth:claude", "provider-auth")]), "test", default);
+        }
+        var inventory = await store.GetCredentialInventoryAsync(StudioUserRoles.Owner, default);
+        var login = Assert.Single(inventory.Items, item => item.HostId == "host-shared" && item.Category == "provider");
+        Assert.Equal("claude_native_login", login.Kind);
+        Assert.Equal("host-shared", login.Holder);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Provider_login_reconciliation_neither_duplicates_nor_hides_an_active_login(bool registryActive, bool capabilityAdded)
+    {
+        CredentialInventoryItemDto Login(string id, bool active) => new(id, "provider", "host-shared", "claude_native_login",
+            "claude login", [], null, null, null, null, "ok", false, "Metadata only", [],
+            Holder: "host-shared", Target: "claude", Refreshable: true, Active: active);
+        var merged = CredentialLifecyclePolicy.MergeProviderLogins(
+            [Login("registry:claude", registryActive)], [Login("provider-login:host-shared:claude", true)]);
+        Assert.Equal(capabilityAdded, merged.Any(item => item.Id == "provider-login:host-shared:claude"));
+        Assert.Single(merged, item => item.Active && item.Kind == "claude_native_login");
+    }
+
+    [Fact]
     public async Task Inventory_response_omits_the_principal_secret_and_verifier_columns()
     {
         using var temp = new TempDirectory();

@@ -192,9 +192,8 @@ public sealed partial class TaskServerStore
 
         }
         var snapshots = await ListRunnerCapabilitySnapshotsAsync(ct);
-        foreach (var login in CredentialLifecyclePolicy.ProviderLogins(snapshots))
-            if (!derived.Any(item => item.HostId == login.HostId && item.Kind == login.Kind)) derived.Add(login);
-        return new(now, derived.Select(item => CredentialLifecyclePolicy.Complete(item, installation.CreatedAt)).ToArray());
+        var merged = CredentialLifecyclePolicy.MergeProviderLogins(derived, CredentialLifecyclePolicy.ProviderLogins(snapshots));
+        return new(now, merged.Select(item => CredentialLifecyclePolicy.Complete(item, installation.CreatedAt)).ToArray());
     }
 
     private static int? ReportedRotationInterval(CredentialRegistryRecordDto record)
