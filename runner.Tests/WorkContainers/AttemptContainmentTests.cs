@@ -28,7 +28,7 @@ public class AttemptContainmentTests
     {
         var attacker = Capability();
         var victim = Capability(attacker.Attempt with { AttemptId = "victim", LeaseId = "victim-lease", RepositoryKey = "victim-repository" });
-        var context = LauncherContext() with { AttemptCapability = attacker, Volumes = attacker.Volumes.Concat(victim.Volumes).ToHashSet() };
+        var context = LauncherContext() with { AttemptCapability = attacker };
         var victimPlan = WorkContainerLaunchPlanner.Plan(victim.Attempt, WorkContainerPolicyTests.Digest, Limits, WorkContainerPolicyTests.Settings() with { Network = "agent-work" }, uid: 212_345);
         IReadOnlyList<string>[] calls =
         [
@@ -40,7 +40,6 @@ public class AttemptContainmentTests
             ["ps", "--all", "--no-trunc", "--filter", "label=agent-studio.work-container=1", "--format", "{{json .}}"],
             ["volume", "ls", "--filter", "label=agent-studio.work-container=1", "--format", "{{json .}}"],
             victimPlan.CreateArguments, victimPlan.PrepareArguments,
-            BoundaryPlan().CreateArguments.Select(value => value.Replace("agent-studio-v7", "victim-repository-v7", StringComparison.Ordinal)).ToArray(),
         ];
         var fakeToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         foreach (var call in calls)
@@ -55,6 +54,20 @@ public class AttemptContainmentTests
         Assert.NotNull(WorkContainerLauncherPolicy.Refusal(forged, context));
         Assert.NotNull(WorkContainerLauncherPolicy.Refusal(["logs", "--timestamps", attacker.Container],
             context with { AttemptCapability = attacker with { Operations = ["wait"] } }));
+    }
+
+    [Fact]
+    public async Task An_attempt_cannot_mount_the_cache_set_of_another_repository()
+    {
+        var args = BoundaryPlan().CreateArguments.Select(value => value.Replace(
+            "agent-studio-v7", "other-repository-v7", StringComparison.Ordinal)).ToArray();
+
+        var result = await WorkContainerLauncherCommand.ExecuteAuthorizedAsync(args, null, LauncherContext(),
+            (_, _, _) => throw new Xunit.Sdk.XunitException("An out-of-scope cache must not reach the runtime."), default);
+
+        Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, result.ExitCode);
+        Assert.Equal("agent-work-launcher refused: cache-outside-capability.", result.StdErr);
+        Assert.Empty(result.StdOut);
     }
 
     [Fact]
@@ -984,6 +997,31 @@ public class AttemptContainmentTests
         Assert.Equal(admitted, WorkContainerLauncherCommand.VolumeCapabilityRefusal(json, "agent-work-fixture", out _) is null);
     }
 
+    [Theory]
+    [InlineData(1, "", "volume-capability-unavailable: daemon volume inspection failed after creation.")]
+    [InlineData(0, "{", "volume-inspection-invalid.")]
+    public async Task Mount_admission_reports_the_volume_inspection_failure(int inspectionExitCode, string inspectionOutput, string reason)
+    {
+        var plan = WorkContainerLaunchPlanner.Plan(WorkContainerPolicyTests.Attempt() with { RepositorySource = "https://example.invalid/project.git" },
+            WorkContainerPolicyTests.Digest, Limits, WorkContainerPolicyTests.Settings(), uid: 212_345);
+        var calls = new List<string>();
+        Task<ProcessResult> Runtime(IReadOnlyList<string> args, string? stdin, CancellationToken ct)
+        {
+            Assert.Equal("volume", args[0]);
+            calls.Add(args[1]);
+            return Task.FromResult(args[1] == "inspect"
+                ? new ProcessResult(inspectionExitCode, inspectionOutput, "")
+                : new ProcessResult(0, "", ""));
+        }
+
+        var result = await WorkContainerLauncherCommand.ExecuteAuthorizedAsync(plan.PrepareArguments, null, LauncherContext(), Runtime, default);
+
+        Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, result.ExitCode);
+        Assert.Equal("agent-work-launcher refused: " + reason, result.StdErr);
+        Assert.Equal(inspectionExitCode == 0 ? ["inspect"] : new[] { "inspect", "create", "inspect" }, calls);
+        Assert.Empty(result.StdOut);
+    }
+
     [Fact]
     public void Effective_mount_inspection_refuses_implicit_image_volumes_and_substituted_bind_sources()
     {
@@ -1122,7 +1160,7 @@ public class AttemptContainmentTests
             var context = new WorkContainerLauncherContext(new HashSet<string>(["none"]))
             {
                 AttemptCapability = WorkContainerAttemptCapability.For(attempt, plan, WorkContainerPolicyTests.Settings().CacheVersion),
-                ApprovedImages = release, BindSources = new HashSet<string>(release.Sources), Volumes = volumes,
+                ApprovedImages = release, BindSources = new HashSet<string>(release.Sources),
             };
             Assert.True(await RoleImageManifest.LauncherSourceReadyAsync(source, ct));
             var nestedSocket = Path.Combine(source, "objects", "fixture.sock");
@@ -1341,7 +1379,6 @@ public class AttemptContainmentTests
             ReservedLimits = Limits,
             ApprovedImages = RoleImageManifest.Empty().Promote("gate", WorkContainerPolicyTests.Digest, "fixture"),
             BindSources = new HashSet<string>(["/srv/mirrors/project.git"], StringComparer.Ordinal),
-            Volumes = BoundaryPlan().Mounts.Where(mount => mount.Type == "volume").Select(mount => mount.Source).ToHashSet(StringComparer.Ordinal),
         };
 
     private static string[] CapAdds(IReadOnlyList<string> args)
