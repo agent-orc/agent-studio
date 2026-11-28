@@ -19,7 +19,8 @@ public sealed record RequiredPermissionMetadata(
     string? Environment = null,
     string? EnvironmentRouteValue = null,
     bool ProjectBindingsSuffice = false,
-    string? EnvironmentBodyField = null);
+    string? EnvironmentBodyField = null,
+    bool OperatorTokenReport = false);
 
 /// <summary>
 /// One route's permission split by method: <see cref="Read"/> for GET, HEAD,
@@ -281,6 +282,11 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        const string records = AgentStudio.Deploy.DeployRecordEndpoints.Path;
+        Add("GET", IamPermissions.WorkspaceOperate, records);
+        foreach (var path in new[] { records, records + "/import" })
+            rules.Add(new Rule("POST", Split(path), new RequiredPermissionMetadata(
+                IamPermissions.WorkspaceSettingsWrite, OperatorTokenReport: true)));
         // Instance deploy records (AGT-3879): the report routes check their own
         // deploy reporter token; issuing or revoking one is an Owner action.
         Add("POST", IamPermissions.Anonymous, "/api/instance/deploy/runs", "/api/instance/deploy/runs/{}/finish");

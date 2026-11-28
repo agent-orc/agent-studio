@@ -134,6 +134,7 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operations/deploy-records	free	-	-	-
 /api/operator/attention	free	-	-	-
 /api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-

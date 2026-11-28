@@ -742,6 +742,7 @@ builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.StudioReleasesService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.StudioReleasesWorker>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployRecordStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
