@@ -228,7 +228,10 @@ contracts, runner, engine and decision changes also select the separate
 The existing architecture/Guard selection includes both request-delegate
 generator profiles. Fixed checks and guards share one invocation per declared
 test command, retaining its original exclusions such as `MachineBound`.
-Other selected class invocations exclude those checks to avoid duplicate cases.
+Other selected class invocations exclude only the checks covered by the same
+declared invocation, matched by command without its filter, working directory
+and shell. A selector in one project never excludes cases from another project.
+Commands without a matching replacement keep their selected cases.
 
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the

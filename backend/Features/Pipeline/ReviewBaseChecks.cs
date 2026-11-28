@@ -57,11 +57,17 @@ internal static class ReviewBaseChecks
         // Use the same guard inventory on mapped and legacy reviews. A project's
         // fixed selectors share one invocation with its guards, so RDG runs once.
         var guards = GuardFirstGatePlan.Apply(declared.Commands).Where(GuardFirstGatePlan.IsGuardStep).ToArray();
+        var exclusionsByInvocation = new Dictionary<(string, string, VerifyCommandShell), string>();
         var bounded = guards.Select(guard =>
         {
             var original = declared.Commands.First(command => command.Kind == VerifyCommandKind.Test
+                && command.WorkingSubdir == guard.WorkingSubdir && command.Shell == guard.Shell
                 && GuardFirstGatePlan.GuardCommand(command.Command) == guard.Command);
             var filters = fixedFilters.GetValueOrDefault(original.Command) ?? [];
+            exclusionsByInvocation[InvocationKey(original)] = string.Join('&',
+                new[] { "Category!=Guard", "FullyQualifiedName!~.Architecture." }
+                    .Concat(filters.Distinct().Select(filter => filter.Replace("=", "!=", StringComparison.Ordinal)
+                        .Replace("~", "!~", StringComparison.Ordinal))));
             return guard with
             {
                 Command = Narrow(original.Command, string.Join('|', new[] { GuardFirstGatePlan.GuardFilter }.Concat(filters))),
@@ -73,15 +79,16 @@ internal static class ReviewBaseChecks
         commands.AddRange(bounded);
         foreach (var command in selection.Commands.Where(command => command.Kind == VerifyCommandKind.Test))
         {
+            var exclusions = exclusionsByInvocation.GetValueOrDefault(InvocationKey(command));
             // Whole .NET invocations are post-merge obligations on fast reviews.
             if ((GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
-                    && declared.Commands.Any(full => full.Kind == VerifyCommandKind.Test && full.Command == command.Command))
-                || GuardFirstGatePlan.IsGuardStep(command) || command.TestScope == Scope) continue;
-            var exclusions = new List<string> { "Category!=Guard", "FullyQualifiedName!~.Architecture." };
-            foreach (var filter in fixedFilters.Values.SelectMany(filters => filters).Distinct())
-                exclusions.Add(filter.Replace("=", "!=", StringComparison.Ordinal).Replace("~", "!~", StringComparison.Ordinal));
-            commands.Add(GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
-                ? command with { Command = Narrow(command.Command, string.Join('&', exclusions)) } : command);
+                    && declared.Commands.Any(full => full.Kind == VerifyCommandKind.Test && full.Command == command.Command
+                        && InvocationKey(full) == InvocationKey(command)))
+                || (exclusions is not null && (GuardFirstGatePlan.IsGuardStep(command) || command.TestScope == Scope))) continue;
+            // Remove cases only where the matching invocation runs their replacement.
+            // Other projects, directories and build options can select different cases.
+            commands.Add(exclusions is not null && GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
+                ? command with { Command = Narrow(command.Command, exclusions) } : command);
         }
         var tests = commands.Where(command => command.Kind == VerifyCommandKind.Test).ToArray();
         var routines = definition.TestSuites.Where(suite => suite.Category == ProjectTestSuiteCategories.Routine)
@@ -112,6 +119,9 @@ internal static class ReviewBaseChecks
             },
         });
     }
+
+    private static (string, string, VerifyCommandShell) InvocationKey(VerifyCommand command)
+        => (command.WorkingSubdir, ExistingFilter.Replace(command.Command, string.Empty).Trim(), command.Shell);
 
     private static bool SafeName(string name) => Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_.]*$", RegexOptions.CultureInvariant);
 

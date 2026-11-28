@@ -346,6 +346,55 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Fact]
+    public void Fixed_check_exclusions_stay_with_the_invocation_that_runs_the_cases()
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var backend = DeterministicTestScope.DotNetProjectCommand(verify,
+            "backend.Tests/OrchestratorApi.Tests.csproj", ["Example.CutoverTests"])!;
+        var engine = DeterministicTestScope.DotNetProjectCommand(verify,
+            "engine.Tests/Engine.Tests.csproj", ["Example.CutoverTests"])!;
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([backend, engine], new TestSelectionAudit()), ["contracts/Changed.cs"]);
+
+        var retainedBackend = Assert.Single(selected.Commands, command => command.Command.StartsWith(
+            "dotnet test backend.Tests/", StringComparison.Ordinal) && command.TestScope != ReviewBaseChecks.Scope);
+        var retainedEngine = Assert.Single(selected.Commands, command => command.Command.StartsWith(
+            "dotnet test engine.Tests/", StringComparison.Ordinal) && command.TestScope != ReviewBaseChecks.Scope);
+        Assert.Contains("Category!=ReviewBase", retainedBackend.Command);
+        Assert.DoesNotContain("FullyQualifiedName!~Example.CutoverTests", retainedBackend.Command);
+        Assert.Contains("FullyQualifiedName!~Example.CutoverTests", retainedEngine.Command);
+        Assert.DoesNotContain("Category!=ReviewBase", retainedEngine.Command);
+        Assert.All(new[] { retainedBackend, retainedEngine }, command => Assert.Contains("Category!=Guard", command.Command));
+        Assert.Contains(TestSelectionPlanner.Describe(retainedBackend), selected.Audit.SelectedCommands);
+        Assert.Contains(TestSelectionPlanner.Describe(retainedEngine), selected.Audit.SelectedCommands);
+        Assert.Empty(selected.Audit.AttemptedTestCommands);
+    }
+
+    [Theory]
+    [InlineData("project")]
+    [InlineData("directory")]
+    [InlineData("options")]
+    public void Fixed_checks_preserve_cases_without_a_matching_replacement_invocation(string difference)
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var retained = DeterministicTestScope.DotNetProjectCommand(verify,
+            "backend.Tests/OrchestratorApi.Tests.csproj", ["Example.CutoverTests"])!;
+        retained = difference switch
+        {
+            "project" => retained with { Command = retained.Command.Replace("backend.Tests/OrchestratorApi.Tests.csproj", "other.Tests/Other.Tests.csproj", StringComparison.Ordinal) },
+            "directory" => retained with { WorkingSubdir = "other" },
+            _ => retained with { Command = retained.Command + " --configuration Release" },
+        };
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([retained], new TestSelectionAudit()), ["contracts/Changed.cs"]);
+
+        Assert.Contains(retained, selected.Commands);
+        Assert.Contains(TestSelectionPlanner.Describe(retained), selected.Audit.SelectedCommands);
+    }
+
+    [Fact]
     public void Fixed_dotnet_checks_preserve_selected_other_ecosystem_commands()
     {
         ReviewBaseInventory(mapped: true);
