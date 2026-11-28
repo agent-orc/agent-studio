@@ -20,7 +20,6 @@ public sealed record WorkContainerLauncherContext(IReadOnlySet<string> WorkZoneN
     internal bool PreparationPending { get; init; }
     public RoleImageManifest ApprovedImages { get; init; } = RoleImageManifest.Empty();
     public IReadOnlySet<string> BindSources { get; init; } = new HashSet<string>(StringComparer.Ordinal);
-    public IReadOnlySet<string> Volumes { get; init; } = new HashSet<string>(StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -253,7 +252,6 @@ public static class WorkContainerLauncherPolicy
             }
             else
             {
-                if (!context.Volumes.Contains(mount.Source)) return "mount-refused: volume has no daemon capability.";
                 if (mount.Target == "/work")
                 {
                     if (mount.Source != container) return "mount-refused: only this attempt's volume may target /work.";
@@ -1133,7 +1131,6 @@ public static class WorkContainerLauncherCommand
         return (context with
         {
             DaemonCapability = daemon, AttemptCapability = scope,
-            Volumes = scope?.Volumes ?? new HashSet<string>(StringComparer.Ordinal),
             ReservedLimits = active ? scope?.Limits : null,
             ContainerCreated = entry?.ContainerCreated == true,
             StartRequested = entry?.StartRequested == true,
@@ -1342,9 +1339,11 @@ public static class WorkContainerLauncherCommand
                 var created = await run(createVolume, null, ct);
                 if (created.ExitCode != 0) return Refused("volume-capability-unavailable: daemon volume creation failed.");
                 inspection = await Inspect();
+                if (inspection.ExitCode != 0)
+                    return Refused("volume-capability-unavailable: daemon volume inspection failed after creation.");
             }
-            if (inspection.ExitCode != 0 || VolumeCapabilityRefusal(inspection.StdOut, mount.Source, out var path) is { })
-                return Refused("volume-capability-unavailable: only local daemon volumes without driver options are admitted.");
+            if (VolumeCapabilityRefusal(inspection.StdOut, mount.Source, out var path) is { } volumeRefusal)
+                return Refused(volumeRefusal);
             if (scope is not null && ResourceLabelsRefusal(inspection.StdOut, mount.Source, volume: true, scope) is { } badLabels)
                 return Refused(badLabels);
             volumePaths.Add(mount.Source, path!);
