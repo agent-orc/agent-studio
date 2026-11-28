@@ -15,7 +15,7 @@
     top: 50%;
     height: 3px;
     transform: translateY(-50%);
-    border-radius: 2px;
+    border-radius: var(--studio-compat-radius-8);
     background: var(--studio-accent);
     opacity: 0;
     transition: opacity 0.12s ease;

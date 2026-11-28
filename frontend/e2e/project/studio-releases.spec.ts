@@ -19,6 +19,7 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('console', message => { if (message.text().includes('NG0955')) errors.push(message.text()); });
   let live = false;
   await page.clock.setFixedTime(new Date('2026-11-26T12:00:00Z'));
   await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'Healthy' }));
@@ -42,11 +43,13 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
     if (path.endsWith('/workspaces')) return json([{ id: 'WS-1', displayName: 'Workspace', projects: [{ id: 'PROJ-1', displayName: PROJECT, storageLocation: WATCH, repositoryPath: WATCH, rootPath: WATCH, repositoryUrl: null, urls: [], shortCode: 'DEMO', workspaceId: 'WS-1', archived: false }] }]);
     if (path.endsWith('/board')) return json({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [], escalated: [], completed: [task], archive: [] });
     if (path.endsWith('/studio-releases/cards/DEMO-1')) return json({ state: live ? 'live' : 'integrated-not-live', revision: live ? SHA : null, sinceUtc: live ? '2026-11-26T11:00:00Z' : null });
-    if (path.endsWith('/studio-releases')) return json({ project: PROJECT, runningRevision: SHA,
-      computedAtUtc: '2026-11-26T12:00:00Z', detail: null, pending: [card],
-      releases: [{ revision: SHA, atUtc: '2026-11-26T01:00:00Z', observed: true, running: true,
+    if (path.endsWith('/studio-releases')) return json({ project: PROJECT, runningRevision: live ? SHA : 'b'.repeat(40),
+      computedAtUtc: '2026-11-26T12:00:00Z', detail: null, pending: live ? [] : [card],
+      releases: [{ occurrenceId: 'a-first', revision: 'b'.repeat(40), atUtc: '2026-11-26T01:00:00Z', observed: false, running: false, cards: [] },
+      { occurrenceId: 'b-first', revision: SHA, atUtc: '2026-11-26T02:00:00Z', observed: false, running: false,
         cards: [{ ...card, key: 'DEMO-2', title: 'Show the delivery revision', type: 'feature', href: '#/tasks/DEMO-2' }] },
-      { revision: 'b'.repeat(40), atUtc: '2026-11-25T01:00:00Z', observed: false, running: false, cards: [] }] });
+      { occurrenceId: 'a-rollback', revision: 'b'.repeat(40), atUtc: '2026-11-26T03:00:00Z', observed: true, running: !live, cards: [] },
+      ...(live ? [{ occurrenceId: 'b-return', revision: SHA, atUtc: '2026-11-26T11:00:00Z', observed: false, running: true, cards: [card] }] : [])] });
     if (/\/api\/tasks\/[^/]+\/runs$/.test(path)) return json({ runCount: 0, firstStartedAt: null, lastActivityAt: null, hasActiveRun: false, runs: [], promptEntries: [], refinements: [], runnerEvents: [] });
     if (path.endsWith('/session-events')) return json({ events: [], sessionChain: [] });
     if (path.endsWith('/plan')) return json({ hasPlan: false, source: null, snapshotCount: 0, activeItemId: null, items: [], unassignedSubActions: [] });
@@ -94,7 +97,10 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
   await expect(releases).toBeVisible({ timeout: 30000 });
   await expect(releases.getByTestId('studio-release-pending')).toContainText(task.title);
   await expect(releases.getByTestId('studio-release-pending')).toContainText('Waiting 9 h 0 min');
-  await expect(releases.getByTestId('studio-release-entry')).toHaveCount(2);
+  await expect(releases.getByTestId('studio-release-entry')).toHaveCount(3);
+  await expect(releases.getByText('Running', { exact: true })).toHaveCount(1);
+  await expect(releases.getByTestId('studio-release-entry').nth(2)).toContainText('Running');
+  await expect(releases.getByTestId('studio-release-entry').nth(2).locator('time')).toHaveAttribute('datetime', '2026-11-26T03:00:00Z');
   await expect(releases.getByTestId('studio-release-card')).toContainText('feature');
   const results = process.env.JOB_RESULTS_DIR;
   for (const width of [1440, 390]) {
@@ -128,5 +134,12 @@ test('Releases shows waiting deliveries, history, and the card live state in bot
   expect((await entry.boundingBox())!.height, 'Operations release link has a phone touch target').toBeGreaterThanOrEqual(44);
   await entry.click();
   await expect(page.getByTestId('studio-releases')).toBeVisible();
+  await expect(releases.getByTestId('studio-release-entry')).toHaveCount(4);
+  await expect(releases.getByText('Running', { exact: true })).toHaveCount(1);
+  await expect(releases.getByTestId('studio-release-entry').nth(3)).toContainText('Running');
+  await expect(releases.getByTestId('studio-release-entry').nth(3).locator('time')).toHaveAttribute('datetime', '2026-11-26T11:00:00Z');
+  expect(await releases.getByTestId('studio-release-entry').evaluateAll(rows => rows.map(row => row.getAttribute('data-occurrence-id'))))
+    .toEqual(['a-first', 'b-first', 'a-rollback', 'b-return']);
+  if (results) await releases.screenshot({ path: join(results, 'releases-b-return--mocked.png') });
   expect(errors).toEqual([]);
 });

@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -211,6 +211,43 @@ full-inventory behavior. The generated per-card project map remains available
 for those projects. `ProjectTestSelectionGuardTests` checks every tracked
 top-level source folder and every declared routine/build/lint assignment.
 
+Fast coding reviews can additionally opt into fixed .NET checks through
+`.agent-studio/review-base.json`. This repository-owned array names an existing
+routine `suite`, exact-file or directory-prefix `paths` (`*` means any .NET
+input), and a `category` trait value or `classes` list. Selector names accept
+only identifiers and dots, never filter operators or shell text. Each suite
+must also be present in `commands.test` as a single filterable `dotnet test`
+invocation. Invalid opt-in inventory refuses planning. No executable command
+is read from this file, and projects without it keep their existing behavior.
+
+The Studio inventory selects `Category=ReviewBase` on any .NET input: durable
+task mutations, every board mutation theory row, deferred actionable-concern
+settlement, and every monolith engine-settlement theory row. Task Server,
+contracts, runner, engine and decision changes also select the separate
+`StandaloneReviewLoopCutoverTests` class through `orchestrator-engine-routine`.
+The existing architecture/Guard selection includes both request-delegate
+generator profiles. Fixed checks and guards share one invocation per declared
+test command, retaining its original exclusions such as `MachineBound`.
+Other selected class invocations exclude only the checks covered by the same
+declared invocation, matched by command without its filter, working directory
+and shell. A selector in one project never excludes cases from another project.
+The retained filter must also match the replacement's base filter or use the
+selector's simple parenthesized conjunction to narrow that filter. Different
+declared filters retain separate replacement coverage, independent of command
+order. Broader filters, other filter shapes and commands without a matching
+replacement keep their selected cases, even when already marked as guard steps.
+
+This union runs after fast review fallback, including an unmapped path or an
+overly broad type-reference selection, on both the shared impact map and the
+legacy generated-map path. Whole .NET routine invocations remain post-merge
+obligations in these opted-in fast reviews. The selection audit records the
+commands and their reasons without treating selection as execution: attempted
+commands and tests must come from execution receipts, and selected commands
+without receipts remain missing evidence. A narrowed check never claims a
+complete routine suite. Docs-only and report-only reviews, balanced and strict
+strategies, batch gates, full and nightly verification keep their existing
+semantics. The opt-in file does not activate the shared `testSelection` map.
+
 Compile-only integration under fast, balanced or exact-review reuse still
 runs the selected builds; its receipt explicitly omits tests and lint. Docs-only
 integration runs its documentation check even at that level. Strict pre-merge
@@ -352,10 +389,21 @@ The run host is the fallback. Once the oldest pending integration reaches the
 project's `windowMinutes`, occupied coding slots and host load no longer veto
 that window. It runs sequentially inside the existing worker test envelope;
 its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering puts merge
-checks first. Fixed-slot gate admission preserves the separate integration
+fallback still waits for free coding capacity. Gate queue ordering uses attempt
+creation time first, with merge precedence only at the same instant. Both
+authorities scan bounded pages of 32 in that order until eligible work is found,
+so later arrivals cannot indefinitely overtake either queue. The daemon keeps
+two durable flights and continues claiming while ordinary execution is active.
+A claimed successor in the same lane waits for its predecessor to finish and
+for claim recovery before materializing, including when the predecessor faults
+or is independently cancelled. Shutdown cancellation still stops the wait.
+Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
@@ -883,7 +931,19 @@ first red time, repair key and current lane, and disappears when the repair
 starts or the incident resolves. The RT owner-decision ladder remains in place.
 Repair briefs list each failing test's first diagnostic; new runners preserve
 these before compacting console output. Older receipts explicitly say when a
-diagnostic was not recorded. Suspect lists use the RT static test-file and
+diagnostic was not recorded. When a declared lint command outside a test suite
+fails with Node TAP output, its receipt retains the failed test names and first
+error lines. The runner repeats that lint command once at the same tip. Only
+tests reported failing again receive a confirmed failure. A failure first seen
+on the repeat carries its own name and diagnostic. An explicit TAP pass clears
+an initial failure when the point can be matched across attempts. Nested tests
+include their parent names. For duplicate names, the receipt uses source
+locations where they identify individual tests. Where TAP leaves the match
+ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
+A skipped, TODO or absent test stays unresolved even when the repeat exits
+successfully. A later passing
+execution of the same lint command supplies covering evidence for its base
+check. Suspect lists use the RT static test-file and
 covering-folder map, retaining build inputs and project-graph fallback when
 reach is unknown. Measured control and bisect attribution remains authoritative.
 
@@ -2778,10 +2838,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   names the current Attempt and that Git already projects the delivery as
   `integrated`. A passed gate on the delivery's recorded verification tree
   remains valid after the branch advances when that tree is on the published
-  first-parent line and later publications have passed per-task or batch gates.
-  A later exact full-suite gate on a first-parent publication covers earlier
-  ungated publications that its tree contains. A partial or red later gate does
-  not. A rewritten tree or an uncovered later publication refuses acceptance.
+  first-parent line. A green post-merge run or another verified containing
+  publication on that line can supply the receipt for an earlier delivery.
+  Later unverified publications leave that proof valid.
   The completion claim names the gate that verified the
   delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
@@ -4372,18 +4431,13 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
-- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
-  gate after later publications only when its recorded verification tree is on
-  the published branch's first-parent line. One bounded first-parent range from
-  that tree to the current tip identifies the later publication commits. Each
-  must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, by the publishing card's exact verified
-  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
-  first-parent publication. The latter names its covering publication in the
-  acceptance reason. Batch evidence cannot substitute for the original
-  tree's first-parent ancestry. A branch rewrite or an uncovered later
-  publication is refused; acceptance evidence names the gate that verified
-  the delivery.
+- **Verified ancestor acceptance.** A receipt covers the delivery while the
+  published integration line contains the verified state and that state
+  contains the current delivery. Managed Dossier bookkeeping and other
+  explicitly declared non-input paths can inherit a parent receipt. A
+  refusal identifies the tip an owner can verify and any admission wait for
+  that tip. See the [review domain map](review.md) for the execution
+  definition and receipt rules.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a

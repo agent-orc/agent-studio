@@ -6,7 +6,7 @@
   align-items: center;
   gap: var(--studio-compat-space-2);
   padding: var(--studio-compat-space-4) var(--studio-compat-space-5) var(--studio-compat-space-4) var(--studio-compat-space-1);
-  margin: 0 0 var(--studio-compat-space-2) 0;
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-compat-space-2) var(--studio-spacing-0);
   border-radius: var(--studio-compat-radius-2);
   font-size: var(--studio-compat-type-6);
   text-transform: uppercase;
@@ -24,7 +24,7 @@
   height: 18px;
   border-radius: var(--studio-compat-radius-2);
   background: var(--project-color, var(--studio-accent));
-  color: var(--project-on, var(--studio-on-accent, var(--studio-compat-ink-35)));
+  color: var(--project-on, var(--studio-on-accent));
   font-size: var(--studio-compat-type-6);
   font-weight: 800;
 }
@@ -49,7 +49,7 @@
   line-height: 1;
   display: grid;
   place-items: center;
-  padding: 0;
+  padding: var(--studio-spacing-0);
 }
 :host .detail__pager-btn:hover:not(:disabled) {
   background: var(--studio-bg-elevated);
@@ -159,7 +159,7 @@
   line-height: 1;
   display: grid;
   place-items: center;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   flex-shrink: 0;
 }
 :host .detail__triage-overflow:hover:not(:disabled) {
@@ -174,7 +174,7 @@
   position: absolute;
   width: 1px;
   height: 1px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   margin: var(--studio-compat-space-36);
   overflow: hidden;
   clip: rect(0, 0, 0, 0);

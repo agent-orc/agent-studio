@@ -14,6 +14,11 @@ public static class PerCardVerifyPlanner
 {
     public const string Lane = "remote-review";
 
+    /// <summary>Applied only by the fast coding-review entry point, after fallback.</summary>
+    internal static StagedVerifyPlan WithReviewBase(string repositoryPath, VerifyPlan declared,
+        StagedVerifyPlan selection, IReadOnlyList<string>? changedFiles)
+        => ReviewBaseChecks.Apply(repositoryPath, declared, selection, changedFiles);
+
     public static StagedVerifyPlan Plan(
         string repositoryPath,
         VerifyPlan verifyPlan,

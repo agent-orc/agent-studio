@@ -35,7 +35,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         using var restarted = BuildFactory();
         _ = restarted.CreateClient();
         EnableBatchGate(restarted, closeSize: 4);
-        await restarted.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+        await Tick(restarted.Services.GetRequiredService<BatchGatePilotService>(), "escalating the spent start budget");
 
         Assert.Equal(0, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.Escalated);
@@ -57,7 +57,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         {
             _ = before.CreateClient();
             EnableBatchGate(before, closeSize: 4);
-            await before.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+            await Tick(before.Services.GetRequiredService<BatchGatePilotService>(), "requesting the engine decision before restart");
             runId = Assert.Single(GateResultOccurrences(
                 before.Services.GetRequiredService<MonolithOrchestrationStore>(), member.Key)).Run.RunId;
         }
@@ -72,7 +72,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         var orchestration = restarted.Services.GetRequiredService<MonolithOrchestrationStore>();
         var store = restarted.Services.GetRequiredService<BatchGateStore>();
 
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "reading the pending decision after restart");
 
         // Within the bound the card waits, and the state says for what.
         AssertLane(member.Key, TaskStates.AutoReview);
@@ -89,7 +89,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         Assert.Empty(store.ListFallbackStalls(ProjectName));
 
         _clock = heldSince + PerTaskFallbackWaitPolicy.EngineDecisionBound;
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "escalating the stalled engine decision");
 
         Assert.Equal(0, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.Escalated);
@@ -112,7 +112,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         Assert.Empty(store.ListPending());
 
         // A replayed tick neither waits again nor raises the stall twice.
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "replaying the escalation");
         Assert.Single(store.ListFallbackStalls(ProjectName));
     }
 
@@ -127,8 +127,8 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         _gate.Fallback = request => Green(request.ExpectedSha);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "starting the batch gate");
+        await Tick(pilot, "requesting the release decision");
         var held = Assert.Single(GateResultOccurrences(orchestration, member.Key));
         Assert.StartsWith("batch-fallback:", held.IdempotencyKey);
         AssertLane(member.Key, TaskStates.AutoReview);
@@ -138,7 +138,7 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         Assert.Equal(held.Run.RunId, claim.Run?.RunId);
 
         _clock = _clock.AddSeconds(30) + PerTaskFallbackWaitPolicy.LeaseGrace;
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "escalating the expired lease");
 
         // The monolith never takes the engine's release: the card is parked.
         AssertLane(member.Key, TaskStates.Escalated);
@@ -160,22 +160,36 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         EnableBatchGate(factory, closeSize: 4);
         var member = SeedMember(factory, "DOC-STALL-CANCEL", "docs/stall-cancel.md");
         var pilot = ResumingPilot(factory, member);
-        _gate.FallbackAsync = async (_, ct) =>
+        var finishFirstFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = async (request, ct) =>
         {
-            await Task.Delay(Timeout.Infinite, ct);
-            throw new InvalidOperationException("unreachable");
+            // The cancelling tick can also resume a flight that has already exited.
+            using var registration = ct.Register(() => cancellationReceived.TrySetResult());
+            await WaitFor(finishFirstFlight.Task, "the cancelling tick to finish");
+            ct.ThrowIfCancellationRequested();
+            return Green(request.ExpectedSha);
         };
 
-        await pilot.TickAsync(CancellationToken.None);
-        await _gate.FirstFallbackStarted;
-        using (var state = State(pilot))
-            Assert.Equal(PerTaskFallbackWaitKinds.GateRunning, state.RootElement.GetProperty("members")
-                .GetProperty(member.Key).GetProperty("waitKind").GetString());
+        try
+        {
+            await Tick(pilot, "starting the cancellable gate");
+            await WaitFor(_gate.FirstFallbackStarted, "the first fallback gate to start");
+            using (var state = State(pilot))
+                Assert.Equal(PerTaskFallbackWaitKinds.GateRunning, state.RootElement.GetProperty("members")
+                    .GetProperty(member.Key).GetProperty("waitKind").GetString());
 
-        _clock = _clock + PerTaskFallbackWaitPolicy.StageBound(PerTaskFallbackWaitKinds.GateRunning,
-            TimeSpan.FromMinutes(Settings(factory).GateTimeoutMinutes));
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+            _clock = _clock + PerTaskFallbackWaitPolicy.StageBound(PerTaskFallbackWaitKinds.GateRunning,
+                TimeSpan.FromMinutes(Settings(factory).GateTimeoutMinutes));
+            await Tick(pilot, "cancelling the stalled gate");
+            await WaitFor(cancellationReceived.Task, "the first flight to receive stall cancellation");
+        }
+        finally
+        {
+            finishFirstFlight.SetResult();
+        }
+        await WaitFor(pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None),
+            "the cancelled flight to exit");
 
         AssertLane(member.Key, TaskStates.AutoReview);
         var marker = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
@@ -186,8 +200,9 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
 
         _gate.FallbackAsync = null;
         _gate.Fallback = request => Green(request.ExpectedSha);
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        await Tick(pilot, "resuming the cancelled gate");
+        await WaitFor(pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None),
+            "the resumed flight to release the card");
 
         Assert.Equal(2, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.HumanReview);
@@ -205,11 +220,11 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         _gate.FallbackAsync = (_, _) => hung.Task;
         var store = factory.Services.GetRequiredService<BatchGateStore>();
 
-        await pilot.TickAsync(CancellationToken.None);
-        await _gate.FirstFallbackStarted;
+        await Tick(pilot, "starting the unresponsive gate");
+        await WaitFor(_gate.FirstFallbackStarted, "the first fallback gate to start");
         _clock = _clock + PerTaskFallbackWaitPolicy.StageBound(PerTaskFallbackWaitKinds.GateRunning,
             TimeSpan.FromMinutes(Settings(factory).GateTimeoutMinutes));
-        await pilot.TickAsync(CancellationToken.None);
+        await Tick(pilot, "cancelling the unresponsive gate");
 
         // Cancelled, but the gate never returns: the flight still blocks a second gate.
         Assert.True(pilot.IsPerTaskGateRunning(member.ReviewAttemptId));
@@ -218,8 +233,9 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
                 .GetProperty(member.Key).GetProperty("waitingFor").GetString());
 
         _clock += PerTaskFallbackWaitPolicy.CancellationGrace;
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        await Tick(pilot, "detaching the unresponsive gate");
+        await WaitFor(pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None),
+            "the detached gate recovery to escalate");
 
         Assert.Equal(1, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.Escalated);
@@ -297,6 +313,21 @@ public sealed class BatchGateFallbackStallTests : BatchGatePilotServiceTests
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         pilot.WaitForFlightsInTick = false;
         return pilot;
+    }
+
+    private static Task Tick(BatchGatePilotService pilot, string work)
+        => WaitFor(pilot.TickAsync(CancellationToken.None), $"the planner tick {work}");
+
+    private static async Task WaitFor(Task task, string operation)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch (TimeoutException error)
+        {
+            throw new TimeoutException($"Timed out waiting for {operation}.", error);
+        }
     }
 
     private static JsonDocument State(BatchGatePilotService pilot)

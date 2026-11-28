@@ -69,7 +69,8 @@
         </header>
 
         @for (row of cli.rows; track row.windowLabel) {
-          <div class="cap-row" [attr.data-window]="row.windowLabel">
+          <div class="cap-row" [attr.data-window]="row.windowLabel"
+               [attr.data-testid]="'pace-row-' + row.cliType + '-' + slugify(row.windowLabel)">
             <div class="cap-row__head">
               <span class="cap-row__label">{{ row.windowLabel }}</span>
               <span class="cap-row__used"
@@ -102,6 +103,36 @@
                       [style.left.%]="barWidth(row.pendingCapPct)"
                       aria-hidden="true"></span>
               </div>
+            }
+            @let key = paceKey(row);
+            @if (paces()[key]; as status) {
+              @let draft = deadlines()[key];
+              @let mode = draft !== undefined ? 'useBy' : status.pace.mode;
+              <sui-segmented-control [options]="paceOptions" [value]="mode"
+                [ariaLabel]="label(row.cliType) + ' ' + row.windowLabel + ' pace'"
+                [disabled]="paceSaving()[key]" (valueChange)="choosePace(status, $event)" />
+              @if (mode === 'useBy') {
+                <div>
+                  <label>Use by (UTC)
+                    <input #deadline type="datetime-local" required [disabled]="paceSaving()[key]"
+                      [value]="draft ?? status.pace.useBy?.slice(0, 16) ?? ''"
+                      (input)="editDeadline(status, deadline.value)" />
+                  </label>
+                  <button type="button" class="studio-button studio-button--primary"
+                    [disabled]="paceSaving()[key] || !deadline.value || draft === undefined"
+                    (click)="saveDeadline(status, deadline.value)">Save time</button>
+                </div>
+              }
+              <p class="cli-admin__hint" aria-live="polite">
+                @if (status.suspicious) {
+                  Usage is unconfirmed. New work waits for a fresh reading.
+                } @else if (status.usedPct === null) {
+                  Waiting for a usage reading.
+                } @else {
+                  At {{ status.at | date:'HH:mm':'UTC' }} UTC, new work may use up to {{ formatPct(status.allowedPct) }}.
+                  {{ formatPct(status.usedPct) }} is used.
+                }
+              </p>
             }
           </div>
         }

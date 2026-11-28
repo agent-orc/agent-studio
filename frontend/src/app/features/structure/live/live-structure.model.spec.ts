@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canvasFacts, canvasGaps, containerScale, levelOf, nodeFacts, sourceGap } from './live-structure.facts';
-import { liveSourcesFixture, liveStructureFixture } from './live-structure.fixtures';
+import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture, sharedRunnerSourcesFixture, sharedRunnerStructureFixture } from './live-structure.fixtures';
 import { layoutLiveScene } from './live-structure.layout';
 import { NOT_OBSERVED, buildLiveScene, descendants, subtreeWarnings, type LiveNode, type LiveRect } from './live-structure.model';
 import { NO_SOURCES } from './live-structure.sources';
@@ -34,7 +34,7 @@ describe('live structure scene (AGT-4024)', () => {
     expect(s.outside.map(item => item.id)).toContain('backup-target');
   });
 
-  it('derives every warning from a reported fact, and totals equal the sum of the nodes', () => {
+  it('derives warnings from reported facts and totals from execution capacity', () => {
     const s = scene();
     expect(node('machine:review-3', s).warnings.map(w => w.title)).toEqual(['Missing toolchain:playwright', 'AGT-10 refused']);
     expect(node('machine:studio-server#storage', s).warnings.map(w => w.title))
@@ -98,6 +98,135 @@ describe('live structure scene (AGT-4024)', () => {
     expect(fact('machine:home-lab', 'status')?.why).toBe('A host inside names this machine; nothing reports from the machine itself.');
     expect(sourceGap(node('external:cdn', s)).short).toBe('outside, not probed');
     expect(sourceGap(node('component:review-1:review-1-runner', s)).short).toBe('reported by name only');
+  });
+});
+
+describe('live structure unique execution capacity (AGT-4203)', () => {
+  const projected = () => buildLiveScene(projectedCapacityFixture, NO_SOURCES);
+
+  it('counts one runner once when both the host and its process report 2 of 4 slots', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.filter(item =>
+      item.id === 'installation' || item.facts?.hostId === 'coding-host') };
+    const s = buildLiveScene(data, NO_SOURCES);
+    expect(s.totals).toMatchObject({ busySlots: 2, totalSlots: 4, reporting: 1 });
+    for (const id of ['machine:coding-host', 'component:coding-host:coding-runner']) {
+      expect(node(id, s).slots).toEqual({ busy: 2, total: 4, cards: ['AGT-1', 'AGT-2'] });
+      expect(nodeFacts(node(id, s), s).find(fact => fact.key === 'slots')?.values[0]).toBe('2 of 4 in use');
+    }
+  });
+
+  it('counts both roles once and one reporting identity on their shared host', () => {
+    const s = projected();
+    const processes = s.order.filter(item => item.source?.kind === 'process');
+    expect(processes.map(item => item.source?.unitId).sort()).toEqual(['coding-runner', 'shared-coding', 'shared-review']);
+    expect(new Set(processes.map(item => item.source?.unitId)).size).toBe(3);
+    expect(s.totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+    expect(s.totals.busySlots).toBe(processes.reduce((sum, item) => sum + item.slots!.busy, 0));
+    expect(s.totals.totalSlots).toBe(processes.reduce((sum, item) => sum + item.slots!.total!, 0));
+    expect(node('machine:shared-host', s).slots).toEqual({ busy: 3, total: 6, cards: ['AGT-3', 'AGT-4', 'AGT-5'] });
+    expect(node('component:shared-host:shared-coding', s).slots?.total).toBe(4);
+    expect(node('component:shared-host:shared-review', s).slots?.total).toBe(2);
+    const rootFacts = nodeFacts(s.boundary, s);
+    expect(rootFacts.find(fact => fact.key === 'slots')?.values[0]).toBe('5 of 10');
+    expect(rootFacts.find(fact => fact.key === 'reporting')?.values[0]).toBe('2');
+  });
+
+  it('keeps capacity from a different reporting host nested below an aggregate', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.id === 'machine:shared-host' ? { ...item, parentId: 'machine:coding-host' } : item).reverse() };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('uses host identity even when a declared process is placed outside its host aggregate', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.unitId === 'shared-review' ? { ...item, parentId: 'installation', provenance: 'declared' as const } : item) };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('uses process capacity when no host aggregate is available', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.filter(item => !item.id.startsWith('machine:')) };
+    expect(buildLiveScene(data, NO_SOURCES).totals).toMatchObject({ busySlots: 5, totalSlots: 10, reporting: 2 });
+  });
+
+  it('counts only distinct host identities with an Up report', () => {
+    const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
+      item.facts?.hostId === 'shared-host' ? { ...item, observation: { difference: 'stale' as const, health: 'stale' } } : item) };
+    expect(buildLiveScene(data, NO_SOURCES).totals.reporting).toBe(1);
+  });
+});
+
+describe('live structure runner identity (AGT-4219)', () => {
+  const factsOf = (s: ReturnType<typeof buildLiveScene>, id: string) => nodeFacts(node(id, s), s);
+  const processId = (role: string) => `component:shared-host:shared-${role}`;
+
+  for (const reverse of [false, true]) {
+    it(`keeps each process image, restarts, uptime and events with its runner (reversed: ${reverse})`, () => {
+      const runners = [...sharedRunnerSourcesFixture.runners!];
+      const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture, runners: reverse ? runners.reverse() : runners });
+      for (const [role, version, restarts, uptime] of [['coding', '2.1', 0, '4 h'], ['review', '2.2', 2, '60 min']] as const) {
+        const id = processId(role), facts = factsOf(s, id);
+        const fact = (key: string) => facts.find(item => item.key === key);
+        expect(node(id, s).runner?.runnerId).toBe(`shared-${role}`);
+        expect(fact('image')?.values[0]).toBe(`registry.example/studio/${role}-host:${version}`);
+        expect(fact('version')?.values.at(-1)).toBe(version);
+        expect(fact('restarts')?.values[0]).toBe(`${restarts} of the review daemon`);
+        expect(fact('uptime')?.values.at(-1)).toBe(uptime);
+        expect(facts.filter(item => item.key.startsWith('event:'))).toHaveLength(restarts);
+        if (role === 'review') expect(fact('event:0')?.values[0]).toContain('3 reviews lost');
+      }
+    });
+  }
+
+  it('distinguishes both roles on the host without selecting a representative runner', () => {
+    const s = buildLiveScene(sharedRunnerStructureFixture, sharedRunnerSourcesFixture);
+    const facts = factsOf(s, 'machine:shared-host');
+    expect(node('machine:shared-host', s).runner).toBeNull();
+    expect(facts.find(item => item.key === 'runners')?.values[0]).toBe('coding (shared-coding) · review (shared-review)');
+    for (const [role, version, count] of [['coding', '2.1', 0], ['review', '2.2', 2]] as const) {
+      const image = facts.find(item => item.key === `runner:shared-${role}:image`);
+      expect(image?.label).toBe(`${role} (shared-${role}) image`);
+      expect(image?.values[0]).toBe(`registry.example/studio/${role}-host:${version}`);
+      expect(facts.find(item => item.key === `runner:shared-${role}:restarts`)?.values[0]).toBe(`${count} of the review daemon`);
+      expect(facts.find(item => item.key === `runner:shared-${role}:version`)?.values.at(-1)).toBe(version);
+      expect(facts.find(item => item.key === `runner:shared-${role}:uptime`)?.values.at(-1)).toBe(role === 'coding' ? '4 h' : '60 min');
+      expect(facts.filter(item => item.key.startsWith(`runner:shared-${role}:event:`))).toHaveLength(count);
+    }
+    expect(facts.some(item => ['image', 'version', 'restarts', 'uptime'].includes(item.key))).toBe(false);
+    const reversed = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture,
+      runners: [...sharedRunnerSourcesFixture.runners!].reverse() });
+    for (const id of ['machine:shared-host', processId('coding'), processId('review')])
+      expect(factsOf(reversed, id)).toEqual(factsOf(s, id));
+  });
+
+  it('distinguishes runner facts on a host projected as a virtual machine', () => {
+    const data = { ...sharedRunnerStructureFixture, nodes: sharedRunnerStructureFixture.nodes.map(item =>
+      item.id === 'machine:shared-host' ? { ...item, kind: 'vm' } : item) };
+    const s = buildLiveScene(data, sharedRunnerSourcesFixture);
+    expect(node('machine:shared-host', s).kind).toBe('vm');
+    expect(factsOf(s, 'machine:shared-host').find(item => item.key === 'runners')?.observed).toBe(true);
+  });
+
+  it('uses its own registration time when a runner has no restart timestamp', () => {
+    const runners = sharedRunnerSourcesFixture.runners!.map(runner => ({ ...runner, restartedAt: null }));
+    const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture, runners });
+    expect(factsOf(s, processId('review')).find(item => item.key === 'uptime')?.values.at(-1)).toBe('15 d');
+  });
+
+  it('does not fall back to a host peer when the declared runner is absent', () => {
+    const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture,
+      runners: [sharedRunnerSourcesFixture.runners![0]] });
+    expect(node(processId('review'), s).runner).toBeNull();
+    const facts = factsOf(s, processId('review'));
+    expect(facts.find(item => item.key === 'uptime')?.observed).toBe(false);
+    expect(facts.filter(item => item.key.startsWith('event:'))).toEqual([]);
+    expect(node('machine:shared-host', s).runner?.runnerId).toBe('shared-coding');
+  });
+
+  it('joins declared runner identities case-insensitively even without host facts', () => {
+    const data = { ...sharedRunnerStructureFixture, nodes: sharedRunnerStructureFixture.nodes.map(item =>
+      item.unitId === 'shared-review' ? { ...item, unitId: 'SHARED-REVIEW', facts: { ...item.facts, hostId: null } } : item) };
+    const s = buildLiveScene(data, sharedRunnerSourcesFixture);
+    expect(node(processId('review'), s).runner?.runnerId).toBe('shared-review');
   });
 });
 

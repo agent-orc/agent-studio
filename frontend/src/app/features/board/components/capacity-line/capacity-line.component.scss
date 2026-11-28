@@ -1,6 +1,6 @@
 :host { display: block; min-width: 0; }
 p {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-1) var(--studio-spacing-3);
   color: var(--studio-text-secondary);
   font-size: var(--studio-font-size-sm);

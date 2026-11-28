@@ -40,7 +40,7 @@
   min-width: 0;
   max-width: none;
   overflow-x: clip;
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .ov-consumption {
@@ -74,7 +74,7 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--studio-fg-strong);
-    margin: 0;
+    margin: var(--studio-spacing-0);
     padding-bottom: var(--studio-compat-space-6);
     border-bottom: 1px solid var(--studio-border);
   }
@@ -89,7 +89,7 @@
     justify-content: center;
     width: var(--studio-spacing-5);
     height: calc(var(--studio-spacing-5) - var(--studio-spacing-1));
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 1px solid transparent;
     border-radius: var(--studio-spacing-1);
     background: transparent;
@@ -144,7 +144,7 @@
 
   &--definition {
     grid-template-columns: 1fr;
-    row-gap: 0;
+    row-gap: var(--studio-spacing-0);
   }
 }
 
@@ -296,7 +296,7 @@
   margin-top: var(--studio-spacing-2);
 
   &:first-child {
-    margin-top: 0;
+    margin-top: var(--studio-spacing-0);
   }
 }
 
@@ -414,7 +414,7 @@
   &[data-tone='muted'], &[data-tone='not-applicable'], &[data-tone='not-run'], &[data-tone='neutral'] {
     // Quiet through the neutral accent only: an opacity drop took the label
     // and summary text below 4.5:1 in the dark theme (AGT-3835).
-    --ov-pl-phase-accent: var(--studio-border-strong, var(--studio-border));
+    --ov-pl-phase-accent: var(--studio-border-strong);
   }
 }
 
@@ -697,7 +697,7 @@
     color: var(--studio-fg-muted);
     background: transparent;
     border-radius: var(--studio-compat-radius-6);
-    padding: 0 var(--studio-spacing-1);
+    padding: var(--studio-spacing-0) var(--studio-spacing-1);
     max-width: 132px;
     opacity: 0.78;
     overflow: hidden;
@@ -959,7 +959,7 @@
   align-items: center;
   flex-wrap: nowrap;
   gap: var(--studio-spacing-2);
-  margin: var(--studio-spacing-1) 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-1) var(--studio-spacing-0) var(--studio-spacing-3);
   min-width: 0;
 
   &--expanded {
@@ -1006,7 +1006,7 @@
     // The actively-inspected run (whose steps populate the table below) gets a
     // ring so selection reads distinctly from "current".
     &--active {
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent) 50%, transparent);
+      box-shadow: var(--studio-selection-inset);
     }
   }
 
@@ -1088,7 +1088,7 @@
     &--active {
       color: var(--studio-fg-strong);
       border-color: color-mix(in srgb, var(--studio-accent) 55%, var(--studio-border-strong));
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent) 50%, transparent);
+      box-shadow: var(--studio-selection-inset);
     }
   }
 
@@ -1140,7 +1140,7 @@
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
   background: transparent;
   color: inherit;

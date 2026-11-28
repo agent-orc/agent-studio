@@ -1768,6 +1768,11 @@ content verdict for the brief recorded at completion. Historical claims
 without brief or content fields appear as unknown and remain in place for
 operator re-check; the report does not reopen or rewrite them.
 
+`GET /api/audits/{runId}` checks `project.read` against the stored run's
+`ProjectId` before returning its status or entries. A reader scoped to another
+project receives `403 project-scope-denied` without audit data. An unknown run
+continues to return an empty `404` response.
+
 Containment is the only proof of integration. The verdict comes from
 `TaskIntegrationStatusService`'s Git-derived membership; a stored integration
 record, a pipeline verdict, and a lane position are read beside it, never

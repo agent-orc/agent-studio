@@ -45,7 +45,10 @@ export interface LiveNode {
   perf: LivePerf | null; slots: LiveSlots | null;
   disks: StructureDiskFact[]; locations: StructureDataLocation[];
   release: StructureReleaseFacts | null; version: string | null;
-  runner: LiveRunnerSnapshot | null; gate: LiveGateWorker | null;
+  /** Exact process identity, or the sole runner of a host aggregate. */
+  runner: LiveRunnerSnapshot | null;
+  /** All runner identities represented by this node, sorted by runnerId. */
+  runners: readonly LiveRunnerSnapshot[]; gate: LiveGateWorker | null;
   warnings: LiveWarning[]; links: LiveLink[];
   rect: LiveRect; headH: number;
 }
@@ -119,7 +122,7 @@ export function healthOf(source: Pick<StructureNode, 'observation'> | Pick<Struc
 function blank(id: string, kind: LiveKind, name: string, role: string, parent: LiveNode | null): LiveNode {
   return { id, kind, name, short: name, role, technical: null, parent, children: [], health: { tone: 'neutral', word: 'Not observed', detail: null },
     undeclared: false, source: null, perf: null, slots: null, disks: [], locations: [], release: null, version: null,
-    runner: null, gate: null, warnings: [], links: [], rect: { x: 0, y: 0, w: 0, h: 0 }, headH: 0 };
+    runner: null, runners: [], gate: null, warnings: [], links: [], rect: { x: 0, y: 0, w: 0, h: 0 }, headH: 0 };
 }
 
 /** Kind on the canvas: frames hold other nodes, units are the things that run. */
@@ -217,8 +220,14 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
     ...(childrenOf.get(node.id) ?? []).flatMap(rolesBelow)])].sort();
   const byId = new Map<string, LiveNode>();
   const order: LiveNode[] = [];
-  const runners = new Map<string, LiveRunnerSnapshot>();
-  for (const runner of sources.runners ?? []) if (!runners.has(runner.hostId)) runners.set(runner.hostId, runner);
+  const runnerById = new Map<string, LiveRunnerSnapshot>();
+  const runnersByHost = new Map<string, LiveRunnerSnapshot[]>();
+  for (const runner of sources.runners ?? []) {
+    runnerById.set(runner.runnerId.toLowerCase(), runner);
+    const hostId = runner.hostId.toLowerCase();
+    runnersByHost.set(hostId, [...(runnersByHost.get(hostId) ?? []), runner]);
+  }
+  for (const runners of runnersByHost.values()) runners.sort((a, b) => a.runnerId.localeCompare(b.runnerId));
 
   const add = (source: StructureNode, parent: LiveNode | null): LiveNode => {
     const kids = childrenOf.get(source.id) ?? [];
@@ -245,7 +254,12 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
       node.slots = { busy: capacity.busySlots, total: capacity.totalSlots ?? null, cards: capacity.runningCards ?? [] };
     node.release = source.facts?.release ?? null;
     node.version = node.release?.version ?? observation?.version ?? null;
-    node.runner = source.facts?.hostId ? runners.get(source.facts.hostId) ?? null : null;
+    // A declared unit is an identity, even if its snapshot is currently absent.
+    // Only host aggregates may use the hostId join; a process never borrows a peer.
+    const runner = source.unitId ? runnerById.get(source.unitId.toLowerCase()) : null;
+    node.runners = source.unitId ? (runner ? [runner] : [])
+      : source.kind !== 'process' && source.facts?.hostId ? runnersByHost.get(source.facts.hostId.toLowerCase()) ?? [] : [];
+    node.runner = node.runners.length === 1 ? node.runners[0] : null;
     node.gate = source.facts?.hostId ? (sources.environment?.gateWorkers ?? []).find(worker => worker.id === source.facts!.hostId || worker.name === source.facts!.hostId) ?? null : null;
     byId.set(node.id, node);
     order.push(node);
@@ -320,13 +334,26 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
   const open = order.reduce((sum, node) => sum + node.warnings.length, 0);
   boundary.health = open ? { tone: 'warning', word: `${open} open ${open === 1 ? 'warning' : 'warnings'}`, detail: null }
     : { tone: 'success', word: 'No open warnings', detail: null };
-  const units = order.filter(node => node.slots);
+  const capacityNodes = order.filter(node => node.slots);
+  // The projection repeats each runner's capacity on its host aggregate and process.
+  // Keep both for drill-down, but count the host once, regardless of placement.
+  const hostAggregates = new Map<string, LiveNode>();
+  for (const node of capacityNodes) {
+    const hostId = node.source?.facts?.hostId;
+    if (hostId && node.id === `machine:${hostId}`) hostAggregates.set(hostId, node);
+  }
+  const units = capacityNodes.filter(node => {
+    const aggregate = hostAggregates.get(node.source?.facts?.hostId ?? '');
+    return !aggregate || aggregate === node;
+  });
+  const reportingHosts = new Set(order.filter(node => node.source?.facts?.hostId && node.health.word === 'Up')
+    .map(node => node.source!.facts!.hostId!));
   const scene: LiveScene = { boundary, outside, order, byId, links, warnings: order.flatMap(node => node.warnings), backup,
     generatedAt: now, revision: data.revision ?? 0,
     totals: { machines: order.filter(node => node.kind === 'machine' || node.kind === 'vm').length,
       containers: order.filter(node => node.kind === 'container').length, services: order.filter(node => node.kind === 'service').length,
       busySlots: units.reduce((sum, node) => sum + node.slots!.busy, 0), totalSlots: units.reduce((sum, node) => sum + (node.slots!.total ?? 0), 0),
-      reporting: order.filter(node => node.source?.facts?.hostId && node.health.word === 'Up').length } };
+      reporting: reportingHosts.size } };
   return scene;
 }
 

@@ -12,6 +12,7 @@ import {
   CLI_MANAGEMENT_HREF,
   detailSectionId,
   type UsageDetailFocus,
+  type UsageCliDetailView,
 } from '../../usage-detail.util';
 
 /**
@@ -62,22 +63,29 @@ export class UsageDetailPanelComponent implements OnDestroy {
   readonly view = computed(() => buildUsageDetailView(this.snapshot(), this.now()));
 
   sectionId(focus: UsageDetailFocus): string {
-    return detailSectionId(this.idPrefix(), focus);
+    return detailSectionId(this.idPrefix(), this.resolveFocus(focus));
   }
 
   routingUsage(provider: string) {
     return this.snapshot().routingUsage?.find(usage => usage.provider === provider);
   }
 
-  cliFocus(cliId: string): UsageDetailFocus {
-    return { kind: 'cli', cliId };
+  cliFocus(cli: UsageCliDetailView): UsageDetailFocus {
+    return { kind: 'cli', cliId: cli.cliId, subscriptionKey: cli.subscriptionKey };
+  }
+
+  private resolveFocus(focus: UsageDetailFocus): UsageDetailFocus {
+    if (focus.kind !== 'cli' || focus.subscriptionKey !== undefined) return focus;
+    const account = this.view().clis.find(cli => cli.cliId.toLowerCase() === focus.cliId.toLowerCase());
+    return account ? this.cliFocus(account) : focus;
   }
 
   readonly capacityFocus: UsageDetailFocus = { kind: 'capacity' };
   readonly costFocus: UsageDetailFocus = { kind: 'cost' };
+  private readonly selectedFocus = signal<UsageDetailFocus | null>(null);
 
   isSelected(focus: UsageDetailFocus): boolean {
-    return this.sectionId(focus) === this.sectionId(this.focus());
+    return this.sectionId(focus) === this.sectionId(this.selectedFocus() ?? this.focus());
   }
 
   /** Moves focus to the heading of the selected section and brings it into view. */
@@ -89,6 +97,10 @@ export class UsageDetailPanelComponent implements OnDestroy {
     const section = this.host.querySelector<HTMLElement>(`#${CSS.escape(this.sectionId(focus))}`);
     const heading = section?.querySelector<HTMLElement>('h3');
     if (!section || !heading) return;
+    this.selectedFocus.set(this.resolveFocus(focus));
+    // Account labels can wrap the sticky navigation onto several lines.
+    const navigation = this.host.querySelector<HTMLElement>('nav');
+    if (navigation) section.style.scrollMarginTop = `${navigation.offsetHeight}px`;
     heading.focus({ preventScroll: true });
     section.scrollIntoView({ block: 'start' });
   }

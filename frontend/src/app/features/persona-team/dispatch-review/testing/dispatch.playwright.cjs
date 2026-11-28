@@ -45,6 +45,40 @@ test('review keeps server values, edits revisions, separates sources and shows a
     await page.getByRole('button', { name: 'Retry load' }).click();
     await expect(page.getByTestId('dispatch-ranking')).toContainText('too few cards');
 });
+test('keyboard traverses the ranking and edits and saves a weight revision', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const fixture = await setup(page);
+    const review = page.getByTestId('dispatch-review');
+    const ranking = page.getByTestId('dispatch-ranking');
+    const links = ranking.getByRole('link');
+    await expect(links).toHaveCount(5);
+    await review.getByRole('button', { name: 'Live', exact: true }).focus();
+    async function tabTo(control) {
+        await page.keyboard.press('Tab');
+        await expect(control).toBeFocused();
+    }
+    for (const link of await links.all()) await tabTo(link);
+    mkdirSync(results, { recursive: true });
+    await ranking.screenshot({ path: join(results, 'keyboard-ranking--mocked.png') });
+    for (const summary of await review.locator('summary').filter({ hasText: 'raw evidence and limits' }).all()) await tabTo(summary);
+    const weights = page.getByTestId('dispatch-weights');
+    const fields = weights.getByRole('spinbutton');
+    await expect(fields).toHaveCount(9);
+    await tabTo(fields.nth(0));
+    await page.keyboard.press('ArrowUp');
+    await expect(page.getByTestId('dispatch-remainder')).toHaveText('Remainder: -1 / 100');
+    await tabTo(fields.nth(1));
+    await page.keyboard.press('ArrowDown');
+    for (const field of (await fields.all()).slice(2)) await tabTo(field);
+    await tabTo(weights.getByRole('textbox'));
+    await page.keyboard.type('Keyboard revision');
+    await tabTo(weights.getByRole('button', { name: 'Save as new revision' }));
+    await weights.screenshot({ path: join(results, 'keyboard-weights--mocked.png') });
+    await page.keyboard.press('Enter');
+    await expect(review).toContainText('Saved w2');
+    expect(fixture.writes).toHaveLength(1);
+    expect(fixture.writes[0]).toMatchObject({ weights: { conflicts: 31, tokens: 24 }, reason: 'Keyboard revision' });
+});
 test('viewer cannot edit weights', async ({ page }) => {
     await setup(page, false);
     await expect(page.getByTestId('dispatch-weight-conflicts')).toBeDisabled();

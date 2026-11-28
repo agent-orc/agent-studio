@@ -45,6 +45,13 @@
       "bytes": 103904
     },
     {
+      "path": "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+      "status": "measured-backlog",
+      "strategy": "Split route permissions into feature-owned partial files and preserve first-match lookup order for overlapping method and path rules.",
+      "lines": 542,
+      "bytes": 38464
+    },
+    {
       "path": "backend/Features/Tasks/TaskMutationService.cs",
       "status": "measured-backlog",
       "strategy": "Extract mutation groups into feature-owned partials for routing, delivery attribution and token receipts; preserve the existing lock ownership and write ordering.",
@@ -120,6 +127,13 @@
       "strategy": "Split feature sections into linked domain pages with stable anchors.",
       "lines": 4960,
       "bytes": 337475
+    },
+    {
+      "path": "runner/RemoteReviewWorkspace.cs",
+      "status": "measured-backlog",
+      "strategy": "Split workspace preparation, baseline comparison and review material into responsibility-specific partial files, preserving execution order and per-attempt state.",
+      "lines": 4864,
+      "bytes": 246916
     }
   ]
 }

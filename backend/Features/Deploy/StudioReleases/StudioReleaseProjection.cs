@@ -2,13 +2,19 @@ namespace AgentStudio.Deploy;
 
 public sealed record StudioReleaseCard(string Key, string Title, string? Type, string Href,
     IReadOnlyList<string> Shas, DateTime? IntegratedAtUtc, string? IntegrationSha = null);
-public sealed record StudioRevision(string Revision, DateTime AtUtc, bool Observed, string? TimeBasis = null);
+public sealed record StudioRevision(string Revision, DateTime AtUtc, bool Observed, string? TimeBasis = null,
+    string? OccurrenceId = null);
 public sealed record StudioReleaseEntry(string Revision, DateTime AtUtc, bool Observed,
-    bool Running, IReadOnlyList<StudioReleaseCard> Cards, string? TimeBasis = null);
+    bool Running, IReadOnlyList<StudioReleaseCard> Cards, string OccurrenceId, string? TimeBasis = null);
 public sealed record StudioCardLiveState(string State, string? Revision = null, DateTime? SinceUtc = null);
 public sealed record StudioReleasesView(string Project, string RunningRevision, DateTime ComputedAtUtc,
     IReadOnlyList<StudioReleaseCard> Pending, IReadOnlyList<StudioReleaseEntry> Releases,
-    IReadOnlyDictionary<string, StudioCardLiveState> CardStates, string? Detail = null);
+    IReadOnlyDictionary<string, StudioCardLiveState> CardStates, string? Detail = null)
+{
+    public string? Branch { get; init; }
+    public string? Tip { get; init; }
+    public IReadOnlyList<WaitingDelivery> Waiting { get; init; } = [];
+}
 
 /// <summary>Delivery membership is ancestry, never a task key in a commit message or a timestamp comparison.</summary>
 public static class StudioReleaseProjection
@@ -31,15 +37,18 @@ public static class StudioReleaseProjection
             membership[key] = contained;
             return contained;
         }
-        var ordered = revisions.OrderBy(revision => revision.AtUtc)
-            .ThenBy(revision => revision.Revision, StringComparer.Ordinal).ToArray();
+        // Stable ordering preserves the source sequence when timestamps are equal.
+        var ordered = revisions.OrderBy(revision => revision.AtUtc).ToArray();
+        var current = Array.FindLastIndex(ordered,
+            revision => string.Equals(revision.Revision, running, StringComparison.OrdinalIgnoreCase));
         var uniqueCards = cards.GroupBy(card => card.Key, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First()).OrderBy(card => card.Key, StringComparer.OrdinalIgnoreCase).ToArray();
         var entries = ordered.Select((revision, index) => new StudioReleaseEntry(
             revision.Revision, revision.AtUtc, revision.Observed,
-            string.Equals(revision.Revision, running, StringComparison.OrdinalIgnoreCase),
+            index == current,
             index == 0 ? [] : uniqueCards.Where(card => Contains(card, revision.Revision) == true
-                && Contains(card, ordered[index - 1].Revision) == false).ToArray(), revision.TimeBasis)).ToArray();
+                && Contains(card, ordered[index - 1].Revision) == false).ToArray(),
+            revision.OccurrenceId ?? $"legacy:{index}:{revision.AtUtc.Ticks}:{revision.Revision}", revision.TimeBasis)).ToArray();
         var states = new Dictionary<string, StudioCardLiveState>(StringComparer.OrdinalIgnoreCase);
         var pending = new List<StudioReleaseCard>();
         foreach (var card in uniqueCards)
@@ -47,7 +56,11 @@ public static class StudioReleaseProjection
             var live = Contains(card, running);
             if (live == true)
             {
-                var first = ordered.FirstOrDefault(revision => Contains(card, revision.Revision) == true);
+                // Walk only the current uninterrupted interval. A rollback can remove
+                // a delivery even when an older occurrence had already contained it.
+                var start = current;
+                while (start > 0 && Contains(card, ordered[start - 1].Revision) == true) start--;
+                var first = start < 0 ? null : ordered[start];
                 states[card.Key] = new("live", first?.Revision ?? running,
                     first?.TimeBasis == "build-baseline" ? null : first?.AtUtc);
             }

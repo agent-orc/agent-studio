@@ -13,6 +13,8 @@ public sealed class PostMergeRunStore
     private readonly string _root;
     private readonly object _gate = new();
 
+    private readonly Dictionary<string, (DateTime WriteTime, long Length, PostMergeAcceptanceEvidence Evidence)> _acceptance = [];
+
     public PostMergeRunStore(string? root = null)
     {
         _root = root ?? LocalStateRoot.Combine("agentstudio", "post-merge");
@@ -35,6 +37,32 @@ public sealed class PostMergeRunStore
     public PostMergeProjectState Read(string projectId)
     {
         lock (_gate) return ReadLocked(projectId);
+    }
+
+    internal PostMergeAcceptanceEvidence? ReadAcceptanceEvidence(string projectId)
+    {
+        lock (_gate)
+        {
+            var file = new FileInfo(PathFor(projectId));
+            if (!file.Exists) return null;
+            if (_acceptance.TryGetValue(projectId, out var cached)
+                && cached.WriteTime == file.LastWriteTimeUtc && cached.Length == file.Length)
+                return cached.Evidence;
+            var json = File.ReadAllText(file.FullName);
+            var state = ParseState(json, projectId);
+            var receipts = state.Runs.Where(run => run.Status == "green" && run.FinishedAtUtc.HasValue)
+                .Reverse().Select(run => new PostMergeLastReport(run.TipSha, run.FinishedAtUtc!.Value)).ToArray();
+            var window = state.PendingWindow;
+            var waitingSince = window?.AdmissionReason is { Length: > 0 }
+                ? JsonSerializer.Deserialize<StoredMetadata>(json, Json)?.AdmissionWaitingSinceUtc ?? window.ObservedAtUtc
+                : (DateTimeOffset?)null;
+            var version = CanonicalFields.Sha256Hex([state.LastGreenSha, window?.TipSha,
+                window?.OpenedAtUtc?.ToString("O"), window?.AdmissionReason, waitingSince?.ToString("O"),
+                .. receipts.Select(receipt => receipt.TipSha)]);
+            var evidence = new PostMergeAcceptanceEvidence(receipts, state.LastGreenSha, window, waitingSince, version);
+            _acceptance[projectId] = (file.LastWriteTimeUtc, file.Length, evidence);
+            return evidence;
+        }
     }
 
     public void ObserveWindow(string projectId, PostMergeWindowObservation observation)
@@ -287,9 +315,13 @@ public sealed class PostMergeRunStore
         lock (_gate) return ReadCustodyLocked(projectId);
     }
 
-    private PostMergeCustody? ReadCustodyLocked(string projectId)
-        => File.Exists(PathFor(projectId))
-            ? JsonNode.Parse(File.ReadAllText(PathFor(projectId)))?["custody"]?.Deserialize<PostMergeCustody>(Json) : null;
+    private sealed record StoredMetadata(PostMergeCustody? Custody, PostMergeWindowObservation? PendingWindow,
+        DateTimeOffset? AdmissionWaitingSinceUtc);
+
+    private static StoredMetadata? ReadMetadata(string path) => File.Exists(path)
+        ? JsonSerializer.Deserialize<StoredMetadata>(File.ReadAllText(path), Json) : null;
+
+    private PostMergeCustody? ReadCustodyLocked(string projectId) => ReadMetadata(PathFor(projectId))?.Custody;
 
     /// <summary>Records the repair card after its own escalation move succeeds; evidence only, never a placement input.</summary>
     public void RecordAttributionEscalation(string projectId, string taskId)
@@ -307,9 +339,12 @@ public sealed class PostMergeRunStore
     {
         var path = PathFor(projectId);
         if (!File.Exists(path)) return PostMergeProjectState.Empty(projectId);
-        return JsonSerializer.Deserialize<PostMergeProjectState>(File.ReadAllText(path), Json)
-            ?? throw new IOException($"Post-merge state for {projectId} is empty.");
+        return ParseState(File.ReadAllText(path), projectId);
     }
+
+    private static PostMergeProjectState ParseState(string json, string projectId)
+        => JsonSerializer.Deserialize<PostMergeProjectState>(json, Json)
+            ?? throw new IOException($"Post-merge state for {projectId} is empty.");
 
     private void WriteLocked(string projectId, PostMergeProjectState state,
         PostMergeCustody? custody = null, bool replaceCustody = false)
@@ -318,13 +353,21 @@ public sealed class PostMergeRunStore
         Directory.CreateDirectory(_root);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var document = JsonSerializer.SerializeToNode(state, Json)!;
-        document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : ReadCustodyLocked(projectId), Json);
+        var previous = ReadMetadata(path);
+        document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : previous?.Custody, Json);
+        if (state.PendingWindow is { AdmissionReason.Length: > 0 } pending)
+        {
+            var since = previous?.PendingWindow is { AdmissionReason.Length: > 0 } prior && prior.TipSha == pending.TipSha
+                ? previous.AdmissionWaitingSinceUtc ?? prior.ObservedAtUtc : pending.ObservedAtUtc;
+            document["admissionWaitingSinceUtc"] = since;
+        }
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             JsonSerializer.Serialize(stream, document, Json);
             stream.Flush(flushToDisk: true);
         }
         File.Move(temp, path, overwrite: true);
+        _acceptance.Remove(projectId);
     }
 
     private string PathFor(string projectId)
@@ -334,5 +377,8 @@ public sealed class PostMergeRunStore
         return Path.Combine(_root, projectId + ".json");
     }
 }
+
+internal sealed record PostMergeAcceptanceEvidence(IReadOnlyList<PostMergeLastReport> GreenReceipts,
+    string? LastGreenSha, PostMergeWindowObservation? PendingWindow, DateTimeOffset? AdmissionWaitingSinceUtc, string Version);
 
 public sealed record PostMergeCustody(string RunId, string Owner, long Fence, DateTimeOffset ExpiresAtUtc, string? RecoveryId = null);

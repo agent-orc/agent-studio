@@ -15,12 +15,12 @@
 }
 
 .refusal__message,
-.refusal__note { margin: 0; overflow-wrap: anywhere; }
+.refusal__note { margin: var(--studio-spacing-0); overflow-wrap: anywhere; }
 .refusal__note { color: var(--studio-fg-muted); }
 .refusal__source { color: var(--studio-fg); font-weight: 600; }
-.refusal__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.refusal__error { margin: var(--studio-spacing-0); color: var(--studio-error); overflow-wrap: anywhere; }
 .refusal__items {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding-inline-start: var(--studio-spacing-4);
   color: var(--studio-fg);
   overflow-wrap: anywhere;
@@ -28,4 +28,4 @@
 
 @include round.actions;
 
-.round__actions { margin-top: 0; }
+.round__actions { margin-top: var(--studio-spacing-0); }

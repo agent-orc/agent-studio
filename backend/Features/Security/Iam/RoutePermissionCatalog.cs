@@ -19,7 +19,8 @@ public sealed record RequiredPermissionMetadata(
     string? Environment = null,
     string? EnvironmentRouteValue = null,
     bool ProjectBindingsSuffice = false,
-    string? EnvironmentBodyField = null);
+    string? EnvironmentBodyField = null,
+    bool OperatorTokenReport = false);
 
 /// <summary>
 /// One route's permission split by method: <see cref="Read"/> for GET, HEAD,
@@ -281,6 +282,11 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
         Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        const string records = AgentStudio.Deploy.DeployRecordEndpoints.Path;
+        Add("GET", IamPermissions.WorkspaceOperate, records);
+        foreach (var path in new[] { records, records + "/import" })
+            rules.Add(new Rule("POST", Split(path), new RequiredPermissionMetadata(
+                IamPermissions.WorkspaceSettingsWrite, OperatorTokenReport: true)));
         // Instance deploy records (AGT-3879): the report routes check their own
         // deploy reporter token; issuing or revoking one is an Owner action.
         Add("POST", IamPermissions.Anonymous, "/api/instance/deploy/runs", "/api/instance/deploy/runs/{}/finish");
@@ -350,6 +356,7 @@ public static class RoutePermissionCatalog
         // Only a Runner credential bound to a live lease resolves a value.
         Add("POST", IamPermissions.RunnerService, "/api/runner/secrets/resolve");
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/secrets/backends");
+        Add("POST", IamPermissions.SecretsWrite, "/api/secrets/migrate-project-keys");
         Environment("R", IamPermissions.SecretsRead,
             "/api/projects/{}/secret-bindings/{}", null, "environment");
         Environment("PUT", IamPermissions.SecretsWrite,
@@ -386,12 +393,13 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/systems/{}");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
         Add("POST", IamPermissions.WorkspaceSettingsWrite, "/api/projects");
+        Add("R", IamPermissions.WorkspaceSettingsWrite, "/api/model-selection/policy/pace");
         Add("W", IamPermissions.WorkspaceSettingsWrite,
             "/api/workspaces/**", "/api/watch-paths/**", "/api/tags/**", "/api/admin/**",
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
             "/api/model-selection/policy/consumers/{}",
-            "/api/model-selection/policy/reserve",
+            "/api/model-selection/policy/reserve", "/api/model-selection/policy/pace/{}/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/token-pricing/what-if", "/api/component-routing/resolve");

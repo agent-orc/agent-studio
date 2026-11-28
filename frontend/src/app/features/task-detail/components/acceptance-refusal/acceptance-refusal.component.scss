@@ -56,8 +56,8 @@
 }
 
 .acceptance-refusal__label { color: var(--studio-fg-strong); font-weight: 600; }
-.acceptance-refusal__hint { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
-.acceptance-refusal__secondary { margin: 0; padding-inline-start: var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+.acceptance-refusal__hint { margin: var(--studio-spacing-0); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+.acceptance-refusal__secondary { margin: var(--studio-spacing-0); padding-inline-start: var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 
 .acceptance-refusal__input {
   width: 100%;
@@ -73,7 +73,7 @@
   &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 }
 
-.acceptance-refusal__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.acceptance-refusal__error { margin: var(--studio-spacing-0); color: var(--studio-error); overflow-wrap: anywhere; }
 
 .acceptance-refusal__actions {
   display: flex;
@@ -128,7 +128,7 @@
 // `.studio button` reset (0,1,1) outranks the single-class modifier, so the
 // primary fill is restated at a higher specificity.
 .acceptance-refusal .studio-tab-action--primary {
-  padding: 0 var(--studio-compat-space-5);
+  padding: var(--studio-spacing-0) var(--studio-compat-space-5);
   border: 1px solid var(--studio-accent);
   border-radius: var(--studio-compat-radius-6);
   background: var(--studio-accent);

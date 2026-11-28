@@ -9,6 +9,34 @@ test.use({ timezoneId: 'America/New_York' });
 const shots = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'bars');
 const observedAt = new Date(FIXTURE_NOW).toISOString();
 
+// These tests exercise quota detail, with an authenticated owner and a quiet realtime transport.
+test.beforeEach(async ({ page }) => {
+  const status = { profile: 'networked', bootstrapRequired: false, authenticated: true,
+    user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [],
+      disabled: false, mustChangePassword: false } };
+  for (const endpoint of ['**/api/auth/status', '**/api/v1/studio/auth/status']) {
+    await page.route(endpoint, route => route.fulfill({ json: status }));
+  }
+  await page.route('**/api/auth/sessions', route => route.fulfill({ json: [] }));
+  await page.route('**/api/auth/iam/operator-agents', route => route.fulfill({ json: [] }));
+  await page.route('**/healthz', route => route.fulfill({ contentType: 'text/plain', body: 'Healthy' }));
+  const connectionId = ['usage', 'e2e'].join('-');
+  await page.route('**/hubs/v1/studio/negotiate?*', route => route.fulfill({ json: {
+    negotiateVersion: 1, connectionId, connectionToken: connectionId,
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  } }));
+  await page.routeWebSocket('**/hubs/v1/studio*', socket => {
+    let keepAlive: ReturnType<typeof setInterval> | undefined;
+    socket.onClose(() => clearInterval(keepAlive));
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) {
+        socket.send('{}\u001e');
+        keepAlive ??= setInterval(() => socket.send('{"type":6}\u001e'), 1000);
+      }
+    });
+  });
+});
+
 function capability(key: string, invalid = false) {
   return {
     key, category: key.split(':')[0], advertisedStatus: invalid ? 'unavailable' : 'ready',
@@ -331,21 +359,24 @@ test('Fable weekly allowance appears independently in the footer in both themes'
   }
 });
 
-test('failed subscriptions retain their own values and first failures remain explicitly unavailable', async ({ page }) => {
-  test.setTimeout(90_000);
+test('failed subscriptions retain their values and shared detail navigates each account with unallocated runs', async ({ page }) => {
+  test.setTimeout(180_000);
+  page.setDefaultNavigationTimeout(60_000);
   mkdirSync(shots, { recursive: true });
   await page.clock.setFixedTime(FIXTURE_NOW);
   await page.setViewportSize({ width: 390, height: 900 });
   const snapshot = cockpit();
   const claude = snapshot.clis.find(cli => cli.cliId === 'claude')!;
+  const historyKey = 'a'.repeat(64);
+  const missingKey = 'b'.repeat(64);
   const failedAt = new Date(FIXTURE_NOW - 60_000).toISOString();
   snapshot.clis.push({
-    ...claude, subscriptionKey: 'failed-with-history',
+    ...claude, subscriptionKey: historyKey,
     fetchedAt: new Date(FIXTURE_NOW - 2 * 3_600_000).toISOString(), probeFailedAt: failedAt,
     windows: claude.windows.map(window => ({ ...window, usedPct: 35 })),
     availability: { ...claude.availability, status: 'stale', reason: 'A claude host quota probe failed.' },
   }, {
-    ...claude, subscriptionKey: 'failed-without-history', fetchedAt: null, probeFailedAt: failedAt,
+    ...claude, subscriptionKey: missingKey, fetchedAt: null, probeFailedAt: failedAt,
     windows: [], availability: { ...claude.availability, observedAt: null, status: 'unavailable',
       reason: 'A claude host quota probe failed.' },
   });
@@ -361,6 +392,66 @@ test('failed subscriptions retain their own values and first failures remain exp
   await expect(unavailable).toContainText('Probe failed');
   await expect(unavailable).toContainText('age unknown');
   await expect(unavailable).not.toContainText('35%');
+  await expect(entries.locator('strong')).toHaveText([
+    'Claude · local ', 'Claude · subscription aaaaaaaa… ', 'Claude · subscription bbbbbbbb… ',
+  ]);
+  const triggerKeys = await entries.evaluateAll(nodes => nodes.map(node => node.getAttribute('data-usage-trigger')));
+  expect(new Set(triggerKeys).size).toBe(3);
+  for (const entry of await entries.all()) {
+    await expect(entry).toHaveAttribute('href', '#/workspace/settings/tokens/claude');
+  }
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const cost = page.getByTestId('footer-usage-cost');
+      await cost.click();
+      const surface = page.getByTestId('usage-detail-surface');
+      await expect(surface).toHaveAttribute('data-mode', width === 390 ? 'sheet' : 'popover');
+      const nav = surface.getByRole('navigation', { name: 'Usage sections' });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+      const labels = ['Claude · local', 'Claude · subscription aaaaaaaa…', 'Claude · subscription bbbbbbbb…'];
+      const destinations: string[] = [];
+      for (const label of labels) {
+        const link = nav.getByRole('link', { name: label, exact: true });
+        const href = (await link.getAttribute('href'))!;
+        destinations.push(href);
+        const section = surface.locator('section').filter({ has: page.getByRole('heading', { level: 3, name: label, exact: false }) });
+        await expect(section).toHaveAttribute('id', href.slice(1));
+        await link.click();
+        await expect(section.getByRole('heading', { level: 3 })).toBeFocused();
+        await expect(link).toHaveAttribute('aria-current', 'location');
+        await expect(nav.locator('[aria-current="location"]')).toHaveCount(1);
+        await expect(section).toBeInViewport();
+        const headingBounds = await section.getByRole('heading', { level: 3 }).boundingBox();
+        const navBounds = await nav.boundingBox();
+        expect(headingBounds && navBounds && headingBounds.y >= navBounds.y + navBounds.height, `${label} clears the section navigation`).toBe(true);
+        if (label === labels[1]) await expect(section).toContainText('35% used');
+        if (label === labels[2]) await expect(section).toContainText('No quota window reported');
+      }
+      expect(new Set(destinations).size).toBe(labels.length);
+      const ids = await surface.locator('[id]').evaluateAll(nodes => nodes.map(node => node.id));
+      expect(new Set(ids).size).toBe(ids.length);
+      await expect(surface.getByTestId('usage-detail-models-claude')).toHaveCount(1);
+      await expect(surface.getByTestId('usage-detail-provider-runs-claude')).toContainText(
+        'Provider-wide runs, unallocated to subscriptions. Receipts do not identify a subscription.');
+      const claudeRuns = snapshot.runs.filter(run => run.effectiveCli === 'claude');
+      expect(claudeRuns.length).toBeGreaterThan(0);
+      for (const run of claudeRuns) {
+        await expect(surface.locator(`[data-testid="usage-detail-models-claude"] [data-run-id="${run.id}"]`)).toHaveCount(1);
+      }
+      await nav.getByRole('link', { name: labels[0], exact: true }).click();
+      await surface.screenshot({ path: join(shots, `subscription-detail-${width}-${theme}--mocked.png`), animations: 'disabled' });
+      await page.keyboard.press('Escape');
+      await expect(surface).not.toBeVisible();
+      await expect(cost).toBeFocused();
+    }
+  }
+  expect(errors).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 900 });
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await expect(retained).toBeVisible();

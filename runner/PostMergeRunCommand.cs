@@ -385,6 +385,11 @@ public sealed class PostMergeRunCommand
         };
         var shardPlan = new List<(string Suite, string Shards)>();
         var quarantinedFailures = 0;
+        // A TAP failure in lint uses the same coverage identity on later passing receipts.
+        var lintChecks = definition.Commands.Lint.Except(definition.TestSuites.Select(item => item.Command))
+            .Where(commands.Contains).ToDictionary(command => command, command =>
+                new ProjectTestSuite("lint-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(command)))[..16],
+                    ProjectTestSuiteCategories.Base, 0, command));
         var testsStarted = false;
         foreach (var command in commands)
         {
@@ -414,7 +419,19 @@ public sealed class PostMergeRunCommand
             else
             {
                 if (suite is not null) shardPlan.Add((suite.Id, "1"));
-                verdicts.Add(Verdict(command, await TimedRun(command, definition.Environment, ct)));
+                var result = await TimedRun(command, definition.Environment, ct);
+                var lint = lintChecks.GetValueOrDefault(command);
+                var verdict = Verdict(command, result) with { SuiteId = lint?.Id };
+                if (lint is not null && result.ExitCode != 0)
+                {
+                    var initial = new PostMergeTap(result.Output);
+                    if (initial.HasFailures)
+                    {
+                        var repeat = await TimedRun(command, definition.Environment, ct);
+                        verdict = LintRetryVerdict(verdict, lint, initial.Compare(new(repeat.Output), _options.Checkout), repeat, tip, ledger, _recordRun);
+                    }
+                }
+                verdicts.Add(verdict);
             }
             if (suite is not null)
             {
@@ -476,10 +493,10 @@ public sealed class PostMergeRunCommand
         var envelope = await EnvelopeAsync(definition, commands, PostMergeEnvelopeProbe.ShardPlan(shardPlan),
             host.LoadPerCore, sampler.Peak, ct);
         _journal!.Terminal = started with { Status = status, Verdicts = verdicts, Failure = failure,
-            SuiteSelection = new(selection.SelectedSuites, selection.OmittedSuites, selection.Reasons)
+            SuiteSelection = new([.. selection.SelectedSuites, .. lintChecks.Values.Select(lint => lint.Id)], selection.OmittedSuites, selection.Reasons)
             {
-                SuiteCommands = definition.TestSuites.ToDictionary(suite => suite.Id, suite => suite.Command),
-                AttemptedSuites = definition.TestSuites.Where(suite => verdicts.Any(verdict => verdict.SuiteId == suite.Id))
+                SuiteCommands = definition.TestSuites.Concat(lintChecks.Values).ToDictionary(suite => suite.Id, suite => suite.Command),
+                AttemptedSuites = definition.TestSuites.Concat(lintChecks.Values).Where(suite => verdicts.Any(verdict => verdict.SuiteId == suite.Id))
                     .Select(suite => suite.Id).ToArray(),
             },
             Reason = quarantinedFailures > 0
@@ -714,6 +731,37 @@ public sealed class PostMergeRunCommand
                     var error = TestFailureMessages.FirstError(result.Output, test);
                     return error[..Math.Min(error.Length, 2000)];
                 }, StringComparer.Ordinal) };
+
+    private static PostMergeCommandVerdict LintRetryVerdict(PostMergeCommandVerdict initialVerdict,
+        ProjectTestSuite lint, IReadOnlyList<PostMergeTap.Test> observations,
+        (int ExitCode, bool TimedOut, string Output, long DurationMs) repeat, string tip,
+        PostMergeTestLedger ledger, Action<PostMergeTestRun> record)
+    {
+        // Give retry failures priority within the receipt's 64-test limit.
+        var evidence = observations.OrderBy(test => test.Repeat switch
+            {
+                PostMergeTestResults.Fail => 0,
+                PostMergeTestResults.Unknown => 1,
+                _ => 2,
+            }).Take(64).ToDictionary(test => test.Name);
+        var tests = evidence.Keys.ToArray();
+        var failed = tests.Where(test => evidence[test].Repeat != PostMergeTestResults.Pass).ToArray();
+        ledger.Initial(lint, lint.Command, tests, tests, tip, test => evidence[test].Initial);
+        record(new(PostMergeRunPhases.Repeat, tip, tests, repeat.ExitCode, repeat.TimedOut, repeat.Output, repeat.DurationMs)
+            { ReportedResults = tests.ToDictionary(test => test, test => evidence[test].Repeat) });
+
+        return initialVerdict with
+        {
+            ExitCode = repeat.ExitCode == 0 && failed.Length > 0 ? initialVerdict.ExitCode : repeat.ExitCode,
+            TimedOut = repeat.TimedOut,
+            Retried = true,
+            OutputTail = repeat.ExitCode != 0 ? PostMergeAttributor.Excerpt(repeat.Output) : initialVerdict.OutputTail,
+            FailedTests = failed,
+            FlakyTests = tests.Where(test => evidence[test].Repeat == PostMergeTestResults.Pass).ToArray(),
+            FailureMessages = tests.ToDictionary(test => test,
+                test => evidence[test].Error ?? "Not recorded in receipt."),
+        };
+    }
 
     private async Task<(int ExitCode, bool TimedOut, string Output, long DurationMs)> TimedRun(string command,
         IReadOnlyDictionary<string, string> environment, CancellationToken ct)

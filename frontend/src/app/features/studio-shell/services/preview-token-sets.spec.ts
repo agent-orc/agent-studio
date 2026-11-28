@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { ChangeDetectionStrategy, Component, ViewEncapsulation } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { PREVIEW_TOKEN_SETS } from './preview-token-sets';
-import { snapshotTokenSet, type ThemeTokenValues } from './theme-token-sets';
+import { DEFAULT_THEME_TOKEN_SET, snapshotTokenSet, type ThemeTokenValues } from './theme-token-sets';
+
+// The unit target omits global styles. Load the default palette for this contract.
+@Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  // eslint-disable-next-line @angular-eslint/component-max-inline-declarations -- The fixture loads only the palette.
+  template: '',
+  styleUrl: '../../../../styles/_tokens-semantic.scss',
+  encapsulation: ViewEncapsulation.None,
+})
+class TokenPaletteComponent {}
 
 function resolve(tokens: ThemeTokenValues, name: string): string {
   const value = tokens[name as keyof ThemeTokenValues];
@@ -30,7 +42,24 @@ const surfaces = ['bg-surface', 'bg-editor', 'bg-sidebar', 'bg-elevated', 'bg-ho
 const inks = ['fg', 'fg-strong', 'fg-dim', 'fg-muted', 'accent-strong', 'nav-active-fg', 'status-success',
   'status-warning', 'status-danger', 'status-running', 'status-info', 'accent-4-strong'];
 
-describe('Preview token sets', () => {
+describe('Studio token sets', () => {
+  it.each(['light', 'dark'] as const)('resolves the danger role to a colour in every %s palette', theme => {
+    TestBed.createComponent(TokenPaletteComponent);
+    const root = document.documentElement;
+    const previous = root.dataset['studioTheme'];
+    onTestFinished(() => {
+      if (previous === undefined) delete root.dataset['studioTheme'];
+      else root.dataset['studioTheme'] = previous;
+    });
+    root.dataset['studioTheme'] = theme;
+    const style = getComputedStyle(root);
+    const defaults = Object.fromEntries(Array.from(style, name => [name, style.getPropertyValue(name).trim()]));
+    for (const set of [DEFAULT_THEME_TOKEN_SET, ...PREVIEW_TOKEN_SETS]) {
+      const danger = resolve({ ...defaults, ...set[theme] }, '--studio-status-danger');
+      expect(danger, set.id).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
   for (const set of PREVIEW_TOKEN_SETS) {
     it(`${set.id} registers both themes and keeps every text/surface combination AA`, () => {
       expect(snapshotTokenSet(set).preview).toBe(true);

@@ -12,6 +12,14 @@ public interface IQuotaCapTable
     int GetCap(string cliType, string windowLabel);
 }
 
+/// <summary>Operator pacing for one provider window. UseBy is an absolute instant.</summary>
+public sealed record QuotaPace(string Mode, DateTimeOffset? UseBy = null)
+{
+    public static readonly QuotaPace Steady = new("steady");
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Label => Mode == "useBy" ? $"use by {UseBy?.UtcDateTime:dd MMM HH:mm} UTC" : Mode;
+}
+
 public static class QuotaCapDefaults
 {
     /// <summary>Default cap when a CLI window has no configured entry.</summary>
@@ -37,7 +45,8 @@ public sealed record CapEvaluation(
     // to it. <see cref="ResetAt"/> carries the offending window's reset time
     // so a "next reset HH:mm" hint can be surfaced at the waiting slot.
     bool Projected = false,
-    DateTime? ResetAt = null)
+    DateTime? ResetAt = null,
+    QuotaProjection? PaceProjection = null)
 {
     public static readonly CapEvaluation NotBlocked = new(false);
 
@@ -46,6 +55,8 @@ public sealed record CapEvaluation(
         if (!Blocked) return "ok";
         if (Suspicious)
             return $"{CliType} quota snapshot unconfirmed ({SuspiciousReason ?? "suspicious glitch"}); holding launch until a re-probe confirms";
+        if (PaceProjection is { Pace.Mode: "useBy" } p)
+            return $"{CliType} {WindowLabel} is ahead of its pace ({UsedPct:0.#}% used, {p.AllowedPct:0.#}% allowed now, pace: {p.Pace.Label}); free at {p.FreeAt:HH:mm} UTC or when the pace is changed";
         return Projected
             ? $"{CliType} {WindowLabel} projected to reach the {CapPct}% cap before reset (now {UsedPct:0.#}%)"
             : $"{CliType} {WindowLabel} at {UsedPct:0.#}% (cap {CapPct}%)";
@@ -67,7 +78,10 @@ public sealed record QuotaProjection(
     DateTime? ResetAt,
     bool BreachesBeforeReset,
     DateTime? AssumedStartAt = null,
-    double? ElapsedFraction = null);
+    double? ElapsedFraction = null,
+    QuotaPace? Pace = null,
+    double? AllowedPct = null,
+    DateTime? FreeAt = null);
 
 public sealed record QuotaProjectionWarning(
     string WindowLabel,

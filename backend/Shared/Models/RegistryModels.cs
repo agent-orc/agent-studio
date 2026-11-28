@@ -109,6 +109,8 @@ public record ProjectRecord
     public string Id { get; init; } = "";
     /// <summary>Free-text display label. Renamable without touching the filesystem.</summary>
     public string DisplayName { get; init; } = "";
+    /// <summary>Prior display names retained for lazy secret lookup after a rename.</summary>
+    public IReadOnlyList<string> SecretDisplayNames { get; init; } = [];
     /// <summary>Short prefix for task display keys (e.g. <c>ATP</c> in <c>ATP-130</c>). 2-6 chars, A-Z and 0-9.</summary>
     public string ShortCode { get; init; } = "";
     /// <summary>Owning workspace; references <see cref="WorkspaceRecord.Id"/>.</summary>

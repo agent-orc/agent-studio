@@ -321,7 +321,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Record(store, service, project, red);
         Assert.Empty(service.ActiveQuarantines(project));
         Assert.Equal("red", store.Read(project.Id).DevelopState);
-        Assert.NotNull(store.Read(project.Id).LineStop);
+        Assert.Contains("Demo.Tests.Fails", store.Read(project.Id).LineStop);
         clock.Advance(TimeSpan.FromHours(1));
         service.AskOwnerWhenOverdue(project);
         service.AskOwnerWhenOverdue(project);

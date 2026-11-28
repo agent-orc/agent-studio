@@ -4,10 +4,10 @@
   "title": "Elevated operator session from the terminal",
   "summary": "How the owner can be admin safely and fast from an operator agent\u0027s terminal session. Proposes a terminal-started sign-in that the owner confirms in the browser or on the phone with a passkey or authenticator code, sessions bound by proof of possession to a key that never leaves the device (TPM or Secure Enclave where present, a memory-held key otherwise), a lifetime the owner chooses at confirmation (8 hours to until revoked, 7 days by default, limited per role and binding kind) with hourly renewal by the device key without a second factor, an end after 24 hours without use and one list of elevated sessions to end any of them with one tap, named elevated action classes with rate limits instead of a stronger role, direct-action classes limited to 24 hours per arming, batch confirmation of override acceptances and archive overrides in Needs you with one tap, the testing strategy as the first route moved from Owner to a project permission, an override permission that makes approvals work, and hard refusals no token can lift. Compares owner in the browser, agent driving the owner\u0027s browser, and the elevated terminal session; recommends the elevated terminal session as the default. Seventeen decisions, threat model updates for the security Dossier, and nine slices.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-23T08:40:00Z",
+  "updatedAt": "2026-11-28T05:53:37Z",
   "sourceTaskKeys": [
     "AGT-3989"
   ],
@@ -181,5 +181,6 @@
       }
     }
   ],
-  "key": "AGT-W3466"
+  "key": "AGT-W3466",
+  "editedBy": "AGT-3989"
 }

@@ -28,6 +28,7 @@ public static class CliEndpoints
 
         app.MapGet("/api/model-selection/drill", (string? project, string? pipelineType, ModelRoutingDrill drill) =>
             Results.Ok(drill.Run(project, pipelineType)));
+        app.MapQuotaPaceEndpoints();
         app.MapPut("/api/model-selection/policy/reserve", (ReserveSetting setting, ModelSelectionPolicyStore policy) =>
             setting.Points is < 0 or > 50 ? Results.BadRequest(new { error = "Reserve must be between 0 and 50 percentage points." })
                 : Results.Ok(policy.SetReserve(setting.Points)));

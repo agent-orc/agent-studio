@@ -133,7 +133,8 @@ public static class AcceptanceReadinessPolicy
                 admission.Content?.RequiredAspect, admission.Content?.ContentStatus),
             CompletionAdmissionStages.IntegrationUnverified => new(AcceptanceReadinessClasses.IntegratedUnverified,
                 "Integrated, not verified",
-                "The delivery is on the integration branch, but no gate passed on the merged tree"
+                admission.Verification?.UncoveredPublication is not null ? admission.Message
+                : "The delivery is on the integration branch, but no gate passed on the merged tree"
                 + (string.IsNullOrWhiteSpace(admission.Verification?.Sha) ? "." : $" {Short(admission.Verification!.Sha)}.")
                 + (string.IsNullOrWhiteSpace(admission.Verification?.Reason) ? "" : " " + Sentence(admission.Verification!.Reason)),
                 admission.Content?.RequiredAspect, admission.Content?.ContentStatus),

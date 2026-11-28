@@ -75,3 +75,322 @@ export const liveSourcesFixture: LiveSources = {
     taskServer: { version: '2.0', commit: '0a1b2c3' }, engine: { state: 'ready', lastContact: seen },
   },
 };
+
+/**
+ * AGT-4203: serialized from ObservedStructureProjection.Apply at develop 51522ee9fc.
+ * Inputs: coding-runner on coding-host (2/4), shared-coding (2/4) and shared-review
+ * (1/2) on shared-host, at 2026-11-27T12:00:00Z. Optional null properties omitted.
+ * Both the host aggregates and the process facts are retained, as the API emits them.
+ */
+export const projectedCapacityFixture: StructureData = {
+  "nodes": [
+    {
+      "id": "installation",
+      "kind": "boundary",
+      "label": "Installation",
+      "parentId": null,
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "declared",
+      "sourceRef": "capacity regression fixture",
+      "otherProject": false,
+      "observation": {
+        "difference": "declared-only",
+        "health": "not observed",
+        "behind": false
+      }
+    },
+    {
+      "id": "machine:coding-host",
+      "kind": "host",
+      "label": "coding-host",
+      "parentId": "installation",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "otherProject": false,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-27T12:00:00Z",
+        "behind": false,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "coding-host",
+        "roles": [
+          "coding"
+        ],
+        "lastSeenAt": "2026-11-27T12:00:00Z",
+        "capacity": {
+          "busySlots": 2,
+          "freeSlots": 2,
+          "totalSlots": 4,
+          "runningCards": [
+            "AGT-1",
+            "AGT-2"
+          ]
+        },
+        "release": {
+          "version": "2.0",
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        }
+      }
+    },
+    {
+      "id": "component:coding-host:coding-runner",
+      "kind": "process",
+      "label": "Coding daemon",
+      "parentId": "machine:coding-host",
+      "unitId": "coding-runner",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "coding",
+      "otherProject": false,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-27T12:00:00Z",
+        "behind": false,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "coding-host",
+        "roles": [
+          "coding"
+        ],
+        "lastSeenAt": "2026-11-27T12:00:00Z",
+        "capacity": {
+          "busySlots": 2,
+          "freeSlots": 2,
+          "totalSlots": 4,
+          "runningCards": [
+            "AGT-1",
+            "AGT-2"
+          ]
+        },
+        "release": {
+          "version": "2.0",
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        }
+      }
+    },
+    {
+      "id": "machine:shared-host",
+      "kind": "host",
+      "label": "shared-host",
+      "parentId": "installation",
+      "unitId": null,
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "otherProject": false,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-27T12:00:00Z",
+        "behind": false,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "shared-host",
+        "roles": [
+          "coding",
+          "review"
+        ],
+        "lastSeenAt": "2026-11-27T12:00:00Z",
+        "capacity": {
+          "busySlots": 3,
+          "freeSlots": 3,
+          "totalSlots": 6,
+          "runningCards": [
+            "AGT-3",
+            "AGT-4",
+            "AGT-5"
+          ]
+        },
+        "release": {
+          "version": "2.0",
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        }
+      }
+    },
+    {
+      "id": "component:shared-host:shared-coding",
+      "kind": "process",
+      "label": "Coding daemon",
+      "parentId": "machine:shared-host",
+      "unitId": "shared-coding",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "coding",
+      "otherProject": false,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-27T12:00:00Z",
+        "behind": false,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "shared-host",
+        "roles": [
+          "coding"
+        ],
+        "lastSeenAt": "2026-11-27T12:00:00Z",
+        "capacity": {
+          "busySlots": 2,
+          "freeSlots": 2,
+          "totalSlots": 4,
+          "runningCards": [
+            "AGT-3",
+            "AGT-4"
+          ]
+        },
+        "release": {
+          "version": "2.0",
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        }
+      }
+    },
+    {
+      "id": "component:shared-host:shared-review",
+      "kind": "process",
+      "label": "Review daemon",
+      "parentId": "machine:shared-host",
+      "unitId": "shared-review",
+      "environmentId": null,
+      "project": null,
+      "provenance": "observed",
+      "sourceRef": "host report",
+      "role": "review",
+      "otherProject": false,
+      "observation": {
+        "difference": "undeclared",
+        "health": "up",
+        "observedAt": "2026-11-27T12:00:00Z",
+        "behind": false,
+        "activeGates": 0,
+        "detail": "The Stable release identity is unavailable on this server."
+      },
+      "facts": {
+        "hostId": "shared-host",
+        "roles": [
+          "review"
+        ],
+        "lastSeenAt": "2026-11-27T12:00:00Z",
+        "capacity": {
+          "busySlots": 1,
+          "freeSlots": 1,
+          "totalSlots": 2,
+          "runningCards": [
+            "AGT-5"
+          ]
+        },
+        "release": {
+          "version": "2.0",
+          "state": "unknown",
+          "behind": false,
+          "pendingInstall": false,
+          "detail": "The Stable release identity is unavailable on this server."
+        },
+        "warnings": {
+          "tools": [],
+          "missingRequired": [],
+          "behindRequired": [],
+          "releaseBehind": false,
+          "pendingHostInstall": false,
+          "linksDown": [],
+          "blockedCards": []
+        }
+      }
+    }
+  ],
+  "links": [],
+  "revision": 0,
+  "generatedAt": "2026-11-27T12:00:00Z",
+  "schemaVersion": 2
+};
+
+/** Two independently released daemons share one host, as identified by the projection's unitId. */
+export const sharedRunnerStructureFixture: StructureData = {
+  ...projectedCapacityFixture,
+  nodes: projectedCapacityFixture.nodes.map(node => {
+    const version = node.unitId === 'shared-review' ? '2.2' : '2.1';
+    return node.facts?.hostId === 'shared-host' ? { ...node, facts: { ...node.facts,
+      release: { ...node.facts.release!, version } } } : node;
+  }),
+};
+export const sharedRunnerSourcesFixture: LiveSources = {
+  backup: null, environment: null,
+  runners: [
+    { ...runner('shared-host', 'coding', 0), runnerId: 'shared-coding',
+      restartedAt: '2026-11-27T08:00:00Z', reviewRestarts: [],
+      release: { version: '2.1', imageRef: 'registry.example/studio/coding-host:2.1' } },
+    { ...runner('shared-host', 'review', 2), runnerId: 'shared-review',
+      restartedAt: '2026-11-27T11:00:00Z',
+      reviewRestarts: [{ restartedAt: '2026-11-27T11:00:00Z', reviewsLost: 3 },
+        { restartedAt: '2026-11-26T09:00:00Z', reviewsLost: 1 }],
+      release: { version: '2.2', imageRef: 'registry.example/studio/review-host:2.2' } },
+  ],
+};

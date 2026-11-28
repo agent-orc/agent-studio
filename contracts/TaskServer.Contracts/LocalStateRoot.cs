@@ -15,8 +15,11 @@ namespace AgentStudio.TaskServer.Contracts;
 /// </summary>
 public static class LocalStateRoot
 {
+    /// <summary>Optional absolute state root, also inherited by child hosts.</summary>
+    public const string OverrideVariable = "AGENT_STUDIO_LOCAL_STATE_ROOT";
+
     private static readonly Lazy<string> Default = new(() => Ensure(
-        Environment.GetFolderPath(
+        Environment.GetEnvironmentVariable(OverrideVariable) ?? Environment.GetFolderPath(
             Environment.SpecialFolder.LocalApplicationData,
             Environment.SpecialFolderOption.DoNotVerify)));
 

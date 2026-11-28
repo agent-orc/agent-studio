@@ -203,7 +203,7 @@ public sealed class StructureSnapshotService : BackgroundService
     }
 
     /// <summary>Host reports and the other observations, read at most once per refresh interval for all scopes.</summary>
-    private async Task<StructureObservedInputs> InputsAsync(CancellationToken cancellationToken)
+    internal async Task<StructureObservedInputs> InputsAsync(CancellationToken cancellationToken)
     {
         await _inputGate.WaitAsync(cancellationToken);
         try

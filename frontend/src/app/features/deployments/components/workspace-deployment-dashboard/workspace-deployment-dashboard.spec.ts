@@ -208,12 +208,13 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
       matrixRow('Docs', [], false),
       matrixRow('Website', [status('production', null, 'succeeded')]),
     ]);
-    expect(root.querySelectorAll('tbody tr')).toHaveLength(2);
-    const note = root.querySelector('[data-testid="deployment-undeclared-Docs"]') as HTMLElement;
-    expect(note.textContent).toContain('No environments declared');
-    expect(note.textContent).toContain('docs/deployments/environments');
-    expect(note.getAttribute('colspan')).toBe('2');
-    const link = note.querySelector('a') as HTMLAnchorElement;
+    expect(root.querySelectorAll('tbody tr')).toHaveLength(1);
+    const details = root.querySelector('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details.querySelector('summary')?.textContent).toContain('1 project has no deployment target');
+    expect(details.textContent).toContain('Docs');
+    expect(details.textContent).toContain('docs/deployments/environments');
+    const link = details.querySelector('a') as HTMLAnchorElement;
     expect(link.textContent).toContain('How to declare environments');
     expect(link.href).toContain('/docs/concepts/deployment-first-class.md');
     expect(link.rel).toContain('noopener');
@@ -242,8 +243,8 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
 
   it('shows a watched project the shell does not list by that name', async () => {
     const { root, laneUrls } = await render([], [matrixRow('Docs', [], false)]);
-    expect(root.querySelector('[data-testid="deployment-project-Docs"]')).not.toBeNull();
-    expect(laneUrls).toEqual(['/api/projects/Docs/deploy/delivery-lanes']);
+    expect(root.querySelector('[data-testid="deployment-undeclared-Docs"]')).not.toBeNull();
+    expect(laneUrls).toEqual([]);
   });
 
   it('says why the table is empty', async () => {

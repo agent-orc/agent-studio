@@ -111,6 +111,7 @@
 /api/model-selection/drill	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/policy	free	-	-	-
+/api/model-selection/policy/pace	free	-	-	-
 /api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
@@ -133,6 +134,7 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operations/deploy-records	free	-	-	-
 /api/operator/attention	free	-	-	-
 /api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-

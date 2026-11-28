@@ -51,6 +51,7 @@ async function setup(page, owner = true) {
     await page.route('**/api/**', route => {
         const url = new URL(route.request().url()), path = url.pathname;
         const json = (body) => route.fulfill({ json: body });
+        if (path === '/api/auth/iam/operator-agents') return json([]);
         if (path.endsWith('/auth/status'))
             return json({ profile: 'local', bootstrapRequired: false, authenticated: true,
                 user: { id: 'owner', username: 'owner', displayName: 'Owner', role: owner ? 'owner' : 'viewer', projects: ['*'], disabled: false, mustChangePassword: false } });

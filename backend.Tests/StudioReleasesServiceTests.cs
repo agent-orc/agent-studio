@@ -20,8 +20,11 @@ public sealed class StudioReleasesServiceTests : IDisposable
     private string Repo => Path.Combine(_root, "repo");
     private string Watch => Path.Combine(_root, "cards");
 
-    [Fact]
-    public void Remembers_running_revisions_without_deploy_reports_and_enriches_waiting_cards()
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Remembers_deployment_occurrences_with_or_without_reports_and_enriches_waiting_cards(bool reports)
     {
         Directory.CreateDirectory(Repo);
         Directory.CreateDirectory(Watch);
@@ -30,6 +33,9 @@ public sealed class StudioReleasesServiceTests : IDisposable
         Git("config", "user.email", "fixture@example.invalid");
         Git("config", "commit.gpgsign", "false");
         var baseline = Commit("baseline");
+        Directory.CreateDirectory(Path.Combine(Repo, "frontend"));
+        File.WriteAllText(Path.Combine(Repo, "frontend", "view.html"), "<main></main>");
+        Git("add", "frontend");
         var delivery = Commit("fix");
         var folder = Path.Combine(Watch, "6-completed", "fix");
         Directory.CreateDirectory(folder);
@@ -75,6 +81,9 @@ public sealed class StudioReleasesServiceTests : IDisposable
         var first = Service(baseline);
         first.Refresh();
         var waiting = Assert.Single(first.View!.Pending);
+        Assert.Equal(delivery, first.View.Tip);
+        var dashboardCard = Assert.Single(first.View.Waiting);
+        Assert.Equal(["Interface only"], dashboardCard.Flags);
         Assert.Equal("Original card title", waiting.Title);
         Assert.Equal("bug", waiting.Type);
         Assert.Equal(_clock.GetUtcNow().AddHours(-9).UtcDateTime, waiting.IntegratedAtUtc);
@@ -102,10 +111,85 @@ public sealed class StudioReleasesServiceTests : IDisposable
         Assert.Null(nextProcess.Card("another-project", "DEMO-1"));
         nextProcess.Refresh();
         Assert.Equal(2, nextProcess.View.Releases.Count);
+        if (reports)
+        {
+            store.Save(new InstanceDeployState { Releases = [
+                Report("a-first", baseline, -1), Report("b-first", delivery, 0),
+            ] });
+            nextProcess.Refresh();
+            Assert.Equal(2, nextProcess.View.Releases.Count);
+        }
+        _clock.Advance(TimeSpan.FromHours(1));
+        var restarted = Service(delivery);
+        restarted.Refresh();
+        Assert.Equal(2, restarted.View!.Releases.Count);
+        _clock.Advance(TimeSpan.FromHours(1));
+        if (reports)
+        {
+            var state = store.Read();
+            store.Save(state with { Releases = [.. state.Releases, Report("a-rollback", baseline, 0)] });
+        }
+        var rollback = Service(baseline);
+        rollback.Refresh();
+        Assert.Equal(3, rollback.View!.Releases.Count);
+        Assert.Same(rollback.View.Releases[2], Assert.Single(rollback.View.Releases, row => row.Running));
+        Assert.Equal("integrated-not-live", rollback.Card("demo", "DEMO-1")!.State);
+        Assert.Equal("DEMO-1", Assert.Single(rollback.View.Pending).Key);
+        var rollbackTime = rollback.View.Releases[2].AtUtc;
+        _clock.Advance(TimeSpan.FromHours(1));
+        var rollbackRestart = Service(baseline);
+        rollbackRestart.Refresh();
+        Assert.Equal(3, rollbackRestart.View!.Releases.Count);
+        Assert.Equal(rollbackTime, rollbackRestart.View.Releases[2].AtUtc);
+        _clock.Advance(TimeSpan.FromHours(1));
+        if (reports)
+        {
+            var state = store.Read();
+            store.Save(state with { Releases = [.. state.Releases, Report("b-return", delivery, 0)] });
+        }
+        var returned = Service(delivery);
+        returned.Refresh();
+        Assert.Equal(4, returned.View!.Releases.Count);
+        Assert.Same(returned.View.Releases[3], Assert.Single(returned.View.Releases, row => row.Running));
+        Assert.Equal(new StudioCardLiveState("live", delivery, _clock.GetUtcNow().UtcDateTime),
+            returned.Card("demo", "DEMO-1"));
+        Assert.Equal("DEMO-1", Assert.Single(returned.View.Releases[3].Cards).Key);
+        Assert.Equal(new[] { baseline, delivery, baseline, delivery }, returned.View.Releases.Select(row => row.Revision));
+        Assert.Equal(new[] { first.View!.Releases[0].AtUtc, nextProcess.View!.Releases[1].AtUtc,
+            rollbackTime, _clock.GetUtcNow().UtcDateTime }, returned.View.Releases.Select(row => row.AtUtc));
+        var occurrenceIds = returned.View.Releases.Select(row => row.OccurrenceId).ToArray();
+        Assert.Equal(4, occurrenceIds.Distinct().Count());
+        returned.Refresh();
+        Assert.Equal(4, returned.View.Releases.Count);
+        Assert.Equal(occurrenceIds, returned.View.Releases.Select(row => row.OccurrenceId));
+        if (!reports)
+        {
+            // A delayed report improves the timestamp without adding another interval.
+            var state = store.Read();
+            store.Save(state with { Releases = [.. state.Releases, Report("b-delayed", delivery, 0)] });
+            returned.Refresh();
+            Assert.Equal(4, returned.View.Releases.Count);
+            Assert.Equal("deploy:b-delayed", returned.View.Releases[3].OccurrenceId);
+        }
+        _clock.Advance(TimeSpan.FromHours(1));
+        var beforeRedeploy = returned.Card("demo", "DEMO-1");
+        var redeployState = store.Read();
+        store.Save(redeployState with { Releases = [.. redeployState.Releases, Report("b-redeploy", delivery, 0)] });
+        var redeployed = Service(delivery);
+        redeployed.Refresh();
+        Assert.Equal(5, redeployed.View!.Releases.Count);
+        Assert.Equal("deploy:b-redeploy", Assert.Single(redeployed.View.Releases, row => row.Running).OccurrenceId);
+        Assert.Equal(beforeRedeploy, redeployed.Card("demo", "DEMO-1"));
         nextProcess.Unavailable("fixture unavailable");
         Assert.Empty(nextProcess.View.CardStates);
         Assert.Equal("fixture unavailable", nextProcess.View.Detail);
     }
+
+    private InstanceRelease Report(string id, string sha, int hours) => new() {
+        Id = id, Version = "1.0.0", CommitSha = sha,
+        CreatedAtUtc = _clock.GetUtcNow().AddHours(hours).UtcDateTime,
+        LiveSinceUtc = _clock.GetUtcNow().AddHours(hours).UtcDateTime,
+    };
 
     private BuildIdentity Identity(string commit)
     {

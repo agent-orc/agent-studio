@@ -275,6 +275,38 @@ public sealed class PostMergeRunStoreTests : IDisposable
     }
 
     [Fact]
+    public void ReceiptValidationPreservesAdmissionWaitAndRefreshesAcceptanceEvidence()
+    {
+        var store = new PostMergeRunStore(_root);
+        var waitingSince = Now.AddHours(-2);
+        store.ObserveWindow(Project, new(Second, Now.AddHours(-3), waitingSince, 30, "busy"));
+        var run = Run("acceptance", First, "window") with { Commands = ["build", "test"] };
+        Assert.NotNull(store.Record(Project, run));
+        var waiting = store.ReadAcceptanceEvidence(Project)!;
+        Assert.Equal(waitingSince, waiting.AdmissionWaitingSinceUtc);
+        Assert.Empty(waiting.GreenReceipts);
+        var receipt = run with { Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), new("test", 0, false)] };
+        Assert.Null(store.Record(Project, receipt with { Commands = ["build"], Verdicts = [receipt.Verdicts[0]] }));
+        Assert.Null(store.Record(Project, receipt with { Verdicts = [receipt.Verdicts[0], receipt.Verdicts[0]] }));
+        Assert.Same(waiting, store.ReadAcceptanceEvidence(Project));
+        Assert.NotNull(store.Record(Project, receipt));
+        var green = store.ReadAcceptanceEvidence(Project)!;
+        Assert.NotSame(waiting, green);
+        Assert.Equal(First, green.LastGreenSha);
+        Assert.Equal(First, Assert.Single(green.GreenReceipts).TipSha);
+        Assert.Equal(waitingSince, green.AdmissionWaitingSinceUtc);
+        store.ObserveWindow(Project, new(Second, Now.AddHours(-3), Now.AddMinutes(1), 30, "busy"));
+        var refreshed = store.ReadAcceptanceEvidence(Project)!;
+        Assert.Equal(waitingSince, refreshed.AdmissionWaitingSinceUtc);
+        Assert.NotNull(store.Record(Project, receipt));
+        Assert.Same(refreshed, store.ReadAcceptanceEvidence(Project));
+        var restarted = new PostMergeRunStore(_root).ReadAcceptanceEvidence(Project)!;
+        Assert.Equal(waitingSince, restarted.AdmissionWaitingSinceUtc);
+        Assert.Equal(First, restarted.LastGreenSha);
+    }
+
+    [Fact]
     public void OnlyClaimedExactTipCanComplete()
     {
         var store = new PostMergeRunStore(_root);

@@ -178,21 +178,32 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
   } else if (node.health.word !== 'Not observed') add(2, null, 'status', 'state',
     [seenAt ? `${node.health.word.toLowerCase()} · seen ${ago(seenAt, now)} ago` : null, node.health.word.toLowerCase()], tone);
   else missing(3, null, 'status', 'state');
-  if (runs && node.kind !== 'vm') {
-    const image = node.runner?.release?.imageRef ?? (node.version && isDigest(node.version) ? `sha256:${shortDigest(node.version)}` : null);
-    if (image) add(3, null, 'image', 'image', [image, image.split('/').at(-1), image.split('@')[0].split('/').at(-1)]);
-    else if (node.kind === 'container') missing(3, null, 'image', 'image', 'No image name or tag is reported for this container.');
-    const version = node.version && !isDigest(node.version) ? node.version : node.runner?.release?.version ?? null;
-    if (version) add(3, null, 'version', 'version', [node.release?.stableVersion && node.release.stableVersion !== version
-      ? `${version} · stable ${node.release.stableVersion}` : null, version], node.release?.behind ? { tone: 'warning' } : {});
-    else if (node.kind !== 'machine') missing(3, null, 'version', 'version', reporting ? 'collect' : 'No version is reported for this node.');
-    const restarts = /restarts:\s*(\d+)/.exec(node.source?.observation?.detail ?? '')?.[1];
-    if (node.runner?.reviewRestarts) add(3, null, 'restarts', 'restarts', [`${node.runner.reviewRestarts.length} of the review daemon`, String(node.runner.reviewRestarts.length)]);
-    else if (restarts) add(3, null, 'restarts', 'restarts', [restarts]);
-    else if (node.kind !== 'machine') missing(3, null, 'restarts', 'restarts', 'Restart counts are collected for the review daemon of a runner only.');
-    const since = node.runner?.restartedAt ?? node.runner?.registeredAt ?? null;
-    if (since) add(3, null, 'uptime', 'uptime', [`${ago(since, now)} · since ${clock(since)}`, ago(since, now)]);
-    else if (node.kind !== 'machine') missing(3, null, 'uptime', 'uptime', 'Start times are known for runner processes only.');
+  if (runs && (node.kind !== 'vm' || node.runners.length > 1)) {
+    const multiple = node.runners.length > 1;
+    const reports = multiple ? node.runners.map(runner => {
+      const source = scene.order.find(item => item.source?.unitId?.toLowerCase() === runner.runnerId.toLowerCase())?.source;
+      const roles = source?.facts?.roles?.length ? source.facts.roles : source?.role ? [source.role] : [];
+      return { runner, source, prefix: `runner:${runner.runnerId}:`, label: `${roles.length ? roles.join(' and ') : runner.name} (${runner.runnerId}) ` };
+    }) : [{ runner: node.runner, source: node.source, prefix: '', label: '' }];
+    if (multiple) add(3, null, 'runners', 'runners', [reports.map(report => report.label.trim()).join(' · ')]);
+    for (const { runner, source, prefix, label } of reports) {
+      const image = runner?.release?.imageRef ?? (!multiple && node.version && isDigest(node.version) ? `sha256:${shortDigest(node.version)}` : null);
+      if (image) add(3, null, `${prefix}image`, `${label}image`, [image, image.split('/').at(-1), image.split('@')[0].split('/').at(-1)]);
+      else if (multiple || node.kind === 'container') missing(3, null, `${prefix}image`, `${label}image`, 'No image name or tag is reported for this runner or container.');
+      const version = multiple ? runner?.release?.version ?? null
+        : node.version && !isDigest(node.version) ? node.version : runner?.release?.version ?? null;
+      const release = source?.facts?.release;
+      if (version) add(3, null, `${prefix}version`, `${label}version`, [release?.stableVersion && release.stableVersion !== version
+        ? `${version} · stable ${release.stableVersion}` : null, version], release?.behind ? { tone: 'warning' } : {});
+      else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}version`, `${label}version`, reporting ? 'collect' : 'No version is reported for this node.');
+      const restarts = /restarts:\s*(\d+)/.exec(source?.observation?.detail ?? '')?.[1];
+      if (runner?.reviewRestarts) add(3, null, `${prefix}restarts`, `${label}restarts`, [`${runner.reviewRestarts.length} of the review daemon`, String(runner.reviewRestarts.length)]);
+      else if (restarts) add(3, null, `${prefix}restarts`, `${label}restarts`, [restarts]);
+      else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}restarts`, `${label}restarts`, 'Restart counts are collected for the review daemon of a runner only.');
+      const since = runner?.restartedAt ?? runner?.registeredAt ?? null;
+      if (since) add(3, null, `${prefix}uptime`, `${label}uptime`, [`${ago(since, now)} · since ${clock(since)}`, ago(since, now)]);
+      else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}uptime`, `${label}uptime`, 'Start times are known for runner processes only.');
+    }
     const cards = node.slots?.cards ?? [];
     if (cards.length) add(3, null, 'job', 'current job', [cards.join(', '), cards.length > 1 ? `${cards[0]} +${cards.length - 1}` : null, `${cards.length} cards`]);
     else if (node.gate) add(3, null, 'job', 'current job', [node.gate.currentRun ?? 'idle']);
@@ -201,10 +212,12 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     if (node.kind !== 'machine') missing(3, null, 'deploy', 'last deploy', 'Deploys are recorded per project environment, not per node.');
     const seen = node.source?.facts?.lastSeenAt ?? node.source?.observation?.observedAt;
     if (seen) add(4, null, 'seen', 'last report', [`${ago(seen, now)} ago`]);
-    const events = node.runner?.reviewRestarts ?? [];
-    events.slice(0, 3).forEach((event, index) => add(4, null, `event:${index}`, clock(event.restartedAt),
-      [`review daemon restarted · ${event.reviewsLost} reviews lost`, 'review daemon restarted', 'restart']));
-    if (!events.length) missing(4, null, 'events', 'recent events', 'Events are not collected per node; only restarts of the review daemon are.');
+    for (const { runner, prefix, label } of reports) {
+      const events = runner?.reviewRestarts ?? [];
+      events.slice(0, 3).forEach((event, index) => add(4, null, `${prefix}event:${index}`, `${label}${clock(event.restartedAt)}`,
+        [`review daemon restarted · ${event.reviewsLost} reviews lost`, 'review daemon restarted', 'restart']));
+      if (!events.length) missing(4, null, `${prefix}events`, `${label}recent events`, 'Events are not collected per node; only restarts of the review daemon are.');
+    }
     missing(4, null, 'log', 'log lines', 'Log lines are not collected in the workspace picture.');
   }
 

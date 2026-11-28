@@ -70,6 +70,7 @@ public sealed class LocalStateStartupTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task The_api_stops_at_startup_when_the_location_cannot_be_created()
     {
         // GetFolderPath reads HOME and XDG_DATA_HOME only on Unix.
@@ -82,6 +83,7 @@ public sealed class LocalStateStartupTests : IDisposable
         {
             ["HOME"] = Path.Combine(blocker, "home"),
             ["XDG_DATA_HOME"] = null,
+            [LocalStateRoot.OverrideVariable] = null,
             ["ASPNETCORE_URLS"] = "http://127.0.0.1:0",
             ["TaskRepository"] = Path.Combine(_root, "workspace"),
         };

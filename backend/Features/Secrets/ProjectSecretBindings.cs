@@ -22,7 +22,7 @@ public sealed record ProjectSecretPreflight(string Project, string Environment, 
 /// <remarks>
 /// A binding file and a new reference name the project by its registry id
 /// (AGT-3987), so a rename keeps both. A binding file written under the display
-/// name before then is read and moved to the id key on its next write.
+/// name before then is read and moved to the id key on its first use.
 /// </remarks>
 public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretProvider provider,
     ProjectEnvironmentService environments, TimeProvider clock, SecretProjectKeys? keys = null)
@@ -30,6 +30,42 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     private readonly SecretProjectKeys _keys = keys ?? SecretProjectKeys.Identity;
     private readonly object _gate = new();
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    /// <summary>The stable scope for new generated values and references.</summary>
+    public SecretScope Scope(string project, string environment)
+        => SecretScope.ForEnvironment(_keys.Canonical(project), environment);
+
+    public IReadOnlyList<SecretScope> ScopeAliases(string project, string environment)
+        => _keys.Aliases(Scope(project, environment));
+
+    /// <summary>Explicit maintenance only. Never called during startup.</summary>
+    public int MigrateProjectKeys(CancellationToken ct = default)
+    {
+        var migrated = 0;
+        lock (_gate)
+        {
+            var root = Path.GetDirectoryName(FileFor("migration", "preview"))!;
+            if (!Directory.Exists(root)) return 0;
+            var files = Directory.GetFiles(root, "*.json");
+            var referencedEnvironments = files.SelectMany(Parse)
+                .Select(item => SecretReference.Parse(item.Reference).Scope.Environment)
+                .OfType<string>().Distinct().ToArray();
+            foreach (var project in _keys.Projects())
+            {
+                var environmentIds = (environments.DeclarationFiles(project.DisplayName) ?? [])
+                    .Select(item => item.EnvironmentId).Concat(referencedEnvironments).Append("preview").Distinct();
+                foreach (var environment in environmentIds)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var legacyFiles = LegacyPaths(project.Id, environment).Where(File.Exists).ToArray();
+                    if (legacyFiles.Length == 0) continue;
+                    Read(project.Id, environment, requireMigration: true);
+                    migrated += legacyFiles.Count(path => !File.Exists(path));
+                }
+            }
+        }
+        return migrated;
+    }
 
     public IReadOnlyList<ProjectSecretBinding> List(string project, string environment)
     {
@@ -90,7 +126,7 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     {
         if (!name.StartsWith(ProjectDatabaseVocabulary.CredentialPrefix, StringComparison.Ordinal))
             throw new SecretValidationException("binding-scope-denied", "Only managed database credentials bind without a declaration.");
-        var reference = new SecretReference(SecretScope.ForEnvironment(project, environment), name).ToString();
+        var reference = new SecretReference(Scope(project, environment), name).ToString();
         var binding = new ProjectSecretBinding(name, reference, ManagedDatabaseActor, clock.GetUtcNow().UtcDateTime,
             ManagedDatabaseActor);
         lock (_gate) Write(project, environment, Read(project, environment).Where(item => item.Name != name).Append(binding));
@@ -109,7 +145,7 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     public ProjectSecretBinding BindTelemetryIngest(string project, string environment)
     {
         var name = DeployTelemetryVocabulary.SecretName;
-        var reference = new SecretReference(SecretScope.ForEnvironment(project, environment), name).ToString();
+        var reference = new SecretReference(Scope(project, environment), name).ToString();
         var binding = new ProjectSecretBinding(name, reference, TelemetryIngestActor, clock.GetUtcNow().UtcDateTime,
             TelemetryIngestActor);
         lock (_gate) Write(project, environment, Read(project, environment).Where(item => item.Name != name).Append(binding));
@@ -220,14 +256,15 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     }
 
     /// <summary>Callers hold <see cref="_gate"/>. A display-name file is moved to the id key when it is read.</summary>
-    private IReadOnlyList<ProjectSecretBinding> Read(string project, string environment)
+    private IReadOnlyList<ProjectSecretBinding> Read(string project, string environment, bool requireMigration = false)
     {
         var canonical = PathFor(project, environment);
-        if (File.Exists(canonical)) return Parse(canonical);
-        if (LegacyPaths(project, environment).FirstOrDefault(File.Exists) is not { } legacy) return [];
-        var entries = Parse(legacy);
+        var legacy = LegacyPaths(project, environment).Where(File.Exists).ToArray();
+        if (legacy.Length == 0) return File.Exists(canonical) ? Parse(canonical) : [];
+        var entries = (File.Exists(canonical) ? Parse(canonical) : [])
+            .Concat(legacy.SelectMany(Parse)).DistinctBy(item => item.Name).ToArray();
         try { Write(project, environment, entries); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (!requireMigration && (exception is IOException or UnauthorizedAccessException))
         {
             // The display-name file still answers; the move is retried on the next read.
             SilentCatch.Note(exception, "ProjectSecretBindings: binding file not moved to the project id");
@@ -245,7 +282,8 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
     private IEnumerable<string> LegacyPaths(string project, string environment)
     {
         var canonical = PathFor(project, environment);
-        return new[] { _keys.DisplayName(project), project }
+        return _keys.Keys(project)
+            .Where(name => SecretScope.TryParse(name + "/" + environment, out _))
             .Select(name => FileFor(name, environment))
             .Where(path => path != canonical).Distinct(StringComparer.Ordinal);
     }

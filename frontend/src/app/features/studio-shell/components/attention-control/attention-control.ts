@@ -147,7 +147,7 @@ export class AttentionControlComponent {
         return;
       case 'access':
         this.openSettings('access');
-        break;
+        return;
       case 'operations':
         this.openOperations(item);
         return;

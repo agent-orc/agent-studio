@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using AgentStudio.Tests.Architecture;
 using AgentStudio.Dispatch;
 using AgentStudio.Git;
 using AgentStudio.OrchestrationDecisions;
@@ -25,6 +27,35 @@ public sealed class DispatchConflictTests : IDisposable
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         return new GitService(NullLogger<GitService>.Instance, scanner, config);
     }
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Historical_backfill_recovers_the_Dossier_sync_cards_from_real_git_objects()
+    {
+        var repo = CSharpSourceScanner.RepoRoot();
+        var fixtures = Path.Combine(repo, "backend.Tests/Fixtures/dispatch/replay");
+        using var wave = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixtures, "wave-2026-11-17.json")));
+        var expected = wave.RootElement.GetProperty("cards").EnumerateArray()
+            .Where(card => card.GetProperty("developSyncCommits").GetInt32() > 0)
+            .Select(card => card.GetProperty("key").GetString()!).Order().ToArray();
+        var anchors = JsonSerializer.Deserialize<Dictionary<string, string>>(
+            File.ReadAllText(Path.Combine(fixtures, "sync-commits-2026-11-17.json")))!;
+        Assert.Equal(21, expected.Length);
+        Assert.Equal(expected, anchors.Keys.Order());
+        var service = Service();
+        // One surviving sync commit per card, including commits off the integration branch.
+        // Git's ^! range includes only the named commit. Card attribution comes from its subject.
+        foreach (var sha in anchors.Values)
+            service.BackfillDispatchConflicts(repo, "project", At, deliveryTip: sha + "^!");
+        var records = new DispatchStore(Config).ReadConflicts("project");
+        Assert.Equal(expected, records.Select(r => r.Card).Order());
+        Assert.All(records, r =>
+        {
+            Assert.True(r.Backfilled);
+            Assert.Equal("develop-sync", r.Kind);
+            Assert.Equal(anchors[r.Card], r.EvidenceId);
+        });
+    }
+
     [Fact]
     public void AppendIsImmutableConcurrentProjectScopedAndRangeIsHalfOpen()
     {

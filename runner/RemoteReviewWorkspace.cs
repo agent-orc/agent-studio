@@ -554,8 +554,11 @@ public sealed class RemoteReviewWorkspace
                 var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                     ? VisualReviewScreenshotBundle.PromptSection(_visualScreenshotEvidence, RepositoryPath)
                     : string.Empty;
+                var authored = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                    ? ConceptRemoteReviewPolicy.PrepareCheckoutPrompt(command.Prompt!)
+                    : command.Prompt!;
                 var input = ReviewAspectInputBudget.Compose(
-                    command.Prompt!,
+                    authored,
                     reviewMaterial ??= await BuildReviewMaterialAsync(
                         ReviewMaterialMaximumFiles, ReviewMaterialMaximumLines, ct),
                     screenshots);
@@ -1202,6 +1205,10 @@ public sealed class RemoteReviewWorkspace
             var verdict = comparison is null
                 ? ParseVerdict(command, execution.Process)
                 : BaselineVerdict(command, comparison);
+            if (ConceptRemoteReviewPolicy.IsMaterialUnavailable(verdict))
+                throw await InfrastructureFailureAsync(
+                    ConceptRemoteReviewPolicy.MaterialUnavailable, ConceptRemoteReviewPolicy.MaterialFailureSummary(verdict),
+                    commands, artifacts, ct);
             if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
             {
                 verdict = VisualReviewEvidence.EnforceMissingScreenshots(verdict,
@@ -2852,12 +2859,6 @@ public sealed class RemoteReviewWorkspace
             ]);
     }
 
-    /// <summary>
-    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
-    /// with fresh home, temp and cache directories and without restoring the
-    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
-    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
-    /// </summary>
     private async Task<BaselineComparison> MeasureRepairedTargetAsync(
         ReviewCommandDto command, BaselineComparison comparison,
         ICollection<ReviewCommandEvidenceDto> commands, ICollection<ReviewArtifactEvidenceDto> artifacts,
@@ -2954,6 +2955,12 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    /// <summary>
+    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
+    /// with fresh home, temp and cache directories and without restoring the
+    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
+    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
+    /// </summary>
     private async Task<(CommandExecution Execution, bool BlockedByBuild)> RunCleanBaselineAsync(
         ReviewCommandDto command,
         string baselineSha,
@@ -4237,7 +4244,10 @@ public sealed class RemoteReviewWorkspace
                     ReviewCommandVerdictPolicy.AspectMarkerClassification),
                 summary,
                 marker.EvidenceChecked,
-                marker.Missing);
+                marker.Missing)
+            {
+                UsesDossierCheckout = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase),
+            };
         }
         return new ReviewVerdictDto(
             command.Aspect,

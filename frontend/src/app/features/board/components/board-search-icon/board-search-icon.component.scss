@@ -22,35 +22,35 @@
   appearance: none;
   background: transparent;
   border: 1px solid transparent;
-  color: #cbd5e1;
+  color: var(--studio-fg);
   width: 26px;
   height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  padding: 0;
-  border-radius: 4px;
+  padding: var(--studio-spacing-0);
+  border-radius: var(--studio-compat-radius-6);
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   line-height: 1;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.10);
-    color: #f8fafc;
+    background: var(--studio-bg-hover);
+    border-color: var(--studio-border-strong);
+    color: var(--studio-fg-strong);
   }
 
   &:focus-visible {
     outline: none;
-    border-color: rgba(167, 139, 250, 0.55);
-    background: rgba(167, 139, 250, 0.10);
+    border-color: color-mix(in srgb, var(--studio-accent-strong) 55%, transparent);
+    background: color-mix(in srgb, var(--studio-accent-strong) 10%, transparent);
   }
 }
 
 .board-search-icon__btn-glyph {
   display: inline-block;
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   line-height: 1;
   // Slight left-shift so the magnifier optically centers in the square.
   transform: translateX(-0.5px);
@@ -60,13 +60,13 @@
 .board-search-icon__field {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--studio-compat-space-2);
   width: 280px;
   height: 26px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(167, 139, 250, 0.55);
-  border-radius: 4px;
-  padding: 0 6px 0 8px;
+  background: var(--studio-surface-muted);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-strong) 55%, transparent);
+  border-radius: var(--studio-compat-radius-6);
+  padding: var(--studio-spacing-0) var(--studio-compat-space-2) var(--studio-spacing-0) var(--studio-spacing-2);
   // Width transition gives the user a visual cue that the icon "opened".
   // Kept short so it doesn't fight typing latency or push past the
   // longtask budget.
@@ -79,7 +79,7 @@
 }
 
 .board-search-icon__field-icon {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   opacity: 0.65;
   line-height: 1;
 }
@@ -90,14 +90,14 @@
   background: transparent;
   border: 0;
   outline: 0;
-  color: #e2e8f0;
+  color: var(--studio-fg);
   font: inherit;
-  font-size: 12px;
-  padding: 0;
+  font-size: var(--studio-font-size-sm);
+  padding: var(--studio-spacing-0);
   height: 24px;
 
   &::placeholder {
-    color: rgba(226, 232, 240, 0.40);
+    color: var(--studio-fg-muted);
   }
 
   // Browsers render their own clear "×"; we provide a themed one.
@@ -111,17 +111,17 @@
 .board-search-icon__clear {
   background: transparent;
   border: 0;
-  color: rgba(226, 232, 240, 0.55);
-  font-size: 14px;
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-font-size-lg);
   line-height: 1;
-  padding: 2px 4px;
-  border-radius: 3px;
+  padding: var(--studio-compat-space-4) var(--studio-spacing-1);
+  border-radius: var(--studio-compat-radius-9);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.10);
-    color: #f8fafc;
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-strong);
   }
 }
 
@@ -130,26 +130,26 @@
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--studio-compat-space-7);
   height: 26px;
   max-width: 220px;
-  background: rgba(167, 139, 250, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.40);
-  color: #ddd6fe;
-  border-radius: 4px;
-  padding: 0 4px 0 8px;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--studio-accent-strong) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-strong) 40%, transparent);
+  color: var(--studio-accent-strong);
+  border-radius: var(--studio-compat-radius-6);
+  padding: var(--studio-spacing-0) var(--studio-spacing-1) var(--studio-spacing-0) var(--studio-spacing-2);
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 
   &:hover {
-    background: rgba(167, 139, 250, 0.20);
-    border-color: rgba(167, 139, 250, 0.65);
+    background: color-mix(in srgb, var(--studio-accent-strong) 20%, transparent);
+    border-color: color-mix(in srgb, var(--studio-accent-strong) 65%, transparent);
   }
 }
 
 .board-search-icon__chip-icon {
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   line-height: 1;
   opacity: 0.85;
 }
@@ -168,15 +168,15 @@
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: 3px;
-  font-size: 13px;
+  border-radius: var(--studio-card-pill-radius);
+  font-size: var(--studio-font-size-md);
   line-height: 1;
-  color: rgba(226, 232, 240, 0.70);
+  color: var(--studio-fg);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.14);
-    color: #f8fafc;
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-strong);
   }
 }

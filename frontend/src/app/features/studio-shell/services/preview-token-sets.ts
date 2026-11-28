@@ -125,6 +125,33 @@ const workbench: ThemeTokenValues = {
   '--studio-header-nav-h': '56px', '--studio-header-phone-h': '50px', '--studio-action-height-sm': '34px',
 };
 
+// AGT-4148 combines a flat work surface, editorial headings and monospace keys.
+// Brand fields keep their royal blue while interactive text follows the theme.
+const synthesis: ThemeTokenValues = {
+  '--font-ui': 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  '--studio-link-ink': 'var(--studio-accent-strong)',
+  '--studio-record-key-font': 'var(--font-mono)',
+  '--font-display': '"Space Grotesk", var(--font-ui)',
+  '--font-mono': '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
+  '--studio-bg-titlebar': 'var(--studio-bg-surface)',
+  '--studio-header-nav-h': '58px', '--studio-header-phone-h': '52px',
+  '--studio-action-height-sm': '34px', '--studio-action-radius-sm': 'var(--studio-radius-pill)',
+  '--studio-radius-sm': '4px', '--studio-card-radius': '8px',
+  '--studio-card-compact-radius': 'var(--studio-card-radius)', '--studio-deck-panel-radius': 'var(--studio-card-radius)',
+  '--studio-card-pill-radius': 'var(--studio-radius-pill)', '--studio-count-radius': 'var(--studio-radius-pill)',
+  '--studio-card-padding': 'var(--studio-spacing-4)', '--studio-card-title-size': '16px',
+  '--studio-card-title-weight': '650', '--studio-card-title-lh': '1.15',
+  '--studio-card-meta-size': '11px', '--studio-font-size-md': '14px',
+  '--studio-workbench-statement': 'clamp(32px, 3vw, 48px)', '--studio-inspector-title': '24px',
+  '--studio-section-heading': '22px',
+  '--studio-accent': '#2c50d0', '--studio-on-accent': '#ffffff',
+  '--studio-nav-active-bg': 'var(--studio-bg-selected)',
+  '--studio-card-shadow': '0 0 transparent', '--studio-card-shadow-hover': 'var(--studio-card-shadow)',
+  '--elevation-card': 'none',
+  '--studio-running-card-shadow': 'var(--studio-card-shadow)', '--studio-running-card-hover-shadow': 'var(--studio-card-shadow)',
+  '--studio-attention-card-shadow': 'var(--studio-card-shadow)', '--studio-attention-card-hover-shadow': 'var(--studio-card-shadow)',
+};
+
 export const PREVIEW_TOKEN_SETS: readonly ThemeTokenSet[] = [
   {
     id: 'preview-1', label: 'Preview 1 - calm and dense', preview: true,
@@ -152,6 +179,19 @@ export const PREVIEW_TOKEN_SETS: readonly ThemeTokenSet[] = [
       '--studio-fg-dim': '#94a3b8', '--studio-fg-muted': '#a6adc8', '--studio-border': '#313244', '--studio-border-strong': '#45475a',
       '--model-family-codex': '#89dceb', '--model-family-gemini': '#cba6f7', '--studio-scrim': 'rgba(2, 6, 23, 0.7)',
       '--elevation-popover': '0 8px 32px rgba(0, 0, 0, 0.45)', '--elevation-modal': '0 8px 32px rgba(0, 0, 0, 0.45)',
+    },
+  },
+  {
+    id: 'preview-4', label: 'Preview 4 - synthesis', preview: true,
+    description: 'Hairline records, flat pills and monospace keys across the Studio workbench.',
+    light: { ...shared, ...light, ...synthesis,
+      '--studio-bg-selected': '#e9eefc', '--studio-border': '#d4d4d4', '--studio-border-muted': 'var(--studio-border)',
+      '--studio-status-warning': '#7b3d08', '--studio-scrim': 'rgb(15 15 26 / 48%)',
+    },
+    dark: { ...shared, ...dark, ...synthesis,
+      '--studio-bg-editor': '#0f0f1a', '--studio-bg-selected': '#282e49',
+      '--studio-bg-elevated': 'var(--studio-bg-surface)', '--studio-fg': '#e2e8f0', '--studio-fg-muted': '#a6adc8',
+      '--studio-status-danger': '#f38ba8', '--studio-accent-4-strong': '#cba6f7',
     },
   },
 ];

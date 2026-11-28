@@ -54,12 +54,14 @@ public sealed class DeployTelemetryCredentials(ITelemetryIngestCredentials token
             var live = tokens.List(project, environment)
                 .Where(item => item.CreatedBy == CreatedBy && item.RevokedAt is null && (item.ExpiresAt is null || item.ExpiresAt > now))
                 .ToArray();
-            var scope = SecretScope.ForEnvironment(project, environment);
+            var scope = bindings.Scope(project, environment);
             var name = DeployTelemetryVocabulary.SecretName;
             if (live.Length == 1 && bindings.List(project, environment).Any(item => item.Name == name)
-                && (await provider.ListAsync(scope, ct)).Records.Any(item => item.Name == name && SecretVersionPolicy.CurrentVersion(item) is not null))
+                && (await provider.ListAsync(null, ct)).Records.Any(item => item.Name == name
+                    && bindings.ScopeAliases(project, environment).Contains(item.ParsedScope)
+                    && SecretVersionPolicy.CurrentVersion(item) is not null))
                 return;
-            var (token, secret) = tokens.Create(project, environment, TokenName, TelemetrySignals.All, null, CreatedBy);
+            var (token, secret) = tokens.Create(scope.Project!, environment, TokenName, TelemetrySignals.All, null, CreatedBy);
             try
             {
                 await provider.PutAsync(scope, name, secret, Actor, ct);

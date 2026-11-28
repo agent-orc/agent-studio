@@ -13,7 +13,10 @@ The token is read from `--token-file`, `STUDIO_OP_TOKEN` (also
 `AGENT_STUDIO_API_TOKEN`), a config `tokenFile`, or the default
 `~/.config/agent-studio/operator-token` (mode 600). Existing login sessions use
 `operator-session`, which `studio-op login` writes after the Owner confirms
-the terminal's code in Studio with a second factor.
+the terminal's code in Studio with a second factor. On Unix, the resident signer
+creates a private socket directory under `XDG_RUNTIME_DIR`, the system temp
+directory, or `/tmp`, in that order. It checks the complete endpoint's byte
+length before binding. The socket has mode 0600 and its directory has mode 0700.
 Setup, the command-to-route table and the stable exit codes:
 [docs/operations/setup/studio-op.md](../../docs/operations/setup/studio-op.md).
 Board scripts use `snap`, `card`, `ready`, `deps`, `continue`, `move`, `top`,

@@ -4,7 +4,7 @@ The [model-selection Dossier](../../model-selection-and-fallback/index.html) def
 
 ## Access
 
-`GET` routes require `workspace.operate`, except `GET /api/model-selection/policy`, which requires `workspace.read`. Policy mutations require `workspace.settings.write`. Both `POST /api/model-selection/events` and `POST /api/model-selection/plan` require a runner service principal with the `Events` runner scope; a normal user session cannot call them. The Task Server uses the plan route as the installation's routing authority and remote execution hosts report completion through the events route.
+Reading `/api/model-selection/policy` requires `workspace.read`. Reading the quota pace inventory and changing policy settings require `workspace.settings.write`. Other model selection reads require `workspace.operate`. Both `POST /api/model-selection/events` and `POST /api/model-selection/plan` require a runner service principal with the `Events` runner scope; a normal user session cannot call them. The Task Server uses the plan route as the installation's routing authority and remote execution hosts report completion through the events route.
 
 ## Read routes
 
@@ -25,6 +25,13 @@ Each effective route has `consumer`, nullable `stepId`, `configured` (`cliType`,
 `PUT /api/model-selection/policy/reserve` accepts `{ "points": 10 }` and returns the full updated policy. `shortStepReservePoints` defaults to 10 and accepts integers from 0 through 50. An out-of-range value returns HTTP 400 with `{ "error": "Reserve must be between 0 and 50 percentage points." }`.
 
 The reserve subtracts percentage points from the configured quota cap for new long work. Review aspects, grade, summary, enrichment and bounded decisions may use that headroom up to the cap; an available same-session continuation may also use it. For example, a 95% cap with a 10-point reserve switches new coding work at 85%. Saving this setting affects later admission decisions and does not interrupt running work. Other policy fields and consumer mutations are documented in the [domain API table](../domains/model-routing-policy.md#model-selection-api-contract).
+
+`GET /api/model-selection/policy/pace` lists reported and configured provider windows. Each row includes the saved `pace`, the reading time, usage and the percentage available to new long work after the reserve. `suspicious` means a confirmation is required.
+
+`PUT /api/model-selection/policy/pace/{cliType}/{windowLabel}` accepts `{"mode":"steady"}`, `{"mode":"useBy","useBy":"2026-11-28T21:49:00Z"}` or `{"mode":"unpaced"}` and returns the updated row. The endpoint requires a known provider and window and an ISO date and time with an offset for `useBy`. A successful write is recorded on the operator audit stream. Both pace routes require `workspace.settings.write`.
+
+Steady is the default for existing policies. Use by moves the end of the allowance line to the requested instant, capped at reset. Once the instant passes, the whole effective cap is available. The absolute deadline stays configured until edited. Unpaced removes the projection for that window. Both settings retain strict caps, reserve and reading validation. Each fresh admission decision reads the current policy.
+
 
 ## Routing authority
 
@@ -84,7 +91,7 @@ Each missing-equivalence entry has `consumer`, nullable `stepId`, `preferred` (a
 
 `POST /api/model-selection/events` accepts one `ModelSelectionEvent` JSON object. `id`, `kind`, and `consumer` must be nonempty; otherwise the route returns HTTP 400 with `{ "error": "Missing selection event fields." }`. On a valid request it returns HTTP 200 with `{ "added": boolean, "id": string }`. A repeated `id` returns `added: false`, including an ID absorbed into a collapsed waiting event. Identical waiting events for one card on the same UTC day collapse into one stored event with an incremented `count` and `collapsedIds`.
 
-The base event fields are `id`, `at` (UTC timestamp), `kind`, `consumer`, optional `host`, `project`, `pipelineType`, `stepId`, `taskKey`, `attemptId`, `round`, `from`, `to`, `rule`, `reason`, `evidence`, `quota`, `equivalence`, `returnToPrimaryAt`, `closesId`, `pricePerMTok`, and `count`. `from` and `to` each contain `cliType`, `model`, and `thinkingLevel`. `evidence` contains `excerpt` and `classifierKind`; the writer redacts secrets and truncates the excerpt to 300 characters. `quota` contains `provider`, `window`, `usedPct`, `capPct`, `projectedPct`, `resetAt`, and `snapshotAgeSeconds`. `equivalence` contains `capabilityClass`, `catalogueVersion`, and `source`. `pricePerMTok` contains `from` and `to`. The kinds are `switched`, `waiting`, `refused`, `returned`, `health-marked`, `health-cleared`, and `operator-switch`. A closing event identifies the open event with `closesId`.
+The base event fields are `id`, `at` (UTC timestamp), `kind`, `consumer`, optional `host`, `project`, `pipelineType`, `stepId`, `taskKey`, `attemptId`, `round`, `from`, `to`, `rule`, `reason`, `evidence`, `quota`, `equivalence`, `returnToPrimaryAt`, `closesId`, `pricePerMTok`, and `count`. `from` and `to` each contain `cliType`, `model`, and `thinkingLevel`. `evidence` contains `excerpt` and `classifierKind`; the writer redacts secrets and truncates the excerpt to 300 characters. `quota` contains `provider`, `window`, `usedPct`, `capPct`, `projectedPct`, `resetAt`, `snapshotAgeSeconds`, and the `windowPaces` map for the primary provider. `equivalence` contains `capabilityClass`, `catalogueVersion`, and `source`. `pricePerMTok` contains `from` and `to`. The kinds are `switched`, `waiting`, `refused`, `returned`, `health-marked`, `health-cleared`, and `operator-switch`. A closing event identifies the open event with `closesId`.
 
 Execution tracking adds `selected` and `executed` kinds and these fields:
 

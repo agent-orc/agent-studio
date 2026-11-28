@@ -40,7 +40,7 @@
   position: absolute;
   width: 1px;
   height: 1px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   margin: var(--studio-compat-space-36);
   overflow: hidden;
   clip: rect(0, 0, 0, 0);

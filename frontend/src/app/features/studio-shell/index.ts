@@ -1,6 +1,4 @@
 export { StudioShellComponent } from './studio-shell.component';
-export { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
-export { StudioTabActionsComponent } from './components/studio-tab-actions/studio-tab-actions.component';
 export type {
   ShellPanesVisible,
   StudioLaneOption,

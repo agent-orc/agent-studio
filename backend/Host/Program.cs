@@ -54,6 +54,12 @@ if (args is [AgentStudio.Management.StudioBackupCommand.Flag, .. var backupArgs]
     return;
 }
 
+if (args is [AgentStudio.Pipeline.BatchGateInstanceInspection.Command, .. var inspectionArgs])
+{
+    Environment.ExitCode = AgentStudio.Pipeline.BatchGateInstanceInspection.RunCommand(inspectionArgs, Console.Out);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -740,8 +746,10 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.StudioReleasesService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ObservedInstallation>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.StudioReleasesWorker>();
+builder.Services.AddSingleton<AgentStudio.Deploy.DeployRecordStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.InstanceDeployService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))

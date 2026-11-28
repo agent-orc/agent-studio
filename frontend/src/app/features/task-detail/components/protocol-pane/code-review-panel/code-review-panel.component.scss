@@ -16,7 +16,7 @@
 .cr-title {
   font-size: var(--studio-compat-type-26);
   font-weight: 600;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   letter-spacing: 0.02em;
   color: var(--studio-fg-dim);
 }
@@ -62,13 +62,13 @@
 
 .cr-error {
   color: var(--severity-high);
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-compat-type-12);
 }
 
 .cr-empty {
   color: var(--studio-fg-dim);
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-compat-type-12);
 }
 
@@ -77,7 +77,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-2);
   border-radius: var(--studio-compat-radius-6);
   background: var(--studio-surface-muted);
@@ -87,8 +87,8 @@
 
 .cr-list {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   display: flex;
   flex-direction: column;
   gap: var(--studio-spacing-1);
@@ -278,7 +278,7 @@
 }
 
 .cr-body-gated p {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-compat-type-12);
 }
 
@@ -300,7 +300,7 @@
 }
 
 .cr-body-state {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-dim);
   font-size: var(--studio-compat-type-12);
 }

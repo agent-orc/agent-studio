@@ -916,7 +916,7 @@ public static class RegistryEndpoints
             if (Uri.TryCreate(request.Headers.Referer.FirstOrDefault(), UriKind.Absolute, out var referer))
                 studioOrigin = referer.GetLeftPart(UriPartial.Authority);
             return Results.Ok(await readiness.ProbeAsync(
-                record, url, studioOrigin, cancellationToken));
+                record, url, studioOrigin, cancellationToken, request.Query["buildStamp"] == "true"));
         });
 
         // AGT-2180: Settings quick setup — validate a candidate configuration

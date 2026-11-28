@@ -4,10 +4,10 @@
   "title": "Workload-Identit\u00E4t: wie sich Auftr\u00E4ge, Hosts und Apps ausweisen",
   "summary": "Aufbereitung von IP-D10 aus dem Dossier Integrierte Plattform (AGT-W81) f\u00FCr den Owner. Inhalt: Begriffe in einfachen Worten; heutiger Stand im Code (Bearer-Tokens fuer Hosts mit 30 Tagen, dauerhafte Modell-Logins in jedem Lauf, gespeicherte SSH-, kubeconfig- und Cloud-Zugaenge fuer Deploys, App-Passwoerter ohne eigene Identitaet; kurzlebig bereits GitHub-Installations-Tokens und SSH-Zertifikate der Host-CA; Cloud-Run-Adapter mit Foederation, aber ohne Aussteller); Option A konkret (SPIFFE-IDs, JWT- und X.509-SVIDs, OIDC-Foederation zu AWS, Google Cloud, Azure, Kubernetes, Anthropic und OpenAI, SSH-Zertifikate, was Studio betreiben muesste, was sich fuer Lauf, Deploy und App aendert); Option B mit Kosten fuer Rotation und Schutz; Vergleich von vier Alternativen (A1 Studio als Aussteller schrittweise, A2 SPIRE sofort, B gespeicherte Schluessel, C externer Aussteller) mit Ausfall des Ausstellers, Schluesseldiebstahl, Migration und Stufen W1 bis W5. Empfehlung: IP-D10 bei A belassen und als A1 schaerfen, Cloud-Deploy-Ziele zuerst, dann Modell-APIs und SSH-Zertifikate. Entscheidungen WI-D1 bis WI-D7; acht Umsetzungsscheiben WI-1 bis WI-8.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-16T10:40:00Z",
+  "updatedAt": "2026-11-28T05:54:01Z",
   "sourceTaskKeys": [
     "AGT-3876"
   ],
@@ -84,5 +84,6 @@
       ]
     }
   ],
-  "key": "AGT-W3461"
+  "key": "AGT-W3461",
+  "editedBy": "AGT-3876"
 }

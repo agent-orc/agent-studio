@@ -27,7 +27,7 @@
 .cause-recheck__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; flex: 1 1 auto; }
 .cause-recheck__line,
 .cause-recheck__hint,
-.cause-recheck__error { margin: 0; overflow-wrap: anywhere; }
+.cause-recheck__error { margin: var(--studio-spacing-0); overflow-wrap: anywhere; }
 .cause-recheck__line { color: var(--studio-fg-strong); font-weight: 600; }
 .cause-recheck__hint { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); }
 .cause-recheck__error { color: var(--studio-error); font-size: var(--studio-compat-type-10); }
@@ -35,8 +35,8 @@
 .cause-recheck__list {
   display: grid;
   gap: var(--studio-spacing-1);
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 
@@ -52,7 +52,7 @@
 .cause-recheck__meta { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); font-variant-numeric: tabular-nums; }
 
 .cause-recheck__link {
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
   background: transparent;
   color: var(--studio-wiki-link);

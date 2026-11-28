@@ -69,7 +69,7 @@
 
 .commit-chain {
   list-style: none;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-1);
   display: flex;
   flex-direction: column;
@@ -77,7 +77,7 @@
 }
 
 .commit-chain__item {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   display: flex;
   align-items: center;
   gap: var(--studio-spacing-1);
@@ -130,7 +130,7 @@
 }
 
 .commit-chain__sha {
-  color: var(--studio-accent);
+  color: var(--studio-link-ink);
   font-family: var(--font-mono, monospace);
   flex: 0 0 auto;
 }
@@ -164,7 +164,7 @@
 }
 
 .superseded__round h4 {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-2);
   color: var(--studio-fg-strong);
   font-size: var(--studio-font-size-sm);
