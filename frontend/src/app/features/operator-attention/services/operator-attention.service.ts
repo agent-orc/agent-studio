@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { groupAttention, type OperatorAttentionItem, type OperatorAttentionResponse } from '../models/operator-attention.model';
+import { groupAttention, isAttentionDecision, type OperatorAttentionItem, type OperatorAttentionResponse } from '../models/operator-attention.model';
 import type { AcceptanceReadinessItem, AcceptanceReadinessReport } from '../../acceptance-readiness';
 import { CredentialInventoryService, type CredentialInventory } from '../../credentials/credential-inventory.service';
 import { isBackupOverview, type BackupOverview } from '../../backups/backup-status.model';
@@ -13,8 +13,7 @@ type CoverageState = 'pending' | 'current' | 'unavailable' | 'stale';
 
 /**
  * The attention list (AGT-3576): the open facts of the operator decision
- * stream, read as one current list. The header count is the length of the
- * same array the list renders, so the two cannot disagree (R3).
+ * stream, read as one current list. The header counts each section separately.
  */
 @Injectable({ providedIn: 'root' })
 export class OperatorAttentionService {
@@ -45,7 +44,7 @@ export class OperatorAttentionService {
   private dossierInFlight = false;
   private lastDossierRead = 0;
 
-  readonly items = computed(() => [
+  readonly items = computed<readonly OperatorAttentionItem[]>(() => [
     ...this._facts().filter(item => !item.project || !this._archivedProjects().has(item.project.toLowerCase())),
     ...this._dossiers().filter(item => !item.project || !this._archivedProjects().has(item.project.toLowerCase())),
     ...(this._backup() ? [this._backup()!] : []),
@@ -73,8 +72,13 @@ export class OperatorAttentionService {
 
   readonly loaded = this._loaded.asReadonly();
   readonly error = this._error.asReadonly();
-  readonly count = computed(() => this.items().length);
-  readonly groups = computed(() => groupAttention(this.items()));
+  readonly decisions = computed(() => this.items().filter(isAttentionDecision));
+  readonly count = computed(() => this.decisions().length);
+  readonly noticeCount = computed(() => this.items().length - this.count());
+  readonly sections = computed(() => [
+    { label: 'Decisions', groups: groupAttention(this.decisions()) },
+    { label: 'Notices', groups: groupAttention(this.items().filter(item => !isAttentionDecision(item))) },
+  ]);
   readonly reviewCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready'
     && (!item.project || !this._archivedProjects().has(item.project.toLowerCase()))).length);
   readonly readyCount = computed(() => this._facts().filter(item => item.type === 'human-review.ready'
@@ -97,6 +101,13 @@ export class OperatorAttentionService {
         this.recordRead('credentials', true);
       } else if (state === 'unavailable') this.recordRead('credentials', false);
     });
+  }
+
+  async dismiss(items: readonly OperatorAttentionItem[], reason: string): Promise<void> {
+    const ids = items.map(item => item.id);
+    await firstValueFrom(this.http.post('/api/operator/attention/dismiss', { ids, reason }));
+    this._facts.update(facts => facts.filter(item => !ids.includes(item.id)));
+    this.refresh();
   }
 
   async runAnyway(item: OperatorAttentionItem): Promise<void> {
@@ -163,12 +174,13 @@ export class OperatorAttentionService {
             .filter(({ workbench }) => workbench.status === 'decision-pending'
               && (workbench.openDecisionCount ?? 1) > 0)
             .map(({ projectName, workbench }) => {
-              const count = workbench.openDecisionCount ?? 1;
+              const count = workbench.openDecisionCount;
               return {
                 id: `dossier|${projectName}|${workbench.id}`, type: 'dossier.decision-open',
                 project: projectName, cardKey: workbench.key ?? null, cards: [],
                 title: workbench.title, dossierId: workbench.id,
-                reason: `${count} open ${count === 1 ? 'decision' : 'decisions'}`,
+                reason: count == null ? 'Decision count not observed. Open the Dossier to inspect its questions.'
+                  : `${count} open ${count === 1 ? 'decision' : 'decisions'}`,
                 observedAt: workbench.updatedAtUtc, suggestedOperations: [],
               };
             }));
@@ -291,6 +303,7 @@ function readinessKey(project: string, card: string): string {
 function sameRows(current: readonly OperatorAttentionItem[], next: readonly OperatorAttentionItem[]): boolean {
   return current.length === next.length
     && current.every((item, index) => item.id === next[index].id && item.reason === next[index].reason
-      && item.title === next[index].title
+      && item.title === next[index].title && item.observedAt === next[index].observedAt
+      && item.isDecision === next[index].isDecision && item.canDismiss === next[index].canDismiss
       && JSON.stringify(item.ownerOptions ?? []) === JSON.stringify(next[index].ownerOptions ?? []));
 }

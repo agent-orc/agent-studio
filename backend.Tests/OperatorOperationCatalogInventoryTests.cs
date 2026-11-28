@@ -31,6 +31,7 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.CardRequeue, OperatorTier.T1 },
         { OperatorOperationIds.CardSteer, OperatorTier.T1 },
         { OperatorOperationIds.CardAttention, OperatorTier.T1 },
+        { OperatorOperationIds.AttentionDismiss, OperatorTier.T1 },
         { OperatorOperationIds.OperatorLogAppend, OperatorTier.T1 },
         { OperatorOperationIds.ServiceRestart, OperatorTier.T1 },
         { OperatorOperationIds.HostDrain, OperatorTier.T1 },

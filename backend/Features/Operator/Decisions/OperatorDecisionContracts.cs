@@ -135,7 +135,10 @@ public sealed record OperatorDecisionFact(
     IReadOnlyList<OperatorEvidenceLink> Evidence,
     IReadOnlyList<string>? Cards = null,
     string? Title = null,
-    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null);
+    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null)
+{
+    public string? BatchId { get; init; }
+}
 
 /// <summary>
 /// One published event. <see cref="Cursor"/> is the decimal sequence of the

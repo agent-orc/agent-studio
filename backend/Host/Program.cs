@@ -1605,7 +1605,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlo
     task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
         .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
-    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
+    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>(),
+    sp.GetRequiredService<AgentStudio.Cli.QuotaService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
@@ -1634,6 +1635,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnv
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),
     (project, cardId) => sp.GetRequiredService<EnvironmentHealthService>().CardKey(project, cardId)));
+builder.Services.AddSingleton<OperatorAttentionDismissals>();
+builder.Services.AddSingleton<OperatorAttentionReadModel>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
