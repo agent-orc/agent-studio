@@ -333,6 +333,94 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
     }
 
     [Theory]
+    [InlineData("monolith", false)]
+    [InlineData("monolith", true)]
+    [InlineData("task-server", false)]
+    [InlineData("task-server", true)]
+    public async Task DaemonRecoversFaultedPredecessorBeforeExecutingClaimedSuccessor(string authority, bool cancelled)
+    {
+        var (create, claim, status, finish) = await QueueFixture(authority);
+        var first = await create(QueueRequest(GateSubjectKinds.Merge, "predecessor", []));
+        var second = await create(QueueRequest(GateSubjectKinds.Merge, "successor", []));
+        using var shutdown = new CancellationTokenSource();
+        var predecessor = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successor = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bothClaimed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successorStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        GateClaimResponse? executedSuccessor = null;
+        var executions = 0;
+        var recoveryReads = 0;
+        using var server = new AdmissionServer(async request =>
+        {
+            if (executions > 0) await retired.Task.WaitAsync(shutdown.Token);
+            return await claim(request);
+        }, async id =>
+        {
+            Assert.Equal(first.Subject.SubjectId, id);
+            recoveryReads++;
+            return await status(id);
+        });
+        var options = new GateRunnerOptions
+        {
+            ServerUrl = "http://task-server", RunnerId = "gate", RunnerName = "gate", Hostname = "host",
+            Role = "gate", BackendName = "test", BaseBranch = "develop",
+            WorkDir = Path.Combine(_root, "coding"), ReviewWorkDir = Path.Combine(_root, "gate"),
+            StateDir = Path.Combine(_root, "state"),
+        };
+        var predecessorPath = Path.Combine(options.StateDir, "gate-claim.json");
+        var successorPath = Path.Combine(options.StateDir, "gate-post-merge-claim.json");
+        using var client = new GateClient(new HttpClient(server) { BaseAddress = new Uri(options.ServerUrl) },
+            "gate", options: options, runnerInstanceId: "instance");
+        var daemon = new GateDaemon(options, client, _ => { })
+        {
+            OrdinaryExecutor = async (response, _) =>
+            {
+                executions++;
+                if (response.Subject!.SubjectId == first.Subject.SubjectId)
+                {
+                    await finish(first.Subject.SubjectId);
+                    retired.SetResult();
+                    return await predecessor.Task;
+                }
+                executedSuccessor = response;
+                successorStarted.SetResult();
+                return await successor.Task;
+            },
+            // Hold the poll loop so only the waiting successor can recover its predecessor.
+            PollDelay = async token =>
+            {
+                bothClaimed.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+            },
+        };
+        var run = daemon.RunAsync(shutdown.Token);
+        try
+        {
+            await bothClaimed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(1, executions);
+            Assert.True(File.Exists(predecessorPath));
+            Assert.True(File.Exists(successorPath));
+            if (cancelled) predecessor.SetCanceled();
+            else predecessor.SetException(new IOException("predecessor failed after authority settlement"));
+            await successorStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(2, executions);
+            Assert.Equal(second.Subject.SubjectId, executedSuccessor!.Subject!.SubjectId);
+            Assert.Equal(1, recoveryReads);
+            Assert.False(File.Exists(predecessorPath));
+            Assert.True(File.Exists(successorPath));
+        }
+        finally
+        {
+            shutdown.Cancel();
+            predecessor.TrySetResult(false);
+            successor.TrySetResult(true);
+            await run;
+        }
+        Assert.False(File.Exists(successorPath));
+    }
+
+    [Theory]
     [InlineData("monolith", GateSubjectKinds.Merge)]
     [InlineData("monolith", GateSubjectKinds.PostMerge)]
     [InlineData("task-server", GateSubjectKinds.Merge)]
@@ -374,7 +462,8 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
         => Assert.Equal(expected, AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayReservePostMergeGrant(
             capacity, occupied, activeKind is null ? [] : [activeKind]));
 
-    private sealed class AdmissionServer(Func<GateClaimRequest, Task<GateClaimResponse>> claim) : HttpMessageHandler
+    private sealed class AdmissionServer(Func<GateClaimRequest, Task<GateClaimResponse>> claim,
+        Func<string, Task<GateStatus?>>? status = null) : HttpMessageHandler
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -384,6 +473,8 @@ public sealed class PostMergeGateSchedulerTests : IDisposable
                 "/api/clients/register" => new Runner::AgentRunner.ClientRegisterResponse("gate", "gate", "gate-executor"),
                 "/api/v1/gates/claims" => await claim((await JsonSerializer.DeserializeAsync<GateClaimRequest>(
                     await request.Content!.ReadAsStreamAsync(ct), Json, ct))!),
+                var path when status is not null && path.StartsWith("/api/v1/gates/subjects/", StringComparison.Ordinal)
+                    => (await status(path["/api/v1/gates/subjects/".Length..]))!,
                 _ => throw new InvalidOperationException("Unexpected request: " + request.RequestUri),
             };
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value, Json), Encoding.UTF8, "application/json") };

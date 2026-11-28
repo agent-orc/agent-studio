@@ -132,7 +132,13 @@ public sealed class RemoteGateDaemon
         async Task WaitForPredecessor(CancellationToken token)
         {
             if (predecessor is null) return;
-            await predecessor.Work.WaitAsync(token);
+            try { await predecessor.Work.WaitAsync(token); }
+            catch (Exception exception) when (!token.IsCancellationRequested && predecessor.Work.IsCompleted)
+            {
+                // A settled predecessor can fault during local cleanup. Recover its
+                // durable claim before this independently leased successor proceeds.
+                _log($"gate predecessor attempt={predecessor.Claim.Attempt!.AttemptId} ended with {exception.GetType().Name}: {exception.Message}; recovering before attempt={claim.Attempt!.AttemptId}");
+            }
             await RecoverClaimFileAsync(predecessor.Path, token, predecessor.Claim.Lease!.LeaseId);
         }
         var executor = claim.Subject!.Kind == GateSubjectKinds.PostMerge ? PostMergeExecutor : OrdinaryExecutor;

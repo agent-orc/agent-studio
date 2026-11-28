@@ -3573,6 +3573,13 @@
           <td>AGT-4049's stale-verdict recovery contract and AGT-4098's capability disposition contract appended different sections at the same location.</td>
           <td>Retained both contract sections and the three prior delivery changes, including the report-policy and code-quality fixes. The already-integrated engine guard trait is retained. Focused checks return the combined tree to platform-owned delivery and integration.</td>
         </tr>
+        <tr id="case-agt-4198-gate-predecessor-fault">
+          <td>2026-11-28</td>
+          <td><code>AGT-4198</code><br><span class="small">gate-predecessor-fault</span></td>
+          <td>No CLI crash. A gate flight fault after authority settlement aborted its independently claimed successor before local claim recovery.</td>
+          <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
+          <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
