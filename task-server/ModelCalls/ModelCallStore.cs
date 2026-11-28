@@ -314,12 +314,19 @@ internal sealed class ModelCallStore(IOptions<TaskServerOptions> options, IToken
         AND ($run IS NULL OR c.run = $run)
         """;
 
-    private const string Totals = """
-        COUNT(*), COALESCE(SUM(r.total_tokens), 0),
+    // Prompt is inclusive of cache. Use cache alone only if the prompt counter is absent.
+    private const string KnownTokens = """
+        CASE WHEN COALESCE(r.prompt_tokens, r.cached_input, r.output) IS NOT NULL
+             THEN COALESCE(r.prompt_tokens, r.cached_input, 0) + COALESCE(r.output, 0) END
+        """;
+
+    private static readonly string Totals = $"""
+        COUNT(*), COALESCE(SUM({KnownTokens}), 0),
         COUNT(CASE WHEN r.kind = 'wait' THEN 1 END), COUNT(CASE WHEN r.kind = 'status' THEN 1 END),
         COALESCE(SUM(r.fresh_input), 0), COALESCE(SUM(r.cached_input), 0), COALESCE(SUM(r.output), 0),
-        COUNT(r.usd_nanos), COALESCE(SUM(CASE WHEN r.usd_nanos IS NULL THEN r.total_tokens END), 0),
-        COUNT(*) - COUNT(r.total_tokens), SUM(r.usd_nanos)
+        COUNT(r.usd_nanos), COALESCE(SUM(CASE WHEN r.usd_nanos IS NULL THEN {KnownTokens} END), 0),
+        COUNT(*) - COUNT(r.total_tokens), SUM(r.usd_nanos),
+        COALESCE(SUM(CASE WHEN r.cached_input IS NULL THEN r.prompt_tokens END), 0)
         """;
 
     public static void ValidateWindow(long fromMs, long untilMs, string? card, int? run, string? cursor)
@@ -358,7 +365,7 @@ internal sealed class ModelCallStore(IOptions<TaskServerOptions> options, IToken
             {
                 var responses = new List<ModelCallRow>();
                 await using var command = WindowCommand($"""
-                    SELECT c.id, c.ordinal, c.happened_at_ms, r.kind, r.total_tokens, r.price_status
+                    SELECT c.id, c.ordinal, c.happened_at_ms, r.kind, r.total_tokens, r.price_status, {KnownTokens}
                     {ScopedCalls} {WindowFilter}
                     AND (c.happened_at_ms, c.id) > ($after, $afterId)
                     ORDER BY c.happened_at_ms, c.id LIMIT {ResponseLimit + 1};
@@ -368,7 +375,7 @@ internal sealed class ModelCallStore(IOptions<TaskServerOptions> options, IToken
                 await using var rows = await command.ExecuteReaderAsync(ct);
                 while (await rows.ReadAsync(ct))
                     responses.Add(new ModelCallRow(rows.GetString(0), rows.GetInt32(1), rows.GetInt64(2),
-                        rows.GetString(3), Long(rows, 4), rows.GetString(5)));
+                        rows.GetString(3), Long(rows, 4), rows.GetString(5), Long(rows, 6)));
                 string? next = null;
                 if (responses.Count > ResponseLimit)
                 {
@@ -385,7 +392,7 @@ internal sealed class ModelCallStore(IOptions<TaskServerOptions> options, IToken
             await using (var command = WindowCommand($"""
                 SELECT CAST({groupKey} AS TEXT), {Totals}
                 {ScopedCalls} {WindowFilter}
-                GROUP BY {groupKey} ORDER BY COALESCE(SUM(r.total_tokens), 0) DESC, {groupKey} LIMIT {GroupLimit};
+                GROUP BY {groupKey} ORDER BY COALESCE(SUM({KnownTokens}), 0) DESC, {groupKey} LIMIT {GroupLimit};
                 """))
             await using (var rows = await command.ExecuteReaderAsync(ct))
             {
@@ -426,13 +433,14 @@ internal sealed class ModelCallStore(IOptions<TaskServerOptions> options, IToken
     private static ModelCallTotals ReadTotals(SqliteDataReader row, int i = 0)
         => new(row.GetInt64(i), row.GetInt64(i + 1), row.GetInt64(i + 2), row.GetInt64(i + 3),
             row.GetInt64(i + 4), row.GetInt64(i + 5), row.GetInt64(i + 6),
-            row.GetInt64(i + 7), row.GetInt64(i + 8), row.GetInt64(i + 9), Usd(row, i + 10));
+            row.GetInt64(i + 7), row.GetInt64(i + 8), row.GetInt64(i + 9), Usd(row, i + 10), row.GetInt64(i + 11));
 
     private static ModelCallTotals Subtract(ModelCallTotals a, ModelCallTotals b)
         => new(a.Calls - b.Calls, a.Tokens - b.Tokens, a.Waits - b.Waits, a.StatusChecks - b.StatusChecks,
             a.FreshInput - b.FreshInput, a.CachedInput - b.CachedInput, a.Output - b.Output,
             a.PricedCalls - b.PricedCalls, a.UnpricedTokens - b.UnpricedTokens, a.MissingUsage - b.MissingUsage,
-            a.PricedCalls == b.PricedCalls ? null : (a.ListUsd ?? 0) - (b.ListUsd ?? 0));
+            a.PricedCalls == b.PricedCalls ? null : (a.ListUsd ?? 0) - (b.ListUsd ?? 0),
+            a.UnclassifiedInput - b.UnclassifiedInput);
 
     public async Task<ModelCallDetail?> DetailAsync(ProjectDto project, string id, CancellationToken ct)
     {

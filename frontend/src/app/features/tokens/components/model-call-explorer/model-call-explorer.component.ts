@@ -12,6 +12,7 @@ interface CallTotals {
   statusChecks: number;
   freshInput: number;
   cachedInput: number;
+  unclassifiedInput: number;
   output: number;
   pricedCalls: number;
   unpricedTokens: number;
@@ -30,6 +31,7 @@ interface CallRow {
   happenedAtMs: number;
   kind: string;
   tokens: number | null;
+  knownTokens: number | null;
   priceStatus: string;
 }
 

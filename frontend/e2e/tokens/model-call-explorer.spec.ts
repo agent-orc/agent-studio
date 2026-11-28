@@ -54,6 +54,9 @@ test('Model Calls drills from the measured night to a response in an isolated Ta
   await expect(explorer.getByLabel('Window totals')).toContainText('2,639,640,822');
   await expect(explorer.getByLabel('Window totals')).toContainText('4,592');
   await expect(explorer.getByLabel('Window totals')).toContainText('924');
+  await expect(explorer.getByLabel('Window totals')).toContainText('Known tokens');
+  await expect(explorer.getByText('2,639,640,822 known tokens unpriced')).toBeVisible();
+  await expect(explorer.getByText('0 responses with incomplete token totals')).toBeVisible();
 
   await explorer.getByLabel('Card key').fill('AGT-4249');
   await explorer.getByRole('button', { name: 'Apply filters' }).click();

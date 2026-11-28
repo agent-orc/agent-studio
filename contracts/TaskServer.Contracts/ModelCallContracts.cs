@@ -17,10 +17,11 @@ public sealed record HistoricalModelCallAck(int Inserted, int Revised, int Repla
 public sealed record ModelCallTotals(
     long Calls, long Tokens, long Waits, long StatusChecks,
     long FreshInput, long CachedInput, long Output,
-    long PricedCalls, long UnpricedTokens, long MissingUsage, decimal? ListUsd);
+    long PricedCalls, long UnpricedTokens, long MissingUsage, decimal? ListUsd, long UnclassifiedInput = 0);
 
 public sealed record ModelCallGroup(string Key, ModelCallTotals Totals);
-public sealed record ModelCallRow(string Id, int Ordinal, long HappenedAtMs, string Kind, long? Tokens, string PriceStatus);
+public sealed record ModelCallRow(
+    string Id, int Ordinal, long HappenedAtMs, string Kind, long? Tokens, string PriceStatus, long? KnownTokens = null);
 public sealed record ModelCallWindow(
     ModelCallTotals Totals, IReadOnlyList<ModelCallGroup> Groups, ModelCallTotals? Other,
     IReadOnlyList<ModelCallRow> Responses, string? NextCursor);

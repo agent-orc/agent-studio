@@ -30,7 +30,7 @@
   @if (result(); as window) {
     <dl class="metrics" aria-label="Window totals">
       <div><dt>Responses</dt><dd>{{ window.totals.calls | number }}</dd></div>
-      <div><dt>Tokens</dt><dd>{{ window.totals.tokens | number }}</dd></div>
+      <div><dt>Known tokens</dt><dd>{{ window.totals.tokens | number }}</dd></div>
       <div><dt>Waits</dt><dd>{{ window.totals.waits | number }}</dd></div>
       <div><dt>Status checks</dt><dd>{{ window.totals.statusChecks | number }}</dd></div>
       <div><dt>Priced subtotal</dt>
@@ -40,10 +40,14 @@
     <dl class="token-classes" aria-label="Token composition">
       <div><dt>Fresh input</dt><dd>{{ window.totals.freshInput | number }}</dd></div>
       <div><dt>Cached input</dt><dd>{{ window.totals.cachedInput | number }}</dd></div>
+      @if (window.totals.unclassifiedInput > 0) {
+        <div><dt>Input with unknown cache split</dt><dd>{{ window.totals.unclassifiedInput | number }}</dd></div>
+      }
       <div><dt>Output</dt><dd>{{ window.totals.output | number }}</dd></div>
     </dl>
     <p class="coverage">{{ window.totals.pricedCalls | number }} of {{ window.totals.calls | number }} responses priced
-      · {{ window.totals.unpricedTokens | number }} unpriced tokens · {{ window.totals.missingUsage | number }} missing usage</p>
+      · {{ window.totals.unpricedTokens | number }} known tokens unpriced
+      · {{ window.totals.missingUsage | number }} responses with incomplete token totals</p>
 
     @if (window.totals.calls === 0) {
       <p>No coding responses in this window.</p>
@@ -141,7 +145,11 @@
                 <li>
                   <button type="button" class="row" (click)="openResponse(row.id)">
                     <strong>Response {{ row.ordinal }}</strong><span>{{ label(row.kind) }}</span>
-                    <span>{{ (row.tokens | number) ?? 'Unknown' }} tokens</span>
+                    <span>
+                      @if (row.tokens !== null) { {{ row.tokens | number }} tokens }
+                      @else if (row.knownTokens !== null) { {{ row.knownTokens | number }} known tokens }
+                      @else { Tokens unknown }
+                    </span>
                   </button>
                 </li>
               }

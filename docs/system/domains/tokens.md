@@ -15,7 +15,12 @@ records. It reads a separate Task Server SQLite store through
 Windows are half-open UTC intervals, bounded to 31 days. Queries group by
 card, then run, and page responses when both card and run are supplied. The
 priced subtotal covers only calls with a resolved dated tariff and sufficient
-evidence. Missing usage and unpriced usage are counted separately.
+evidence. The token subtotal and unpriced token coverage include the same known
+counters on partial responses. When the inclusive prompt count is absent, only
+reported cached input contributes on the input side. A known prompt count
+without a cache split is shown as unclassified input. Reasoning stays within
+output. A response's exact token total remains null until both prompt and
+output are known, and the query counts such responses as incomplete usage.
 
 A Task Server management principal can post a validated historical batch to
 `POST /api/v1/management/model-calls/{project}/historical-import`. Use
