@@ -653,6 +653,22 @@ Run-history consumers, including Result-summary round ledgers, use the contract
 field names `trigger`, `triggeredBy`, `triggerReason`, and `triggerSource` from
 `run-record.schema.json`; they do not derive a trigger from legacy `intent`.
 
+Remote Code Quality reports an independent claim for each blocker. The server
+assigns a card-scoped ID from the cited subject, stable contract and specific
+violation. Reviewers record line numbers and observations in evidence, so
+updated evidence preserves the ID of the same violation. Different violations
+of the same contract have distinct IDs. A delivered review records an explicit
+`still-present`, `addressed` or `withdrawn` disposition with evidence for each
+rechecked claim. An omitted or carried-over claim is `not-rechecked` and stays
+open. Infra attempts leave the last delivered finding record in place.
+
+The Remote Review settlement stores the finding record, and the next claim
+supplies its open findings to Code Quality. Coding starts record the IDs routed
+in their fix prompt in `reviewFindingIds` on monolith session events and
+`findingIds` on standalone continuation-consumption receipts. Join on the run
+attempt or run ID. A single run can reference several findings and carries one
+measured token total. Legacy verdicts retain their existing follow-up format.
+
 After a review-driven coding round, deterministic build, test, and lint steps
 always execute. `ScopedReviewPolicy` reruns the aspect that raised the finding.
 Another aspect may carry over only when scoped review is enabled (project

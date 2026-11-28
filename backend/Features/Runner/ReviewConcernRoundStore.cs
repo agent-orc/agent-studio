@@ -15,7 +15,10 @@ public sealed record ReviewConcernRoundLedger(
     string? ReviewedResultSha = null,
     string? ReviewedIntegrationTipSha = null,
     IReadOnlyList<ReviewVerdictDto>? PreviousVerdicts = null,
-    string RoundKind = RunTriggers.ReviewConcern);
+    string RoundKind = RunTriggers.ReviewConcern)
+{
+    public IReadOnlyList<string>? FindingIds { get; init; }
+}
 
 /// <summary>Single durable bound for local and remote concern-fix rounds.</summary>
 public static class ReviewConcernRoundStore
@@ -74,7 +77,8 @@ public static class ReviewConcernRoundStore
         IEnumerable<string> aspectIds,
         string? reviewedResultSha,
         string? reviewedIntegrationTipSha,
-        IReadOnlyList<ReviewVerdictDto>? previousVerdicts)
+        IReadOnlyList<ReviewVerdictDto>? previousVerdicts,
+        IReadOnlyList<string>? findingIds = null)
     {
         lock (Gates.GetOrAdd(Path.GetFullPath(folderPath), _ => new object()))
         {
@@ -91,7 +95,7 @@ public static class ReviewConcernRoundStore
                 ReviewedResultSha: reviewedResultSha,
                 ReviewedIntegrationTipSha: reviewedIntegrationTipSha,
                 PreviousVerdicts: previousVerdicts,
-                RoundKind: RunTriggers.ReviewFinding);
+                RoundKind: RunTriggers.ReviewFinding) { FindingIds = findingIds };
             Write(folderPath, ledger);
             return ledger;
         }
@@ -141,6 +145,17 @@ public static class ReviewConcernRoundStore
             }
             var updated = current with { Used = current.Used - 1, StillOpen = false };
             Write(folderPath, updated);
+        }
+    }
+
+    internal static void Restore(string folderPath, ReviewConcernRoundLedger? previous)
+    {
+        lock (Gates.GetOrAdd(Path.GetFullPath(folderPath), _ => new object()))
+        {
+            if (previous is null)
+                File.Delete(Path.Combine(folderPath, FileName));
+            else
+                Write(folderPath, previous);
         }
     }
 

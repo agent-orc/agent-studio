@@ -199,9 +199,7 @@ public static class MonolithTransitionAdapter
         => ReviewFindingMergePolicy.BlockingFingerprints(findings);
     public static IReadOnlyList<string> BlockingReviewFindingKeys(
         IEnumerable<ReviewVerdictDto> verdicts)
-        => BlockingReviewFindingKeys(verdicts.Select(item => new ReviewFollowUpFinding(
-            item.Aspect, item.Status, item.Summary, item.EvidenceChecked,
-            item.Missing, item.Classification)));
+        => BlockingReviewFindingKeys(verdicts.SelectMany(ReviewFollowUpFinding.FromVerdict));
     public static OperatorSweepDecision Sweep(string sweep, OperatorSweepTrigger? trigger, OperatorSweepGuardFacts facts)
         => OperatorSweepPolicy.Decide(sweep, trigger, facts);
 

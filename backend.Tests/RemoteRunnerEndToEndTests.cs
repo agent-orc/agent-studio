@@ -6192,7 +6192,15 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             Workspace = passing.Workspace with { ChangedPaths = [citedPath] },
             Verdicts = [new Contract.ReviewVerdictDto(
                 "code-quality", "block", classification, summary,
-                citedPath, "Preserve pending state.")],
+                citedPath, "Preserve pending state.")
+            {
+                FindingClaims =
+                [
+                    new(citedPath + " Recover", "Preserve pending state.", summary, citedPath + ":24"),
+                    new(citedPath + " Recover", "Preserve pending state.",
+                        "Recovery duplicates the pending write.", citedPath + ":30"),
+                ],
+            }],
         };
 
         var response = await client.ReportReviewAsync(claim.Attempt!.AttemptId, request, CancellationToken.None);
@@ -6210,8 +6218,19 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         }
         else
         {
-            Assert.Contains(summary, File.ReadAllText(followUp));
-            Assert.Equal(RunTriggers.ReviewFinding, ReviewConcernRoundStore.Read(task.FolderPath)!.RoundKind);
+            var prompt = File.ReadAllText(followUp);
+            Assert.Contains(summary, prompt);
+            var settled = RemoteReviewSettlementJournal.Read(task.FolderPath, claim.Attempt.AttemptId).Entry!;
+            var ids = settled.Report.FindingRound!.OpenFindings.Select(item => item.Id!).ToArray();
+            Assert.Equal(2, ids.Distinct(StringComparer.Ordinal).Count());
+            var ledger = ReviewConcernRoundStore.Read(task.FolderPath)!;
+            Assert.Equal(RunTriggers.ReviewFinding, ledger.RoundKind);
+            Assert.Equal(ids, Contract.ReviewFindingRoundPrompt.RoutedFindingIds(prompt));
+            Assert.Equal(ids, LeaseEndpoints.BuildRemoteClaimTrigger(null, null, 1, ledger, "runner", "run-2")
+                .ReviewFindingIds);
+            var replay = await client.ReportReviewAsync(claim.Attempt.AttemptId, request, CancellationToken.None);
+            Assert.Equal(response.ReportId, replay.ReportId);
+            Assert.Equal(prompt, File.ReadAllText(followUp));
         }
     }
 

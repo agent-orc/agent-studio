@@ -3676,6 +3676,7 @@ public class ProjectRunner
                 TriggeredBy = plan.TriggerMetadata.TriggeredBy,
                 TriggerReason = plan.TriggerMetadata.TriggerReason,
                 TriggerSource = plan.TriggerMetadata.TriggerSource,
+                ReviewFindingIds = plan.TriggerMetadata.ReviewFindingIds,
                 Cli = cli.CliType,
                 Model = execution.Model ?? runModel,
                 ThinkingLevel = execution.ThinkingLevel ?? runThinkingLevel,
@@ -8906,7 +8907,10 @@ public class ProjectRunner
                     : RunTriggers.ReviewFinding,
                 "pipeline",
                 decision.Note ?? "Review findings require another coding run.",
-                ReviewTriggerSource(decision.FollowUpText)),
+                ReviewTriggerSource(decision.FollowUpText))
+            {
+                ReviewFindingIds = AgentStudio.TaskServer.Contracts.ReviewFindingRoundPrompt.RoutedFindingIds(decision.FollowUpText),
+            },
             ReissuePromptAssignment = assignment,
         };
     }

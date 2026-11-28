@@ -20,7 +20,26 @@ public sealed record ReviewFollowUpFinding(
     string? Finding = null,
     string? Classification = null,
     bool InfrastructureFailure = false,
-    string? ReportBody = null);
+    string? ReportBody = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? FindingId { get; init; }
+
+    public static IEnumerable<ReviewFollowUpFinding> FromVerdict(ReviewVerdictDto verdict)
+    {
+        var item = new ReviewFollowUpFinding(verdict.Aspect, verdict.Status, verdict.Summary,
+            verdict.EvidenceChecked, verdict.Missing, verdict.Classification);
+        if (ReviewGradingPolicy.IsBlockingToken(verdict.Status) && verdict.FindingClaims is { Count: > 0 } claims)
+            return claims.Select(claim => item with
+            {
+                FindingId = claim.Id,
+                Summary = claim.Violation,
+                EvidenceChecked = claim.Evidence,
+                Finding = $"{claim.Subject}: {claim.Contract}",
+            });
+        return [item];
+    }
+}
 
 public sealed record ReviewFollowUpDecision(
     ReviewGrade Grade,

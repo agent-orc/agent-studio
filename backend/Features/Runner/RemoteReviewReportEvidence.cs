@@ -168,6 +168,26 @@ internal static class RemoteReviewReportEvidence
             }
         }
 
+        if (request.FindingRound is { } round)
+        {
+            text.AppendLine();
+            text.AppendLine("## Code quality findings");
+            text.AppendLine();
+            text.AppendLine("| Finding ID | Subject | Contract | Violation | Evidence |");
+            text.AppendLine("| --- | --- | --- | --- | --- |");
+            foreach (var finding in request.Verdicts.SelectMany(verdict => verdict.FindingClaims ?? []))
+                text.AppendLine($"| {Cell(finding.Id!)} | {Cell(finding.Subject)} | {Cell(finding.Contract)} | {Cell(finding.Violation)} | {Cell(finding.Evidence)} |");
+
+            if (round.Rechecks.Count > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("| Prior finding ID | Disposition | Evidence |");
+                text.AppendLine("| --- | --- | --- |");
+                foreach (var recheck in round.Rechecks)
+                    text.AppendLine($"| {Cell(recheck.Id)} | {Cell(recheck.Disposition)} | {Cell(recheck.Evidence ?? "")} |");
+            }
+        }
+
         text.AppendLine();
         var agentCommands = request.Commands
             .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))

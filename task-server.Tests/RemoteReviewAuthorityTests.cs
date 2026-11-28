@@ -2339,7 +2339,16 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
                 "code-quality", "block", "RemoteAspectVerdict",
                 "Implementation contradicts the required behavior.",
                 EvidenceChecked: "docs/concept/workbench.json",
-                Missing: "the required behavior")],
+                Missing: "the required behavior")
+            {
+                FindingClaims =
+                [
+                    new("docs/concept/workbench.json status", "Preserve decision history.",
+                        "A duplicate replaces the accepted decision.", "docs/concept/workbench.json:14"),
+                    new("docs/concept/workbench.json status", "Preserve decision history.",
+                        "A withdrawn decision is projected as accepted.", "docs/concept/workbench.json:29"),
+                ],
+            }],
         };
 
         var report = await store.ReportReviewAsync(
@@ -2347,6 +2356,14 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
 
         Assert.Equal("ProductFailure", report.Outcome);
         Assert.Equal("ReviewFinding", report.FailureClassification);
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        Assert.Equal(report, await restarted.ReportReviewAsync(
+            claim.Attempt.AttemptId, request, "review-a", default));
+        var subject = await restarted.GetReviewSubjectAsync(claim.Subject!.SubjectId, default);
+        var open = Assert.IsAssignableFrom<IReadOnlyList<ReviewFindingClaim>>(subject!.OpenFindings);
+        Assert.Equal(2, open.Select(item => item.Id).Distinct().Count());
+        Assert.All(open, item => Assert.True(ReviewFindingIdentity.IsId(item.Id)));
     }
 
     [Theory]

@@ -120,6 +120,9 @@ public static class RemoteReviewContinuationProjection
                 // Ready without it and no claim can start the round elsewhere.
                 if (fixRoundBase is not null && !ContinuationBaseStore.Save(task.FolderPath, fixRoundBase))
                     return false;
+                if (isReadyRound && !isPlanMerge)
+                    PrepareFindingRound(task, entry.AttemptId, continuation.FollowUp, continuation.BlockingAspects,
+                        entry.Report, continuation.MaximumConcernRounds, logger);
                 var move = await transitions.MoveAsync(
                     task.Id, target, task.WatchPath, ct,
                     cause: $"remote-review-continuation:{entry.AttemptId}",
@@ -173,44 +176,11 @@ public static class RemoteReviewContinuationProjection
             if (isReadyRound)
             {
                 TaskJsonFile.UpdateOrder(task.FolderPath, 0, logger);
-                if (!isPlanMerge)
-                    ReviewConcernRoundStore.RecordFinding(task.FolderPath, continuation.MaximumConcernRounds,
-                        entry.AttemptId, continuation.BlockingAspects,
-                        entry.Report.Workspace.ExpectedResultSha, entry.Report.Workspace.IntegrationTipSha,
-                        entry.Report.Verdicts);
-                var marker = $"<!-- review-finding-round:{entry.AttemptId} -->";
-                var promptPath = Path.Combine(task.FolderPath, "prompt.md");
-                if (!File.Exists(promptPath) || !File.ReadAllText(promptPath).Contains(marker, StringComparison.Ordinal))
-                {
-                    var previous = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
-                    var temporary = promptPath + ".tmp-" + Guid.NewGuid().ToString("N");
-                    try
-                    {
-                        File.WriteAllText(temporary, previous
-                            + $"\n\n---\n\n## {(isPlanMerge ? "Review plan merge round" : "Review finding round")} {entry.AttemptId}\n\n"
-                            + marker + "\n" + continuation.FollowUp.TrimEnd() + "\n");
-                        File.Move(temporary, promptPath, overwrite: true);
-                    }
-                    finally { if (File.Exists(temporary)) File.Delete(temporary); }
-                }
-                var followUpPath = Path.Combine(task.FolderPath, "orchestrator-follow-up.md");
-                File.WriteAllText(followUpPath, "# Orchestrator follow-up\n\n" + continuation.FollowUp + "\n");
-                var history = Path.Combine(task.FolderPath, "orchestrator-follow-up-history");
-                Directory.CreateDirectory(history);
-                var historyPath = Path.Combine(history, $"remote-review-finding-{entry.AttemptId}.md");
-                if (!File.Exists(historyPath))
-                {
-                    var temporary = historyPath + ".tmp-" + Guid.NewGuid().ToString("N");
-                    try
-                    {
-                        File.WriteAllText(temporary, continuation.FollowUp + "\n");
-                        File.Move(temporary, historyPath, overwrite: true);
-                    }
-                    finally { if (File.Exists(temporary)) File.Delete(temporary); }
-                }
-                if (!isPlanMerge)
-                    ConcernTagWriter.MergeConcernTags(task.FolderPath,
-                        [ReviewDecisionOrchestrator.ReissueTagId], logger);
+                if (isPlanMerge)
+                    WriteRoundPrompt(task.FolderPath, entry.AttemptId, continuation.FollowUp, isPlanMerge: true);
+                else if (step != RemoteReviewContinuationStep.Move)
+                    PrepareFindingRound(task, entry.AttemptId, continuation.FollowUp, continuation.BlockingAspects,
+                        entry.Report, continuation.MaximumConcernRounds, logger);
                 receipt["aspects"] = string.Join(",", continuation.BlockingAspects);
                 receipt["followUpPrompt"] = RunTriggerMetadata.PromptPreview(continuation.FollowUp);
                 if (fixRoundBase is not null)
@@ -235,6 +205,51 @@ public static class RemoteReviewContinuationProjection
                 runId: entry.AttemptId, details: receipt);
         }
         finally { gate.Release(); }
+    }
+
+    internal static void PrepareFindingRound(
+        TaskInfo task, string attemptId, string followUp, IReadOnlyList<string> aspects,
+        AgentStudio.TaskServer.Contracts.ReviewReportRequest report, int maximumConcernRounds, ILogger logger)
+    {
+        WriteRoundPrompt(task.FolderPath, attemptId, followUp, isPlanMerge: false);
+        ConcernTagWriter.MergeConcernTags(task.FolderPath, [ReviewDecisionOrchestrator.ReissueTagId], logger);
+        ReviewConcernRoundStore.RecordFinding(task.FolderPath, maximumConcernRounds, attemptId, aspects,
+            report.Workspace.ExpectedResultSha, report.Workspace.IntegrationTipSha, report.Verdicts,
+            AgentStudio.TaskServer.Contracts.ReviewFindingRoundPrompt.RoutedFindingIds(followUp));
+    }
+
+    private static void WriteRoundPrompt(string folder, string attemptId, string followUp, bool isPlanMerge)
+    {
+        var history = Path.Combine(folder, "orchestrator-follow-up-history");
+        Directory.CreateDirectory(history);
+        var historyPath = Path.Combine(history, $"remote-review-finding-{attemptId}.md");
+        if (File.Exists(historyPath))
+            followUp = File.ReadAllText(historyPath).TrimEnd();
+        else
+            WritePromptAtomically(historyPath, followUp + "\n");
+
+        var marker = $"<!-- review-finding-round:{attemptId} -->";
+        var promptPath = Path.Combine(folder, "prompt.md");
+        var previous = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+        if (!previous.Contains(marker, StringComparison.Ordinal))
+        {
+            var kind = isPlanMerge ? "Review plan merge round" : "Review finding round";
+            WritePromptAtomically(promptPath,
+                previous + $"\n\n---\n\n## {kind} {attemptId}\n\n{marker}\n{followUp.TrimEnd()}\n");
+        }
+        var followUpPath = Path.Combine(folder, "orchestrator-follow-up.md");
+        WritePromptAtomically(followUpPath, "# Orchestrator follow-up\n\n" + followUp + "\n");
+    }
+
+    private static void WritePromptAtomically(string path, string text)
+    {
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(temporary, text);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     private static string PlanRepairId(string taskKey)

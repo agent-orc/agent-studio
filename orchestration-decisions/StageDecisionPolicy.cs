@@ -29,9 +29,8 @@ public static class StageDecisionPolicy
         var reissuesUsed = payload.ReissuesUsed ?? reissues;
         var verdicts = ReviewFindingMergePolicy.MergeVerdicts(payload.Verdicts ?? []);
         var findings = verdicts.Where(verdict =>
-            !ReviewRoundBudgetPolicy.IsUncitedBlock(verdict.Classification)).Select(verdict => new ReviewFollowUpFinding(
-            verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-            verdict.Missing, verdict.Classification)).Concat((payload.ReviewFindings ?? []).Select(item =>
+            !ReviewRoundBudgetPolicy.IsUncitedBlock(verdict.Classification))
+            .SelectMany(ReviewFollowUpFinding.FromVerdict).Concat((payload.ReviewFindings ?? []).Select(item =>
                 new ReviewFollowUpFinding("review-finding",
                     item.Severity is "blocker" or "critical" ? "block" : "concerns",
                     item.Summary, Finding: item.Summary))).ToArray();
@@ -54,12 +53,8 @@ public static class StageDecisionPolicy
             .GroupBy(payload => payload.ReviewAttemptId, StringComparer.Ordinal).Select(group => group.Last())
             .Select(payload => new DeliveredReviewRound(payload.ReviewAttemptId!,
                 ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []), [],
-                BlockingFindingKeys: ReviewFindingMergePolicy.Merge((payload.Verdicts ?? [])
-                    .Select(item => new ReviewFollowUpFinding(item.Aspect, item.Status, item.Summary,
-                        item.EvidenceChecked, item.Missing, item.Classification)))
-                    .Where(item => ReviewGradingPolicy.IsBlockingToken(item.Status)
-                        && !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification))
-                    .Select(ReviewFindingMergePolicy.Fingerprint).Distinct(StringComparer.Ordinal).ToArray()))
+                BlockingFindingKeys: ReviewFindingMergePolicy.BlockingFingerprints(
+                    (payload.Verdicts ?? []).SelectMany(ReviewFollowUpFinding.FromVerdict))))
             .ToArray());
 
     public static int ConcernRoundsUsed(IEnumerable<StagePayload> priorReports)

@@ -125,7 +125,10 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
             var previousFollowUp = File.Exists(followUpPath) ? File.ReadAllText(followUpPath) : null;
             var previousTags = ReadTags(folderPath);
             var previousBase = ContinuationBaseStore.Read(folderPath);
+            var findingIds = Contract.ReviewFindingRoundPrompt.RoutedFindingIds(round.FollowUp);
+            var previousRound = findingIds is null ? null : ReviewConcernRoundStore.Read(folderPath);
             string? historyPath = null;
+            var findingRoundWritten = false;
 
             OperatorSweepActionResult RollBack(string refusal)
             {
@@ -148,6 +151,14 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
                     if (previousBase is null) ContinuationBaseStore.Clear(folderPath);
                     else if (!ContinuationBaseStore.Save(folderPath, previousBase))
                         logger.LogWarning("operator-sweep-fix-round-base-rollback-failed job={JobId} folder={Folder}", jobId, folderPath);
+                }
+                if (findingRoundWritten)
+                {
+                    try { ReviewConcernRoundStore.Restore(folderPath, previousRound); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        logger.LogWarning(ex, "operator-sweep-finding-round-rollback-failed job={JobId} folder={Folder}", jobId, folderPath);
+                    }
                 }
                 return new OperatorSweepActionResult(false, refusal);
             }
@@ -179,6 +190,13 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
 
                 if (round.Base is not null && !ContinuationBaseStore.Save(folderPath, round.Base))
                     return RollBack("The continuation base could not be written.");
+
+                if (findingIds is not null)
+                {
+                    ReviewConcernRoundStore.RecordFinding(folderPath, 0, round.ReviewAttemptId,
+                        [Contract.ReviewFindingIdentity.Aspect], round.Base?.CommitSha, null, null, findingIds);
+                    findingRoundWritten = true;
+                }
 
                 moved = await moveAsync(ct).ConfigureAwait(false);
             }
@@ -294,13 +312,7 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
     {
         var findings = (report?.Verdicts ?? [])
             .Where(verdict => !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
-            .Select(verdict => new Contract.ReviewFollowUpFinding(
-                verdict.Aspect,
-                verdict.Status,
-                verdict.Summary,
-                verdict.EvidenceChecked,
-                verdict.Missing,
-                verdict.Classification))
+            .SelectMany(Contract.ReviewFollowUpFinding.FromVerdict)
             .ToList();
         if (findings.Count == 0)
         {

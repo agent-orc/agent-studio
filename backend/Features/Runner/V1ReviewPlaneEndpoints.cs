@@ -1118,6 +1118,8 @@ public static class V1ReviewPlaneEndpoints
                     };
                 if (!TryOutcome(request.Outcome, out var engineOutcome))
                     return Results.BadRequest(new Contract.ApiError("invalid-review-outcome", "Review outcome is invalid."));
+                if (!acceptedReplay)
+                    request = RecordFindingRound(request, reviewTask, currentReview, authority, engineOutcome);
                 var engineReportHash = RemoteReviewSettlementJournal.Hash(request);
                 var engineSettleRequest = new SettleReviewAttemptRequest(
                     new AttemptWriteReference(attemptId, request.Fence, request.AuthorityEpoch,
@@ -1164,9 +1166,7 @@ public static class V1ReviewPlaneEndpoints
                 {
                     var contentBudget = acceptedReplay ? null
                         : MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
-                            request.Outcome, request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
-                                verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-                                verdict.Missing, verdict.Classification)).ToArray(),
+                            request.Outcome, request.Verdicts.SelectMany(Contract.ReviewFollowUpFinding.FromVerdict).ToArray(),
                             payload.ConcernRoundsUsed, payload.MaximumConcernRounds, engineCardBudget,
                             payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty, attemptId,
                             payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
@@ -1311,6 +1311,8 @@ public static class V1ReviewPlaneEndpoints
             if (preparedTask is null)
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+            if (!acceptedReplay)
+                request = RecordFindingRound(request, preparedTask, currentReview, authority, outcome);
             request = request with { Verdicts = MonolithTransitionAdapter.MergeReviewVerdicts(request.Verdicts) };
             var originalVerdicts = request.Verdicts;
             var previousRounds = projections.Read(preparedTask).Attempts
@@ -1322,9 +1324,7 @@ public static class V1ReviewPlaneEndpoints
                 CardRoundBudget.ResolveAllowed(configuration));
             var budgetDecision = MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
                 outcome.ToString(),
-                originalVerdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
-                    verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
-                    verdict.Missing, verdict.Classification)).ToArray(),
+                originalVerdicts.SelectMany(Contract.ReviewFollowUpFinding.FromVerdict).ToArray(),
                 ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
                 settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
                 cardBudget, roundSeed, attemptId,
@@ -1399,7 +1399,7 @@ public static class V1ReviewPlaneEndpoints
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.FindingRound,
                         BuildRemoteFindingFollowUp(reviewFollowUp.Findings, attemptId, fixRoundBase is not null),
-                        reviewFollowUp.Findings.Select(item => item.Aspect).ToArray(),
+                        reviewFollowUp.Findings.Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                         settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
                         cardBudget with { Used = cardBudget.Used + 1 }, deliveredRound, roundSeed,
                         fixRoundBase);
@@ -2804,6 +2804,31 @@ public static class V1ReviewPlaneEndpoints
         return authority.ReplanPendingReview(pending.AttemptId, plan).Accepted;
     }
 
+    private static Contract.ReviewReportRequest RecordFindingRound(
+        Contract.ReviewReportRequest report, TaskInfo task, ReviewAttemptDto review,
+        AttemptAuthorityService authority, ReviewTerminalOutcome outcome)
+        => Contract.ReviewFindingIdentity.Record(report, task.Id, PreviousFindingRound(task, review, authority),
+            outcome.ToString());
+
+    private static Contract.ReviewFindingRound? PreviousFindingRound(
+        TaskInfo task, ReviewAttemptDto current, AttemptAuthorityService authority)
+    {
+        var settled = authority.GetTaskProjection(current.TaskKey, includeArchived: true).ReviewAttempts
+            .Where(review => review.AttemptId != current.AttemptId
+                && review.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
+                    or ReviewTerminalOutcome.IntegrationBranchDefect)
+            .OrderByDescending(review => review.TerminalAt);
+        foreach (var review in settled)
+        {
+            if (RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId).Entry is { } entry
+                && review.Reports.Any(delivery => delivery.AuthorityStatus == AttemptWriteStatus.Accepted
+                    && delivery.IdempotencyKey == entry.IdempotencyKey)
+                && entry.Report.FindingRound is { } round)
+                return round;
+        }
+        return null;
+    }
+
     private static Contract.ReviewSubjectDto ToSubject(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -2857,7 +2882,11 @@ public static class V1ReviewPlaneEndpoints
                 ?? authority?.GetRun(review.SourceRunAttemptId)?.Lease?.HostId,
             review.Subject.ReviewPolicyHash,
             plan,
-            review.Subject.CreatedAt);
+            review.Subject.CreatedAt)
+        {
+            OpenFindings = task is not null && authority is not null
+                ? PreviousFindingRound(task, review, authority)?.OpenFindings : null,
+        };
     }
 
     /// <summary>

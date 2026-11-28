@@ -1706,6 +1706,7 @@ public static class LeaseEndpoints
                     TriggeredBy = remoteTrigger.TriggeredBy,
                     TriggerReason = remoteTrigger.TriggerReason,
                     TriggerSource = remoteTrigger.TriggerSource,
+                    ReviewFindingIds = remoteTrigger.ReviewFindingIds,
                     Cli = "remote-runner",
                     RunAttemptId = acquire.Lease.AttemptId,
                     DispatchDecisionId = overlapGuard.TakeDecisionId(candidate),
@@ -3929,7 +3930,8 @@ public static class LeaseEndpoints
                 concernRound.RoundKind == RunTriggers.ReviewConcern
                     ? $"Review concern round {concernRound.Used} of {concernRound.Maximum}."
                     : $"Blocking findings from review {concernRound.ReviewAttemptId} require another coding run.",
-                $"review={concernRound.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}");
+                $"review={concernRound.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}")
+            { ReviewFindingIds = concernRound.FindingIds };
         }
 
         if (pendingIntent is not null)

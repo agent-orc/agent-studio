@@ -14,7 +14,8 @@ public static class ReviewFindingMergePolicy
     {
         var pairs = verdicts.Select(verdict => (Verdict: verdict,
             Finding: new ReviewFollowUpFinding(verdict.Aspect, verdict.Status, verdict.Summary,
-                verdict.EvidenceChecked, verdict.Missing, verdict.Classification))).ToArray();
+                verdict.EvidenceChecked, verdict.Missing, verdict.Classification)
+            { FindingId = verdict.FindingClaims?.FirstOrDefault()?.Id })).ToArray();
         return Merge(pairs.Select(pair => pair.Finding))
             .Select(finding => pairs.First(pair => ReferenceEquals(pair.Finding, finding)).Verdict)
             .ToArray();
@@ -40,7 +41,8 @@ public static class ReviewFindingMergePolicy
             }
             var key = Fingerprint(item);
             var index = merged.FindIndex(existing =>
-                !IsProtectedGate(existing.Aspect) && !IsProtectedGate(item.Aspect)
+                existing.FindingId is null && item.FindingId is null
+                && !IsProtectedGate(existing.Aspect) && !IsProtectedGate(item.Aspect)
                 &&
                 string.Equals(existing.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
                 != string.Equals(item.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
@@ -69,6 +71,8 @@ public static class ReviewFindingMergePolicy
 
     public static string Fingerprint(ReviewFollowUpFinding item)
     {
+        if (item.FindingId is { } id) return id;
+
         static string Normalize(string? value)
             => Regex.Replace(value?.Trim().ToLowerInvariant() ?? string.Empty, @"\s+", " ");
         var cited = Normalize(item.EvidenceChecked);

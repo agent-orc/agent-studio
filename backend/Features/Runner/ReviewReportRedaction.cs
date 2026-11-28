@@ -83,6 +83,15 @@ internal static class ReviewReportRedaction
             EvidenceChecked = Text(verdict.EvidenceChecked),
             Missing = Text(verdict.Missing),
             Diagnosis = RedactDiagnosis(verdict.Diagnosis),
+            FindingClaims = verdict.FindingClaims?.Where(item => item is not null).Select(item => item with
+            {
+                Subject = Text(item.Subject)!,
+                Contract = Text(item.Contract)!,
+                Violation = Text(item.Violation)!,
+                Evidence = Text(item.Evidence)!,
+            }).ToArray(),
+            FindingRechecks = verdict.FindingRechecks?.Where(item => item is not null)
+                .Select(item => item with { Evidence = Text(item.Evidence) }).ToArray(),
         };
 
     private static Contract.DeliveryFailureDiagnosisResult? RedactDiagnosis(

@@ -235,6 +235,8 @@ public sealed partial class TaskServerStore
             Author = intent.Receipt.Actor,
             SavedAt = intent.Receipt.AcceptedAt,
             SavedReason = intent.Receipt.Reason,
+            findingIds = commandId.StartsWith("review-round:", StringComparison.Ordinal)
+                ? ReviewFindingRoundPrompt.RoutedFindingIds(intent.Prompt) : null,
             PromptSha256 = startedPromptSha256.ToLowerInvariant(),
             lease.Fence,
             state = "delivered",

@@ -29,6 +29,7 @@ public sealed record RunRecord
     public string? TriggeredBy { get; init; }
     public string? TriggerReason { get; init; }
     public string? TriggerSource { get; init; }
+    public IReadOnlyList<string>? ReviewFindingIds { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime? EndedAt { get; init; }
     /// <summary><c>running</c>, <c>completed</c>, or a typed terminal result status such as <c>failed</c>, <c>blocked</c>, or <c>superseded</c>.</summary>
@@ -721,6 +722,7 @@ public static class RunTimelineBuilder
                 TriggerReason = evt.TriggerReason,
                 DispatchDecisionId = evt.DispatchDecisionId,
                 TriggerSource = evt.TriggerSource,
+                ReviewFindingIds = evt.ReviewFindingIds,
                 StartedAt = evt.Ts,
                 EndedAt = endedAt,
                 Status = status,

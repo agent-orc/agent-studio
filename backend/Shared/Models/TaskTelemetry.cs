@@ -117,6 +117,7 @@ public record SessionEvent
     public string? TriggerReason { get; init; }
     /// <summary>Machine-readable source details such as review/aspect ids, a failure code, or a prompt preview.</summary>
     public string? TriggerSource { get; init; }
+    public IReadOnlyList<string>? ReviewFindingIds { get; init; }
     public string? Cli { get; init; }
     /// <summary>
     /// Effective model resolved for this run at confirmed process start.
@@ -237,6 +238,8 @@ public sealed record RunTriggerMetadata(
     string TriggerReason,
     string? TriggerSource = null)
 {
+    public IReadOnlyList<string>? ReviewFindingIds { get; init; }
+
     public static string PromptPreview(string? prompt)
     {
         var normalized = string.Join(' ', (prompt ?? string.Empty)

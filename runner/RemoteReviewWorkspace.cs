@@ -557,6 +557,8 @@ public sealed class RemoteReviewWorkspace
                 var authored = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
                     ? ConceptRemoteReviewPolicy.PrepareCheckoutPrompt(command.Prompt!)
                     : command.Prompt!;
+                if (string.Equals(command.Aspect, ReviewFindingIdentity.Aspect, StringComparison.OrdinalIgnoreCase))
+                    authored += ReviewFindingIdentity.ReviewInstructions(_subject.OpenFindings);
                 var input = ReviewAspectInputBudget.Compose(
                     authored,
                     reviewMaterial ??= await BuildReviewMaterialAsync(
@@ -4356,7 +4358,7 @@ public sealed class RemoteReviewWorkspace
                 : marker.Summary;
             if (!string.IsNullOrWhiteSpace(marker.Detail))
                 summary += $" Detail: {marker.Detail}";
-            return new ReviewVerdictDto(
+            return ReviewFindingIdentity.ReadReply(new ReviewVerdictDto(
                 command.Aspect,
                 status,
                 AspectVerdictMarkerParser.ClassificationWithMalformed(
@@ -4367,7 +4369,7 @@ public sealed class RemoteReviewWorkspace
                 marker.Missing)
             {
                 UsesDossierCheckout = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase),
-            };
+            }, result.StdOut);
         }
         return new ReviewVerdictDto(
             command.Aspect,

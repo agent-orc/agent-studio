@@ -803,9 +803,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var fakeCodex = Path.Combine(_root, "fake-codex.sh");
         await File.WriteAllTextAsync(fakeCodex, """
             #!/bin/sh
-            printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Looks good.\n[[ASPECT_VERDICT: status=pass; summary=Remote aspect inspected the exact subject.]]"}}'
+            printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Looks good.\nREVIEW_FINDING_RECHECK {\"id\":\"test-finding-id\",\"disposition\":\"addressed\",\"evidence\":\"README.md:1\"}\n[[ASPECT_VERDICT: status=pass; summary=Remote aspect inspected the exact subject.]]"}}'
             printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":21,"output_tokens":8,"cached_input_tokens":5}}'
-            """);
+            """.Replace("test-finding-id", "rfi_" + new string('a', 64), StringComparison.Ordinal));
         File.SetUnixFileMode(
             fakeCodex,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -846,7 +846,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(executed.InputIncludesCached);
         Assert.Contains(evidence.Artifacts, artifact =>
             artifact.Sha256 == executed.StdoutSha256 && artifact.ContentBase64 is not null);
-        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("pass", verdict.Status);
+        var recheck = Assert.Single(verdict.FindingRechecks!);
+        Assert.Equal("addressed", recheck.Disposition);
+        Assert.Equal("README.md:1", recheck.Evidence);
         Assert.False(evidence.Workspace.DirtyAfter);
     }
 

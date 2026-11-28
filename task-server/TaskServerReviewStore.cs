@@ -595,7 +595,10 @@ public sealed partial class TaskServerStore
             response = new ReviewClaimResponse(
                 "claimed",
                 claimedAttempt,
-                subject,
+                subject with
+                {
+                    OpenFindings = (await ReadPreviousFindingRoundAsync(connection, transaction, subject.TaskId, ct))?.OpenFindings,
+                },
                 lease,
                 Message: selectedQuotaWarning,
                 RequiredCapabilities: capabilityAdmission.Required,
@@ -1004,6 +1007,17 @@ public sealed partial class TaskServerStore
         return result!;
     }
 
+    private static async Task<ReviewFindingRound?> ReadPreviousFindingRoundAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, string taskId, CancellationToken ct)
+    {
+        var json = await ScalarAsync(connection, """
+            SELECT json_extract(report_json, '$.findingRound') FROM review_attempts
+             WHERE task_id = $task AND json_type(report_json, '$.findingRound') = 'object'
+             ORDER BY reported_at DESC, rowid DESC LIMIT 1;
+            """, ct, transaction, ("$task", taskId));
+        return json is string value ? JsonSerializer.Deserialize<ReviewFindingRound>(value, ReviewJson) : null;
+    }
+
     public async Task<ReviewReportDto> ReportReviewAsync(
         string attemptId,
         ReviewReportRequest request,
@@ -1066,8 +1080,9 @@ public sealed partial class TaskServerStore
                     });
                 classified = (settledReport.Outcome, settledReport.FailureClassification);
             }
-            var storedJson = ReferenceEquals(settledReport, request)
-                ? payloadJson : JsonSerializer.Serialize(settledReport, ReviewJson);
+            settledReport = ReviewFindingIdentity.Record(settledReport, subject.TaskId,
+                await ReadPreviousFindingRoundAsync(connection, transaction, subject.TaskId, ct), classified.Outcome);
+            var storedJson = JsonSerializer.Serialize(settledReport, ReviewJson);
             var received = UtcNow;
             await RecordUnprovenFlakeFailuresAsync(
                 connection, transaction, request, attemptId, subject.TaskId, received, ct);
@@ -1232,7 +1247,11 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
-        return await ReadReviewSubjectAsync(connection, transaction, subjectId, ct);
+        var subject = await ReadReviewSubjectAsync(connection, transaction, subjectId, ct);
+        return subject is null ? null : subject with
+        {
+            OpenFindings = (await ReadPreviousFindingRoundAsync(connection, transaction, subject.TaskId, ct))?.OpenFindings,
+        };
     }
 
     public async Task<ReviewAttemptDto?> GetReviewAttemptAsync(string attemptId, CancellationToken ct)

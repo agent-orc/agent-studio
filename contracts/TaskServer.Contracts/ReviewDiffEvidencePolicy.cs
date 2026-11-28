@@ -19,13 +19,7 @@ public static class ReviewDiffEvidencePolicy
                         ["reviewer block lacked a complete review-material citation"]),
                 }
                 : verdict;
-        var cited = changedPaths.Any(path =>
-            !string.IsNullOrWhiteSpace(path)
-            && verdict.EvidenceChecked is { } evidence
-            && Regex.IsMatch(evidence,
-                @"(?<![\w./\\-])" + Regex.Escape(path) + @"(?![\w./\\-])",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
-        if (cited)
+        if (CitesChangedPath(verdict.EvidenceChecked, changedPaths))
             return verdict with
             {
                 Diagnosis = new DeliveryFailureDiagnosisResult(
@@ -42,4 +36,12 @@ public static class ReviewDiffEvidencePolicy
                 ["reviewer block has no evidence against a changed path"]),
         };
     }
+
+    internal static bool CitesChangedPath(string? evidence, IReadOnlyList<string> changedPaths)
+        => changedPaths.Any(path =>
+            !string.IsNullOrWhiteSpace(path)
+            && evidence is not null
+            && Regex.IsMatch(evidence,
+                @"(?<![\w./\\-])" + Regex.Escape(path) + @"(?![\w./\\-])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
 }

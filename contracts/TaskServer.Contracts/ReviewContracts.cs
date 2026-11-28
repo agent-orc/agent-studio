@@ -195,7 +195,11 @@ public sealed record ReviewSubjectDto(
     string? CodingHostId,
     string ReviewPolicyHash,
     ReviewPlanDto Plan,
-    DateTime CreatedAt);
+    DateTime CreatedAt)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ReviewFindingClaim>? OpenFindings { get; init; }
+}
 
 public sealed record ReviewAttemptDto(
     string AttemptId,
@@ -682,6 +686,11 @@ public sealed record ReviewVerdictDto(
     DeliveryFailureDiagnosisResult? Diagnosis = null,
     string? CarriedOverFrom = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ReviewFindingClaim>? FindingClaims { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ReviewFindingRecheck>? FindingRechecks { get; init; }
+
     /// <summary>The executor supplied checkout access instructions, including when running an older frozen plan.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool UsesDossierCheckout { get; init; }
@@ -814,6 +823,8 @@ public sealed record ReviewReportRequest(
     ReviewSuiteSelectionDto? SuiteSelection = null)
 {
     public IReadOnlyList<ProjectTestQuarantine> Quarantines { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReviewFindingRound? FindingRound { get; init; }
 }
 
 /// <summary>

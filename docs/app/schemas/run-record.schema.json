@@ -17,7 +17,13 @@
     },
     "triggeredBy": { "type": ["string", "null"], "description": "Actor: operator client/user, pipeline, runner <id>, or watchdog." },
     "triggerReason": { "type": ["string", "null"], "description": "One sentence explaining why this run started." },
-    "triggerSource": { "type": ["string", "null"], "maxLength": 1000, "description": "Review attempt/aspect ids, integration failure code, or at most the first 300 prompt characters." }
+    "triggerSource": { "type": ["string", "null"], "maxLength": 1000, "description": "Review attempt/aspect ids, integration failure code, or at most the first 300 prompt characters." },
+    "reviewFindingIds": {
+      "type": ["array", "null"],
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^rfi_[0-9a-f]{64}$" },
+      "description": "Independent review findings routed to this run."
+    }
   },
   "additionalProperties": true
 }

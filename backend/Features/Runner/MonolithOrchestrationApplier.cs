@@ -342,6 +342,19 @@ public sealed class MonolithOrchestrationApplier(
             if (baseRecord is not null && !ContinuationBaseStore.Save(task.FolderPath, baseRecord))
                 throw new IOException("The reviewed continuation base could not be saved.");
         }
+        var structuredFindingRound = decision?.Action == TransitionAction.FindingRound
+            && decision.Findings.Any(finding => ReviewFindingIdentity.IsId(finding.FindingId));
+        if (structuredFindingRound && task.State == occurrence.ExpectedSourceState)
+        {
+            var entry = RemoteReviewSettlementJournal.Read(task.FolderPath, occurrence.AuthorityAttemptId).Entry
+                ?? throw new IOException("The settled review for the finding round could not be read.");
+            var followUp = ReviewFindingRoundPrompt.Build(decision!.Findings, entry.AttemptId,
+                decision.ContinuationBase is not null);
+            RemoteReviewContinuationProjection.PrepareFindingRound(task, entry.AttemptId, followUp,
+                decision.Findings.Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                entry.Report, settings.Get(task.ProjectName).MaxReviewConcernRounds,
+                services.GetRequiredService<ILogger<MonolithOrchestrationApplier>>());
+        }
         if (task.State == occurrence.ExpectedSourceState)
         {
             var isSalvage = activeChoice is { Action: DecisionActionKinds.Adapt,
@@ -462,8 +475,8 @@ public sealed class MonolithOrchestrationApplier(
             }
         }
 
-        if (decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
-            or TransitionAction.ReturnToReady)
+        if (!structuredFindingRound && decision?.Action is
+            (TransitionAction.FindingRound or TransitionAction.ConcernRound or TransitionAction.ReturnToReady))
         {
             var marker = $"<!-- engine-decision:{occurrence.Run.RunId} -->";
             var promptPath = Path.Combine(task.FolderPath, "prompt.md");

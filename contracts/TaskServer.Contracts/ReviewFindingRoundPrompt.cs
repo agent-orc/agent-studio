@@ -19,6 +19,8 @@ namespace AgentStudio.TaskServer.Contracts;
 /// </summary>
 public static class ReviewFindingRoundPrompt
 {
+    private const string Header = "# Remote Review finding fix round (";
+    private const string RoutedIdsPrefix = "Routed finding IDs: ";
     private const string TagPrefix = "REVIEW-FINDINGS-";
 
     public const string Directive =
@@ -61,6 +63,7 @@ public static class ReviewFindingRoundPrompt
         {
             lines.Add($"## {finding.Aspect}");
             lines.Add("");
+            if (finding.FindingId is { } id) lines.Add($"- Finding ID: {id}");
             lines.Add($"- Summary: {finding.Summary}");
             if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
                 lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
@@ -88,16 +91,33 @@ public static class ReviewFindingRoundPrompt
         bool continuesReviewedDelivery,
         string? nonce = null)
     {
-        var lines = new List<string>
+        var lines = new List<string> { $"{Header}{reviewAttemptId})", "" };
+        var ids = findings.Select(finding => finding.FindingId).Where(ReviewFindingIdentity.IsId)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        if (ids.Length > 0)
         {
-            $"# Remote Review finding fix round ({reviewAttemptId})",
-            "",
+            lines.Add(RoutedIdsPrefix + string.Join(',', ids));
+            lines.Add("");
+        }
+        lines.AddRange([
             BaseSentence(continuesReviewedDelivery),
             "",
             Directive,
             "",
             RenderAspectFindings(findings, nonce),
-        };
+        ]);
         return string.Join('\n', lines).TrimEnd();
+    }
+
+    public static IReadOnlyList<string>? RoutedFindingIds(string? prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt)) return null;
+        var lines = prompt.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var headerIndex = lines[0] == "# Orchestrator follow-up" ? 1 : 0;
+        if (lines.Length <= headerIndex + 1 || !lines[headerIndex].StartsWith(Header, StringComparison.Ordinal)
+            || !lines[headerIndex + 1].StartsWith(RoutedIdsPrefix, StringComparison.Ordinal))
+            return null;
+        var ids = lines[headerIndex + 1][RoutedIdsPrefix.Length..].Split(',');
+        return ids.All(ReviewFindingIdentity.IsId) ? ids.Distinct(StringComparer.Ordinal).ToArray() : null;
     }
 }
