@@ -58,8 +58,11 @@ public sealed class RemoteBuildTestGateRunner(
     ILogger<RemoteBuildTestGateRunner> logger,
     TaskGateCancellationRegistry? cancellationRegistry = null,
     GateHostOutageMonitor? hostHealth = null, SshGateHostProbe? diskMonitor = null,
-    PostMergeModeService? postMergeMode = null) : IBuildTestGateRunner
+    PostMergeModeService? postMergeMode = null, IConfiguration? configuration = null,
+    ILoggerFactory? loggers = null) : IBuildTestGateRunner
 {
+    internal Func<string, IRemoteGateTransport>? RelocationTransportFactory { get; init; }
+
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     internal static bool ValidSha(string? value) => value is not null
@@ -79,6 +82,12 @@ public sealed class RemoteBuildTestGateRunner(
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromHours(12))
             return Failure(request, BuildTestGateFailureKind.Environment,
                 "Remote verification requires a positive run budget of at most 12 hours.");
+        var relocation = GateEnvironmentRelocationScope.For(request);
+        var selectedTransport = relocation is null ? transport : RelocationTransportFactory?.Invoke(relocation.Section)
+            ?? new RemoteGateTransport(configuration ?? throw new InvalidOperationException("Relocation requires gate configuration."),
+                (loggers ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateLogger<RemoteGateTransport>(),
+                relocation.Section, new GateSlotUsageTracker(configuration));
+        if (relocation is not null) request = request with { DisableVerdictCache = true };
         using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation,
             cancelOnIntegration: !request.DeliveryIntegratedAtStart);
@@ -103,10 +112,10 @@ public sealed class RemoteBuildTestGateRunner(
             try
             {
                 gateToken.ThrowIfCancellationRequested();
-                if (diskMonitor is not null)
+                if (relocation is null && diskMonitor is not null)
                     await diskMonitor.WaitForDiskRecoveryAsync(
                         reason => logger.LogWarning("gate-disk-admission {Reason}", reason), gateToken);
-                var result = await transport.RunAsync(request, changedFiles, profile, mode, timeout, gateToken);
+                var result = await selectedTransport.RunAsync(request, changedFiles, profile, mode, timeout, gateToken);
                 if (!string.Equals(result.ExpectedSha, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(result.GateId, request.GateId, StringComparison.Ordinal)
                     || (result.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn or BuildTestGateVerdict.NotApplicable
@@ -116,7 +125,7 @@ public sealed class RemoteBuildTestGateRunner(
                 var transportFailure = result.Verdict == BuildTestGateVerdict.Fail
                     && GateFailureTriagePolicy.ContainsTransportMarker(result.Reason + "\n" + result.Output)
                     && GateFailureTriagePolicy.FailingItems(result.Output).Count == 0;
-                ReportHost(transportFailure, result.Reason + "\n" + result.Output);
+                if (relocation is null) ReportHost(transportFailure, result.Reason + "\n" + result.Output);
                 if (attempt < MaxTransportAttempts && transportFailure)
                 {
                     retryReasons.Add("Transport response required another gate attempt.");
@@ -150,7 +159,7 @@ public sealed class RemoteBuildTestGateRunner(
                 logger.LogWarning(exception,
                     "remote_gate_transport_failed gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                     request.GateId, request.ExpectedSha, attempt);
-                ReportHost(true, exception.Message);
+                if (relocation is null) ReportHost(true, exception.Message);
                 incompleteTimings = true;
                 if (attempt < MaxTransportAttempts)
                 {
@@ -199,4 +208,29 @@ public sealed class RemoteBuildTestGateRunner(
             Executor = request.Executor,
             AttemptChainId = request.AttemptChainId,
         };
+}
+
+/// <summary>Platform-owned placement for one integration replay, confined to its asynchronous call chain.</summary>
+internal sealed class GateEnvironmentRelocationScope : IDisposable
+{
+    private static readonly AsyncLocal<GateEnvironmentRelocationScope?> Current = new();
+    private readonly GateEnvironmentRelocationScope? _prior;
+    private readonly string _project;
+    private readonly string _jobId;
+    internal string Section { get; }
+
+    internal GateEnvironmentRelocationScope(string section, string project, string jobId)
+    {
+        Section = section;
+        _project = project;
+        _jobId = jobId;
+        _prior = Current.Value;
+        Current.Value = this;
+    }
+
+    internal static GateEnvironmentRelocationScope? For(BuildTestGateRequest request)
+        => Current.Value is { } scope && request.Project == scope._project && request.JobId == scope._jobId
+            ? scope : null;
+
+    public void Dispose() => Current.Value = _prior;
 }

@@ -89,7 +89,7 @@ public sealed class AiOperatorDecisionTests : IDisposable
     [Theory]
     [InlineData(0, 6, false, true, 0, AiOperatorEffects.ReplayIntegration)]
     [InlineData(0, 4, false, true, 0, AiOperatorEffects.None)]
-    [InlineData(3, 600, false, true, 0, AiOperatorEffects.ParkAndContinue)]
+    [InlineData(3, 600, false, true, 0, AiOperatorEffects.ParkIntegration)]
     [InlineData(3, 600, false, true, 1, AiOperatorEffects.ParkIntegration)]
     [InlineData(3, 600, false, false, 0, AiOperatorEffects.ParkIntegration)]
     [InlineData(3, 600, true, true, 0, AiOperatorEffects.None)]
