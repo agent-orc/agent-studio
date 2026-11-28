@@ -857,7 +857,13 @@ first red time, repair key and current lane, and disappears when the repair
 starts or the incident resolves. The RT owner-decision ladder remains in place.
 Repair briefs list each failing test's first diagnostic; new runners preserve
 these before compacting console output. Older receipts explicitly say when a
-diagnostic was not recorded. Suspect lists use the RT static test-file and
+diagnostic was not recorded. When a declared lint command outside a test suite
+fails with Node TAP output, its receipt retains the failed test names and first
+error lines. The runner repeats that lint command once at the same tip. Only
+tests reported failing again receive a confirmed failure. If the repeat fails
+before reaching a named test, its repeat result is unknown. A later passing
+execution of the same lint command supplies covering evidence for its base
+check. Suspect lists use the RT static test-file and
 covering-folder map, retaining build inputs and project-graph fallback when
 reach is unknown. Measured control and bisect attribution remains authoritative.
 

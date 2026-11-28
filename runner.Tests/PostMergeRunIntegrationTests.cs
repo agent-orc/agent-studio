@@ -264,6 +264,58 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.DoesNotContain(run.Verdicts, verdict => verdict.Retried);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LintReceiptRecordsTapDiagnosticsAndOnlyConfirmsObservedRepeats(bool reproduced)
+    {
+        const string lint = "bash scripts/npm-frontend.sh run lint";
+        var fixture = DurableFixture(lint);
+        using var http = fixture.Http;
+        var calls = new List<string>();
+        const string tap = """
+            TAP version 13
+            # Subtest: rotates (false)
+            not ok 1 - rotates (false)
+              ---
+              duration_ms: 1.2
+              error: 'listen EADDRINUSE: address already in use'
+              ...
+            not ok 2 - pending # TODO later
+            not ok 3 - renewal
+              ---
+              error: |-
+                test timed out after 60000ms
+                not ok 99 - quoted test output
+              ...
+            """;
+        Task<(int, bool, string)> Execute(string command, CancellationToken _)
+        {
+            calls.Add(command);
+            var output = calls.Count == 1 || reproduced ? tap + "\n#" + new string('x', 3000) : "lint setup failed";
+            return Task.FromResult((1, false, output));
+        }
+        Assert.Equal(1, await DurableWorker(http, calls, executor: Execute).ExecuteJournalAsync(fixture.Journal, default));
+        var receipt = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+        Assert.Equal("red", receipt.Status);
+        Assert.Equal([lint, lint], calls);
+        var verdict = Assert.Single(receipt.Verdicts);
+        Assert.True(verdict.Retried);
+        Assert.Contains(verdict.SuiteId!, receipt.SuiteSelection!.SelectedSuites);
+        Assert.Equal(lint, receipt.SuiteSelection.SuiteCommands[verdict.SuiteId!]);
+        Assert.DoesNotContain("EADDRINUSE", verdict.OutputTail);
+        Assert.Equal("listen EADDRINUSE: address already in use", verdict.FailureMessages!["rotates (false)"]);
+        Assert.Equal("test timed out after 60000ms", verdict.FailureMessages["renewal"]);
+        Assert.Equal(["rotates (false)", "renewal"], receipt.Failure!.FailingTests);
+        Assert.Equal(receipt.Failure.FailingTests, receipt.TestVerdicts!.Select(test => test.Test));
+        Assert.All(receipt.TestVerdicts!, test =>
+        {
+            Assert.Equal(["initial", "repeat"], test.Attempts.Select(attempt => attempt.Phase));
+            Assert.Equal(["fail", reproduced ? "fail" : "unknown"], test.Attempts.Select(attempt => attempt.Result));
+            Assert.All(test.Attempts, attempt => Assert.Equal(receipt.TipSha, attempt.Sha));
+        });
+    }
+
     [Fact]
     public async Task RestartAfterCommandReconstructsLedgerWithoutRepeatingFinishedWork()
     {
@@ -469,15 +521,15 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             ReceiptDelay = (_, _) => Task.CompletedTask,
         };
 
-    private (HttpClient Http, DurableTransport Transport, PostMergeHostJournal Journal, string StoreRoot) DurableFixture()
+    private (HttpClient Http, DurableTransport Transport, PostMergeHostJournal Journal, string StoreRoot) DurableFixture(string? lint = null)
     {
         var checkout = Path.Combine(_root, "durable");
         Directory.CreateDirectory(checkout);
         var definition = new ProjectExecutionDefinition(1, [], new Dictionary<string, string>(),
-            new("", ["build"], ["suite"], []), [new("routine", "routine", 1, "suite")], [], [],
+            new("", ["build"], ["suite"], lint is null ? [] : [lint]), [new("routine", "routine", 1, "suite")], [], [],
             new Dictionary<string, string>(), null, null, null, null, null);
         var run = new PostMergeRunRecord("durable-run", "demo", "window", new string('a', 40), null,
-            Now, Now, 1, ["build", "suite"], [], "running", Now, null)
+            Now, Now, 1, lint is null ? ["build", "suite"] : [lint], [], "running", Now, null)
             { SuiteSelection = new(["routine"], [], []) };
         var owner = Guid.NewGuid().ToString("N");
         var storeRoot = Path.Combine(_root, "store");

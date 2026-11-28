@@ -236,6 +236,8 @@ public sealed partial class PostMergeIncidentService
         var current = _store.Read(project.Id);
         var openStops = (current.Incidents ?? []).Where(item => item.ResolvedAtUtc is null && item.LineStopReason is not null).ToArray();
         var lineStop = openStops.FirstOrDefault()?.LineStopReason;
+        var stoppedTests = openStops.Select(item => item.TestId).Where(test => test is not null).Distinct().ToArray();
+        if (stoppedTests.Length > 0) lineStop += " " + string.Join(", ", stoppedTests);
         var inconclusive = decisions.Any(decision => decision.Decisions.Any(action => action.Action == RedTestAction.MarkInconclusive));
         _store.SetDevelopDisposition(project.Id, MonolithTransitionAdapter.QuarantineDevelopState(lineStop), lineStop,
             inconclusive ? run.Id : null);

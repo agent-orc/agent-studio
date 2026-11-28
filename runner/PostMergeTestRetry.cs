@@ -10,6 +10,8 @@ namespace AgentRunner;
 internal sealed record PostMergeTestRun(string Phase, string Sha, IReadOnlyList<string> Tests,
     int ExitCode, bool TimedOut, string Output, long DurationMs)
 {
+    public IReadOnlyDictionary<string, string>? ReportedResults { get; init; }
+
     public bool Passed => ExitCode == 0 && !TimedOut;
 
     /// <summary>
@@ -21,6 +23,7 @@ internal sealed record PostMergeTestRun(string Phase, string Sha, IReadOnlyList<
     public string ResultOf(string test)
     {
         if (Passed) return PostMergeTestResults.Pass;
+        if (ReportedResults is not null) return ReportedResults.GetValueOrDefault(test, PostMergeTestResults.Unknown);
         var failed = PostMergeAttributor.FailedTests(Output);
         if (failed.Count > 0)
             return failed.Any(name => PostMergeAttributor.SameTest(name, test))

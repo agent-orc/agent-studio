@@ -4,7 +4,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { agentCall, serveAgent, digest, keyThumbprint } from '../src/agent.mjs';
+import { checkSocketPath, createSocketPath } from '../src/agent-socket.mjs';
 
 const decode = part => JSON.parse(Buffer.from(part, 'base64url'));
 const verify = (jwk, data, signature) => crypto.verify('sha256', Buffer.from(data),
@@ -49,4 +51,61 @@ for (const refused of [false, true]) test(`resident rotates with the retained de
       assert.deepEqual(decode(proof.split('.')[0]).jwk, renewal.body.newPublicKey);
     }
   } finally { resident.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('resident binds and cleans up with a 120-byte temp directory', { skip: process.platform === 'win32' }, async t => {
+  const root = fs.mkdtempSync('/tmp/studio-op-test-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const deep = path.join(root, 'd'.repeat(119 - Buffer.byteLength(root)));
+  fs.mkdirSync(deep);
+  const previous = { TMPDIR: process.env.TMPDIR, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  });
+  process.env.TMPDIR = deep;
+  delete process.env.XDG_RUNTIME_DIR;
+  assert.equal(Buffer.byteLength(os.tmpdir()), 120);
+  const resident = await serveAgent(root);
+  t.after(resident.close);
+  const directory = path.dirname(resident.endpoint);
+  assert.equal(path.dirname(directory), '/tmp');
+  assert.equal(fs.lstatSync(directory).uid, process.getuid());
+  assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(resident.endpoint).mode & 0o777, 0o600);
+  assert.deepEqual(await agentCall(resident.endpoint, { operation: 'stop' }), { stopped: true });
+  resident.close();
+  assert.equal(fs.existsSync(directory), false);
+});
+
+test('resident releases its directory and propagates a failed bind', { skip: process.platform === 'win32' }, async t => {
+  let directory;
+  const failure = new Error('bind refused by host');
+  t.mock.method(net.Server.prototype, 'listen', function (endpoint) {
+    directory = path.dirname(endpoint);
+    process.nextTick(() => this.emit('error', failure));
+    return this;
+  });
+  await assert.rejects(serveAgent(os.tmpdir()), error => error === failure);
+  assert.equal(fs.existsSync(directory), false);
+});
+
+test('socket directory choice budgets the complete UTF-8 path', { skip: process.platform === 'win32' }, t => {
+  const root = fs.mkdtempSync('/tmp/studio-op-choice-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runtime = path.join(root, 'runtime');
+  const temp = path.join(root, 'temp');
+  const deep = path.join(root, 'é'.repeat(60));
+  for (const base of [runtime, temp, deep]) fs.mkdirSync(base, { mode: 0o700 });
+  for (const [xdg, tmp, expected] of [[runtime, temp, runtime], [deep, temp, temp],
+    [null, temp, temp], [deep, deep, '/tmp']]) {
+    const endpoint = createSocketPath(root, xdg, tmp);
+    const directory = path.dirname(endpoint);
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    assert.equal(path.dirname(directory), expected);
+    checkSocketPath(endpoint);
+  }
+  assert.throws(() => checkSocketPath(deep), error =>
+    error.message.includes(deep) && error.message.includes(process.platform === 'linux' ? '107' : '103'));
 });
