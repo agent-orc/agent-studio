@@ -2413,6 +2413,45 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             Assert.Equal(ConceptRemoteReviewPolicy.MaterialUnavailable, report.FailureClassification);
     }
 
+    [Theory]
+    [InlineData("aspect-concept-fit", ConceptRemoteReviewPolicy.MaterialUnavailable)]
+    [InlineData("aspect-documentation", "IncompleteReviewReport")]
+    public async Task Interrupted_review_preserves_the_Dossier_read_failure_only_with_concept_fit_evidence(
+        string executedStep, string expectedClassification)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        const string brief = "Review the persona team Dossier.";
+        var conceptFit = new ReviewCommandDto("aspect-concept-fit", "concept-fit", "codex", [],
+            ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: brief, CliType: "codex", Model: "gpt-5.6-sol");
+        var documentation = conceptFit with { StepId = "aspect-documentation", Aspect = "documentation" };
+        var plan = new ReviewPlanDto([conceptFit, documentation], ["concept-fit", "documentation"],
+            IntegrationRef: "refs/heads/develop", BriefSha256: Hash(brief), TaskMode: "concept");
+        await SeedReviewSubjectAsync(store, plan: plan, fullPrompt: brief, authoredVersion: plan.BriefSha256);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var evidence = PassingReport(claim);
+        var request = evidence with
+        {
+            Outcome = "ReviewInfra",
+            FailureClassification = ConceptRemoteReviewPolicy.MaterialUnavailable,
+            Summary = "Cannot read docs/persona-team/index.html.",
+            Commands = [evidence.Commands.Single(command => command.StepId == executedStep)],
+            Artifacts = evidence.Artifacts.Where(artifact =>
+                artifact.Name.StartsWith(executedStep, StringComparison.Ordinal)).ToArray(),
+            Verdicts = [],
+        };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(expectedClassification, report.FailureClassification);
+        Assert.Equal(request.Summary, report.Summary);
+        Assert.True(report.RetryScheduled);
+    }
+
     [Fact]
     public async Task Coding_agent_verdict_citing_changed_file_keeps_existing_delivery_grade()
     {

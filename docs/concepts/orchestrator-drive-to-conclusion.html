@@ -3661,6 +3661,15 @@
           <td>The executor replaces the obsolete instructions before the CLI runs. An inaccessible file
             reaches <code>ReviewInfra / ReviewMaterialUnavailable</code>. A cited content finding keeps its verdict.</td>
         </tr>
+        <tr id="case-concept-review-interrupted-aspects">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-interrupted-aspects</span></td>
+          <td>A Dossier read failure stopped the review before another required aspect ran.</td>
+          <td>Task Server required the remaining verdicts and command evidence and recorded
+            <code>IncompleteReviewReport</code> as the retry reason.</td>
+          <td>When the report identifies a material failure and supplies the executed concept-fit command,
+            Task Server validates the available evidence and schedules the <code>ReviewMaterialUnavailable</code> retry.</td>
+        </tr>
       </tbody>
     </table>
 
