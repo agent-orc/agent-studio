@@ -1,5 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { fullMocks, openHub } from '../helpers/project-hub-mocks';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import { fullMocks, mockApp, openHub, PROJECT } from '../helpers/project-hub-mocks';
 
 /**
  * Viewport keys scroll the main scroll container with nothing focused (AGT-4033).
@@ -97,4 +97,65 @@ test('arrow keys in a text field are left to the field', async ({ page }) => {
   await page.keyboard.press('End');
   await page.waitForTimeout(100);
   expect(await scrollOffsets(page)).toBe(before);
+});
+
+async function expectViewportKeys(page: Page, owner: Locator): Promise<void> {
+  await expect(owner).toBeVisible();
+  const offset = () => owner.evaluate(element => element.scrollTop);
+  await expect.poll(() => owner.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(page.locator('body')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(offset).toBeGreaterThan(0);
+  const afterDown = await offset();
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(offset).toBeLessThan(afterDown);
+  await page.keyboard.press('PageDown');
+  await expect.poll(offset).toBeGreaterThan(0);
+  const afterPageDown = await offset();
+  await page.keyboard.press('PageUp');
+  await expect.poll(offset).toBeLessThan(afterPageDown);
+  const afterPageUp = await offset();
+  await page.keyboard.press('Space');
+  await expect.poll(offset).toBeGreaterThan(afterPageUp);
+  await page.keyboard.press('End');
+  await expect.poll(() => owner.evaluate(element =>
+    Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThanOrEqual(1);
+  await page.keyboard.press('Home');
+  await expect.poll(offset).toBe(0);
+}
+
+test('board viewport keys scroll the group containing the ready cards', async ({ page }) => {
+  await mockApp(page, fullMocks());
+  const watchPath = '/srv/tasks/website';
+  const ready = Array.from({ length: 30 }, (_, index) => {
+    const id = `WEB-${index + 1}`;
+    return { id, key: id, taskKey: `${watchPath}::${id}`, title: `Ready card ${index + 1}`, state: '2-ready',
+      projectName: PROJECT, watchPath, folderPath: `${watchPath}/2-ready/${id}`, createdAt: '2026-11-27T12:00:00Z',
+      cliType: 'codex', agent: 'codex', commits: [], tags: [] };
+  });
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({ json: {
+    ready, backlog: [], preparation: [], orchestratorPrep: [], progress: [], failedPickup: [], codeNotComplete: [],
+    review: [], autoReview: [], humanReview: [], escalated: [], completed: [], archive: [],
+  } }));
+  await page.route(url => url.pathname === '/api/tasks', route => route.fulfill({ json: ready }));
+  await page.goto('/#/board');
+  const readyCard = page.getByTestId('task-card').filter({ hasText: ready[0].title });
+  const owner = page.getByTestId(/^lane-group-lanes-/).filter({ has: readyCard });
+  await expectViewportKeys(page, owner);
+});
+
+test('Releases viewport keys scroll the release history', async ({ page }) => {
+  await mockApp(page, fullMocks());
+  const pending = Array.from({ length: 40 }, (_, index) => ({
+    key: `WEB-${index + 1}`, title: `Pending delivery ${index + 1}`, type: 'bug',
+    href: `#/tasks/WEB-${index + 1}`, integratedAtUtc: null,
+  }));
+  await page.route('**/studio-releases', route => route.fulfill({ json: {
+    project: PROJECT, runningRevision: 'a'.repeat(40), computedAtUtc: '2026-11-27T12:00:00Z',
+    detail: null, pending, releases: [],
+  } }));
+  await page.goto('/#/projects/PROJ-WEB/studio-releases');
+  await expect(page.getByTestId('studio-release-pending')).toHaveCount(pending.length);
+  await expectViewportKeys(page, page.locator('app-studio-releases'));
 });
