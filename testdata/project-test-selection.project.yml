@@ -108,7 +108,7 @@ testSelection:
     suites: [docs-check]
   # Shared contracts, build tooling and sources without a separately declared
   # routine suite keep the conservative full inventory.
-  - paths: [.agent-studio/, .agents/, contracts/, orchestration-decisions/, cli-hosting/, retention/, testsupport/, tools/, scripts/, setup/, setup.Tests/, orchestrator-engine/, orchestrator-engine.Tests/, operations-server/, operations-server.Tests/, operations-agent/, studio-bff/, update-service/, demo-replay-runner/, demo-replay-runner.Tests/, retention.Tests/, project-templates/, prompts/, agent-rules/, companion/, deploy/, testdata/]
+  - paths: [.agent-studio/, .agents/, contracts/, orchestration-decisions/, cli-hosting/, retention/, testsupport/, tools/, scripts/, scenarios/, setup/, setup.Tests/, orchestrator-engine/, orchestrator-engine.Tests/, operations-server/, operations-server.Tests/, operations-agent/, studio-bff/, update-service/, demo-replay-runner/, demo-replay-runner.Tests/, retention.Tests/, project-templates/, prompts/, agent-rules/, companion/, deploy/, testdata/]
     suites: ['*']
 cachePaths:
   - frontend/node_modules

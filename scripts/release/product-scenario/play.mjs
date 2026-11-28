@@ -16,6 +16,7 @@ export async function playScenario(config, {
   signIn = readSignIn,
   fetchImpl = fetch,
   browserFactory = openBrowser,
+  prepareSteps = steps => steps,
 } = {}) {
   const startedAt = clock.now();
   const session = new SessionClient({ url: config.studioUrl, clientId: 'product-scenario-owner', fetchImpl });
@@ -48,7 +49,7 @@ export async function playScenario(config, {
     const chain = config.teardown === 'only'
       ? teardownSteps()
       : [...setupSteps(), ...scenarioSteps(), ...(config.teardown === 'after' ? teardownSteps() : [])];
-    await runSteps(chain, { context, clock, readQuota, onStep: record });
+    await runSteps(prepareSteps(chain), { context, clock, readQuota, onStep: record });
   } catch (error) {
     const now = clock.now().toISOString();
     record({ id: 'start', title: 'Start the scenario', phase: 'setup', actor: null, status: 'failed', startedAtUtc: now,

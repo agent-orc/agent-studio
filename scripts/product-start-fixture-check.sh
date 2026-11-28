@@ -7,6 +7,9 @@
 # last finished phase), prints a managed stack when dotnet-stack is available,
 # and exits 1. The product process is always stopped.
 #
+# Optional arguments are a command to run against the healthy fixture. It receives
+# PRODUCT_FIXTURE_WORKSPACE and PRODUCT_FIXTURE_URL, and its exit code is propagated.
+#
 # Environment:
 #   PRODUCT_START_DLL_DIR       directory with OrchestratorApi.dll
 #                               (default backend/bin/<configuration>/net10.0)
@@ -27,6 +30,7 @@ if [[ ! -f "${dll_dir}/OrchestratorApi.dll" ]]; then
 fi
 
 workspace="$(mktemp -d "${TMPDIR:-/tmp}/product-start-fixture-XXXXXX")"
+keys="$(mktemp -d "${TMPDIR:-/tmp}/product-fixture-keys-XXXXXX")"
 log="${PRODUCT_START_LOG:-${workspace}.log}"
 pid=""
 stop() {
@@ -35,7 +39,7 @@ stop() {
     for _ in $(seq 1 20); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.5; done
     kill -9 "${pid}" 2>/dev/null || true
   fi
-  rm -rf "${workspace}"
+  rm -rf "${workspace}" "${keys}"
 }
 trap stop EXIT
 
@@ -59,7 +63,7 @@ done
   export ASPNETCORE_ENVIRONMENT=Production TaskRepository="${workspace}" AllowedHosts='*'
   export Security__Profile=networked Security__TrustedProxyAddresses=127.0.0.1
   export Security__BootstrapCode="${workspace##*/}-owner-code"
-  export Secrets__KeyFile="${workspace}/home/studio-secrets.kek"
+  export Secrets__KeyFile="${keys}/studio-secrets.kek"
   export RemoteGate__SshHost=gate-startup-fixture.invalid RemoteGate__WorkerPath=/opt/agentstudio-startup-fixture/worker
   export WatchPaths__0__Name=fixture WatchPaths__0__Path="${workspace}/projects/fixture" \
     WatchPaths__0__RootPath="${workspace}/repo" WatchPaths__0__RepositoryPath="${workspace}/repo"
@@ -89,6 +93,9 @@ if (( healthy )); then
   echo "product-start-fixture: Total: 1, Passed: 1, Failed: 0"
   grep -E 'startup-phase(-slow)? |startup-repair' "${log}" | sed 's/^/  /' | tail -60 || true
   [[ -n "${PRODUCT_START_LOG:-}" ]] || rm -f "${log}"
+  if (( $# )); then
+    PRODUCT_FIXTURE_WORKSPACE="${workspace}" PRODUCT_FIXTURE_URL="http://127.0.0.1:${port}" "$@"
+  fi
   exit 0
 fi
 
