@@ -8,6 +8,23 @@ public sealed class RemoteQueueStarvationPolicyTests
     private static readonly DateTime Now = new(2026, 8, 8, 12, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public void A_disk_hold_projects_the_recorded_cause_and_host_measurements()
+    {
+        var rejection = new RemoteDispatchRejection
+        {
+            Code = "host-disk-pressure",
+            Reason = "disk pressure on the run host, 23 GB free, of which 71 GB preparation copies",
+        };
+        var task = ReadyTask(3) with { RemoteDispatchRejection = rejection };
+        var snapshot = RemoteQueueStarvationPolicy.Evaluate(Now, TimeSpan.FromMinutes(30),
+            [task], _ => RemoteSettings(), TaskReferenceIndex.Build([task]), [Runner(2, 0)]);
+        var item = Assert.Single(snapshot.Items);
+        Assert.Equal(rejection.Reason, AgentStudio.Tasks.CardWaitingReason.Select(task));
+        Assert.Equal(rejection.Code, item.BlockReasonCode);
+        Assert.Equal(rejection.Reason, item.BlockReason);
+    }
+
+    [Fact]
     public void LocalCodingDenial_IsImmediatelyVisibleWithoutRemoteCapacity()
     {
         var task = ReadyTask(1) with { Mode = TaskModes.Coding };

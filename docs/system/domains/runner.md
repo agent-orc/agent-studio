@@ -9,6 +9,22 @@ compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
 
+## Writable preparation copies
+
+Each coding attempt reserves its own preparation copy ID in its durable slot before
+restoring npm, NuGet and Playwright from the project's published entries. The copy
+survives daemon handoff and same-attempt resume. Terminal cleanup releases it on
+success, failure, cancellation and lease loss. A new round receives a fresh copy.
+On upgrade, the runner reads older bindings from the detached worker specification.
+
+The coding daemon sweeps unreferenced copies at startup. Every five minutes it
+measures file bytes under the runner's project and legacy preparation roots and
+evicts the oldest unreferenced copies until the total fits the smaller of 20 GB
+and 15 percent of the work disk. `RUNNER_PREPARATION_COPIES_MAX_GB` changes the
+absolute ceiling. Live copies can exceed the target. Host filesystem telemetry
+reports the measured total as `ownedBytes["preparation copies"]`. A disk hold
+names free space and the preparation footprint in the card and Operations.
+
 ## Dispatch overlap admission, DS-0 and AGT-4037
 
 Both the local pickup in `ProjectRunner` and the remote claim in

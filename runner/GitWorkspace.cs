@@ -104,7 +104,7 @@ public sealed partial class GitWorkspace
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
     public string SharedRepoPath => Path.Combine(ProjectCachePath, "repo");
     public string RepoPath => Path.Combine(ProjectCachePath, "worktrees", _safeTaskKey);
-    public string PreparationCachePath => Path.Combine(ProjectCachePath, "caches", "preparation");
+    public string PreparationCachePath => Path.Combine(Path.GetFullPath(ProjectCachePath), "caches", "preparation");
     public string WorktreeLeasePath => Path.Combine(ProjectCachePath, "worktrees", ".leases", _safeTaskKey + ".json");
     public string? RepositoryUrl => _gitRemote;
     /// <summary>Canonical branch that retains this task's salvage generation.</summary>

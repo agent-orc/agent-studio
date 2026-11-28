@@ -1280,7 +1280,8 @@ public static partial class ProjectPreparationExecutor
         string? subjectSha,
         Action<string>? log,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? attemptCopyId = null)
     {
         var definitionPath = Path.Combine(workspace, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
         if (!File.Exists(definitionPath)) return ProjectPreparationResult.NotConfigured();
@@ -1293,8 +1294,9 @@ public static partial class ProjectPreparationExecutor
         var started = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         var previousManifest = ReadManifest(manifestPath);
-        PruneStaleRunRoots(productCacheRoot, log);
-        var runRoot = Path.Combine(productCacheRoot, ".runs", Guid.NewGuid().ToString("N"));
+        if (attemptCopyId is null) PruneStaleRunRoots(productCacheRoot, log);
+        var runRoot = Path.Combine(productCacheRoot, ProjectPreparationCacheSweep.RunsDirectoryName,
+            (attemptCopyId ?? Guid.NewGuid()).ToString("N"));
         var entryLockWait = EntryLockWait(timeout);
         var cacheBindings = BuildCacheBindings(
             workspace,
@@ -1445,7 +1447,8 @@ public static partial class ProjectPreparationExecutor
             DateTime.UtcNow,
             cacheBindings.Select(binding => binding.EntryPath).ToArray(),
             log,
-            RunRootRetention);
+            RunRootRetention,
+            pruneRunRoots: attemptCopyId is null);
         // A failed prepare is unreadable while only its exit code survives. The
         // bounded tail goes into the manifest and, shortened, into the reason
         // that the gate hands to the card's integration failure detail.
