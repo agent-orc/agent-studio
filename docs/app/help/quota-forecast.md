@@ -50,9 +50,27 @@ The backend computes everything; the UI only renders it.
 Example from the night that motivated the view: 77 % at 01:27Z and 83 % at
 04:27Z give 2 %/h, so 100 % lands at 12:57Z, well before a Friday reset.
 
-This is the recent pace. Admission control keeps using
-`QuotaWindowProjection`, which averages from the window start; the two can
-differ during a burst.
+The forecast describes recent consumption; it does not set admission pace.
+In **Settings > CLI Management > Usage caps**, choose a pace for each provider
+window:
+
+- **Steady until reset** (`steady`, default): spread the allowance over the
+  window until its reset.
+- **Use by time** (`useBy`): pace toward a chosen timestamp. A time before the
+  reset brings the allowance forward; a time after the reset does not extend
+  the provider window. The UI accepts UTC.
+- **Unpaced** (`unpaced`): remove time-based pacing for that window.
+
+The strict usage cap still applies in all three modes. Unpaced does not bypass
+the cap or the requirement for a trusted quota reading. Admission uses the
+window's configured pace through `SelectionQuotaMath`; its window-based
+projection can differ from the forecast's recent rate during a burst.
+
+Read all window paces with `GET /api/model-selection/policy/pace`. Set one with
+`PUT /api/model-selection/policy/pace/{cliType}/{windowLabel}` and a JSON body
+such as `{"mode":"steady"}`, `{"mode":"unpaced"}`, or
+`{"mode":"useBy","useBy":"2026-12-01T12:00:00Z"}`. A use-by timestamp must
+include its UTC offset; steady and unpaced omit `useBy`.
 
 ## API
 
