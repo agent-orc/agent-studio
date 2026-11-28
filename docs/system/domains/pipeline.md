@@ -596,9 +596,12 @@ content digest (including ignored outputs and detached HEAD) and command inputs
 An incomplete command or changed workspace settles as `inconclusive`, retaining
 finished evidence, rather than attributing a product regression. Such a receipt
 does not advance the completed-window tip. Raw inconclusive evidence remains
-under `.post-merge-evidence/`; accepted delivery removes the isolated command
-home and temp files. Linux recovery reaps orphan command
-groups in the dedicated checkout before settling an incomplete command. Other
+under `.post-merge-evidence/`. The command home stays in the checkout. New runs
+share a short, owner-checked temp directory across commands and restarts
+(`/tmp/pm-<digest>/t` on Unix). The checkpoint digest covers its contents,
+and accepted delivery removes both writable roots. Older journals retain their
+checkout-local temp path when resuming completed commands. Linux recovery reaps
+orphan command groups in the checkout and the owned temp directory before settling an incomplete command. Other
 hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine
 tests; reconstructed-service fault injection covers this boundary.
 

@@ -355,9 +355,15 @@ public sealed class PostMergeRunCommand
         var freeSlots = _journal.FreeSlots;
         var selection = started.SuiteSelection!;
         var host = new CoverageHostLoad(started.StartLoadPerCore, started.StartOccupiedSlots ?? 0);
-        _testHome = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "home");
-        _testTemp = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "temp");
+        _testHome = Path.Combine(CommandWorkspace, "home");
         Directory.CreateDirectory(_testHome);
+        // Completed commands in older journals can still reference the original temp path.
+        _testTemp = Path.Combine(CommandWorkspace, "temp");
+        if (Directory.Exists(ShortTempRoot) || !Directory.Exists(_testTemp))
+        {
+            ReviewAttemptTemp.Ensure(ShortTempRoot, CommandWorkspace, mustBeNew: false);
+            _testTemp = Path.Combine(ShortTempRoot, "t");
+        }
         Directory.CreateDirectory(_testTemp);
         bool MayShard(ProjectTestSuite? suite, string command) => started.Kind == "nightly" && suite is not null
             && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
@@ -527,6 +533,9 @@ public sealed class PostMergeRunCommand
     private bool _terminalDelivered;
     private string JournalPath => Path.Combine(_options.Checkout, ".post-merge-journal.json");
 
+    private string CommandWorkspace => Path.Combine(_options.Checkout, ".post-merge-work", _journal!.Owner);
+    private string ShortTempRoot => ReviewAttemptTemp.Root(ReviewAttemptTemp.DefaultBase(), CommandWorkspace, "pm-");
+
     internal PostMergeHostJournal ReadJournal()
         => JsonSerializer.Deserialize<PostMergeHostJournal>(File.ReadAllText(JournalPath), Json)
             ?? throw new IOException("Post-merge journal is empty.");
@@ -547,39 +556,49 @@ public sealed class PostMergeRunCommand
     }
 
     // Include ignored build outputs: a clean Git status cannot validate a completed build.
-    // Record symlinks without traversing outside the dedicated checkout.
+    // Record symlinks without traversing outside the checkpointed roots.
     internal string WorkspaceDigest()
     {
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value + "\0"));
-        void Walk(string directory)
+        var shortTemp = _journal is not null && Directory.Exists(ShortTempRoot) ? ShortTempRoot : null;
+        if (shortTemp is not null && !ReviewAttemptTemp.OwnedBy(shortTemp, CommandWorkspace))
+            throw new IOException("The post-merge temp directory has a different owner.");
+        var checkoutPrefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_options.Checkout)) + Path.DirectorySeparatorChar;
+
+        void Walk(string root, string directory)
         {
             foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
             {
                 var name = Path.GetFileName(path);
                 if (name == ".git" || directory == _options.Checkout
                     && name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work") continue;
-                Add(Path.GetRelativePath(_options.Checkout, path));
+                Add(Path.GetRelativePath(root, path));
                 var attributes = File.GetAttributes(path);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 {
                     var link = new FileInfo(path);
                     Add(link.LinkTarget ?? "");
                     var target = link.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-                    if (target is null || !Path.GetFullPath(target).StartsWith(
-                        Path.GetFullPath(_options.Checkout) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    if (target is null || !target.StartsWith(checkoutPrefix, StringComparison.Ordinal)
+                        && (shortTemp is null || !target.StartsWith(shortTemp + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                         throw new IOException("An external symlink prevents post-merge checkpoint reuse.");
                     continue;
                 }
                 if (!OperatingSystem.IsWindows()) Add(File.GetUnixFileMode(path).ToString());
-                if ((attributes & FileAttributes.Directory) != 0) { Walk(path); continue; }
+                if ((attributes & FileAttributes.Directory) != 0) { Walk(root, path); continue; }
                 using var file = File.OpenRead(path);
                 digest.AppendData(SHA256.HashData(file));
             }
         }
         var head = Path.Combine(_options.Checkout, ".git", "HEAD");
         if (File.Exists(head)) Add(File.ReadAllText(head));
-        Walk(_options.Checkout);
+        Walk(_options.Checkout, _options.Checkout);
+        if (shortTemp is not null)
+        {
+            Add(shortTemp);
+            Walk(shortTemp, shortTemp);
+        }
         return Convert.ToHexString(digest.GetHashAndReset());
     }
 
@@ -600,6 +619,8 @@ public sealed class PostMergeRunCommand
         if (!OperatingSystem.IsLinux())
             throw new IOException("Interrupted post-merge command requires confirmed process cleanup before recovery on this host.");
         await WorktreeProcessReaper.ReapAsync(_options.Checkout, line => _output.WriteLine(line), ct);
+        if (ReviewAttemptTemp.OwnedBy(ShortTempRoot, CommandWorkspace))
+            await WorktreeProcessReaper.ReapAsync(ShortTempRoot, line => _output.WriteLine(line), ct);
     }
 
     private async Task RecoverAsync(CancellationToken ct)
@@ -664,6 +685,14 @@ public sealed class PostMergeRunCommand
     private async Task DeliverTerminalAsync(CancellationToken ct)
     {
         await Post(_journal!.Terminal!, ct);
+        try
+        {
+            if (ReviewAttemptTemp.OwnedBy(ShortTempRoot, CommandWorkspace) && !ReviewAttemptTemp.Remove(ShortTempRoot))
+                _output.WriteLine($"post-merge envelope cleanup unavailable: {ShortTempRoot}");
+            if (Directory.Exists(CommandWorkspace)) Directory.Delete(CommandWorkspace, recursive: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { _output.WriteLine($"post-merge envelope cleanup unavailable: {exception.Message}"); }
         lock (_journalGate)
         {
             if (_journal.Terminal!.Status == "inconclusive")
@@ -675,13 +704,6 @@ public sealed class PostMergeRunCommand
             else File.Delete(JournalPath);
             _terminalDelivered = true;
         }
-        try
-        {
-            var workspace = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner);
-            if (Directory.Exists(workspace)) Directory.Delete(workspace, recursive: true);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        { _output.WriteLine($"post-merge envelope cleanup unavailable: {exception.Message}"); }
     }
 
     private async Task InterruptAsync(string reason, CancellationToken ct)

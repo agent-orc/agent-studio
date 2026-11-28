@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentRunner;
 using AgentStudio.Pipeline;
+using AgentStudio.TestSupport;
 using Microsoft.Extensions.Time.Testing;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
@@ -33,7 +34,7 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             commands:
               prepare: .agent-studio/prepare
               build:
-                - "true"
+                - 'test -f "$TMPDIR/prepared"'
               test:
                 - "git rev-parse HEAD > tested.sha"
               lint:
@@ -46,7 +47,8 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
             capabilities: [git]
             """);
         var prepare = Path.Combine(seed, ".agent-studio", "prepare");
-        File.WriteAllText(prepare, "#!/bin/sh\ntrue\n");
+        File.WriteAllText(prepare, "#!/bin/sh\nprintf '%s\\n' \"$TEST_ENVELOPE_TEMP\" > prepared-temp\n"
+            + "touch \"$TMPDIR/prepared\"\n");
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(prepare, UnixFileMode.UserRead | UnixFileMode.UserWrite
                 | UnixFileMode.UserExecute);
@@ -92,6 +94,10 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["running", "green"], received.Select(run => run.Status));
         Assert.All(received, run => Assert.Equal(first, run.TipSha));
         Assert.Equal(first, File.ReadAllText(Path.Combine(checkout, "tested.sha")).Trim());
+        var temp = File.ReadAllText(Path.Combine(checkout, "prepared-temp")).Trim();
+        Assert.True(Path.IsPathFullyQualified(temp), temp);
+        Assert.InRange(TempRootLengthPolicy.PredictedSuiteRootLength(temp), 1, TempRootLengthPolicy.MaxSuiteRootLength());
+        Assert.False(Directory.Exists(temp), $"Delivered run retained {temp}");
         var second = (await Git(seed, "rev-parse", "HEAD")).Trim();
         Assert.NotEqual(first, second);
 
@@ -559,24 +565,33 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task InvalidOrInFlightCheckpointSettlesInfrastructureAndRetainsFinishedEvidence(bool inFlight)
+    [InlineData("in-flight")]
+    [InlineData("checkout")]
+    [InlineData("temp")]
+    public async Task InvalidOrInFlightCheckpointSettlesInfrastructureAndRetainsFinishedEvidence(string change)
     {
         var fixture = DurableFixture();
         using var http = fixture.Http;
         var executed = new List<string>();
         var worker = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart());
         await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, CancellationToken.None));
-        if (inFlight)
+        var checkout = Path.Combine(_root, "durable");
+        var tempRoot = ReviewAttemptTemp.Root(ReviewAttemptTemp.DefaultBase(),
+            Path.Combine(checkout, ".post-merge-work", fixture.Journal.Owner), "pm-");
+        if (change == "in-flight")
         {
-            var path = Path.Combine(_root, "durable", ".post-merge-journal.json");
+            var path = Path.Combine(checkout, ".post-merge-journal.json");
             var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
             document["inFlight"] = true;
             File.WriteAllText(path, document.ToJsonString());
         }
-        else File.WriteAllText(Path.Combine(_root, "durable", "build-output"), "changed after checkpoint");
+        else
+        {
+            var directory = change == "temp" ? Path.Combine(tempRoot, "t") : checkout;
+            File.WriteAllText(Path.Combine(directory, "build-output"), "changed after checkpoint");
+        }
         Assert.Equal(1, await DurableWorker(http, executed).ExecuteJournalAsync(null, CancellationToken.None));
+        Assert.False(Directory.Exists(tempRoot));
         Assert.Equal(["build"], executed);
         var state = new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002");
         Assert.Null(state.ActiveRun);
@@ -601,6 +616,9 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["build", "suite"], executed);
         Assert.NotNull(first.ReadJournal().Terminal);
         Assert.NotNull(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").ActiveRun);
+        fixture.Transport.RejectTerminal = false;
+        Assert.Equal(0, await DurableWorker(http, executed).ExecuteAsync(CancellationToken.None));
+        Assert.Equal(["build", "suite"], executed);
     }
 
     [Fact]

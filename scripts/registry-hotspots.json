@@ -17,11 +17,25 @@
       "bytes": 14676
     },
     {
+      "path": "backend.Tests/DispatchEndpointTests.cs",
+      "status": "measured-backlog",
+      "strategy": "Split lease, wave, forecast and review endpoint tests into feature partials sharing the existing fixture.",
+      "lines": 941,
+      "bytes": 61514
+    },
+    {
       "path": "backend/Features/Dispatch/DispatchRegistration.cs",
       "status": "measured-backlog",
       "strategy": "Extract ordered registration partials per dispatch feature.",
       "lines": 137,
       "bytes": 9277
+    },
+    {
+      "path": "backend/Features/Pipeline/PostMerge/PostMergeRunEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract placement, window observation and run receipt route groups while preserving their mapping and authorization.",
+      "lines": 244,
+      "bytes": 16766
     },
     {
       "path": "backend/Features/Projects/ProjectSettingsEndpoints.cs",
@@ -36,6 +50,13 @@
       "strategy": "Extract partial adapter files per decision family; keep the existing delegation order.",
       "lines": 652,
       "bytes": 42747
+    },
+    {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Split runner registration, review claims and report intake into endpoint mapping partials preserving the v1 routes.",
+      "lines": 5462,
+      "bytes": 293271
     },
     {
       "path": "backend/Features/Security/AccessSecurityMiddleware.cs",
@@ -127,6 +148,20 @@
       "strategy": "Split feature sections into linked domain pages with stable anchors.",
       "lines": 4960,
       "bytes": 337475
+    },
+    {
+      "path": "docs/system/domains/review.md",
+      "status": "measured-backlog",
+      "strategy": "Extract attempt isolation, material collection and verdict contracts into linked sections with stable navigation anchors.",
+      "lines": 2268,
+      "bytes": 148490
+    },
+    {
+      "path": "docs/system/domains/tasks.md",
+      "status": "measured-backlog",
+      "strategy": "Extract project onboarding, card projections and task lifecycle sections into linked contracts, retaining the domain map as their entry point.",
+      "lines": 3047,
+      "bytes": 204882
     },
     {
       "path": "runner/RemoteReviewWorkspace.cs",

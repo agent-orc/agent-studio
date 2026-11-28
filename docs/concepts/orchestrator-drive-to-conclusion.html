@@ -3587,6 +3587,13 @@
           <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
           <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
         </tr>
+        <tr id="case-post-merge-temp-budget">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-temp-budget</span></td>
+          <td>The post-merge base suite failed its temp ownership canary and its registry hotspot guard.</td>
+          <td>The checkout-local journal temp path exceeded the test bootstrap's length budget. Repair-card additions also took the incident test file past the weekly contention limit.</td>
+          <td>New runs use a short, owned temp root that participates in checkpoint validation and terminal cleanup. Repair-card tests have their own file. Both checks continue through the normal review and integration gates.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
