@@ -183,6 +183,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
     [InlineData(true, false, false)]
     [InlineData(false, true, false)]
     [InlineData(true, false, true)]
+    [Trait("Category", "ReviewBase")]
     public async Task Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied(
         bool acceptReview, bool rejectSettlement, bool inconclusive)
     {
