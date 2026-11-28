@@ -63,6 +63,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | [Operator-Handbuch](../operations/operator-handbuch.md) | Twelve German recipes from the November 2026 operator log, covering integration, deployment, capacity, review and operator decisions. |
 | Server-first networked deploy, required release startup preflight, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
+| Deployment attempt history, chain reports and historical import | [operations/deploy-records.md](../operations/deploy-records.md) |
 | Report Studio deploys to the Studio: deploy reporter token, `curl` recipe for start, steps and end, live release and "integrated, not live yet" in Bereitstellung (AGT-3879) | [operations/instance-deploy-records.md](../operations/instance-deploy-records.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
