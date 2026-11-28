@@ -3655,6 +3655,13 @@
           <td>The digest covered the <code>.git</code> pointer file but did not check that its per-worktree and common Git directories were also covered.</td>
           <td>Recovery resumes when the referenced metadata is covered and unchanged. A ref change or an uncovered directory settles as inconclusive and retains finished command evidence.</td>
         </tr>
+        <tr id="case-post-merge-linked-config-target">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-linked-config-target</span></td>
+          <td>Review found that a linked worktree could read configuration through a symlink into checkout bookkeeping.</td>
+          <td>The digest recorded the link text while skipping the target's contents. Resolving only the final target could also miss a link in a skipped directory.</td>
+          <td>The checkpoint validates each link's immediate target. Links into skipped directories settle as inconclusive after a simulated restart, retaining finished command evidence.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
