@@ -2205,8 +2205,11 @@ records a lane timeline entry and requests fresh review.
 A pending canonical review's sealed requirements and live host capability
 advertisements are authoritative for verification placement. With a standalone
 Task Server, the configured authority supplies the inventory; the local registry
-is not an empty-fleet fallback. A failed inventory read records unknown
-feasibility under the same deadline. A matching review
+is not an empty-fleet fallback. The orchestrator shares remote inventory reads
+across cards and concurrent post-processing for 30 seconds, including failed
+reads. Each card still evaluates host heartbeat and advertisement freshness at
+the current time and revalidates review authority after the read. A failed
+inventory read records unknown feasibility under the same deadline. A matching review
 host claims the same immutable result through the existing review admission;
 this preflight never grants a lease or manufactures verification evidence.
 Expired advertisements, stale heartbeats and drained or unhealthy capabilities

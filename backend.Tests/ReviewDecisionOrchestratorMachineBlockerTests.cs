@@ -248,6 +248,96 @@ public sealed class ReviewDecisionOrchestratorMachineBlockerTests : IDisposable
         Assert.Empty(_access.ListByLane("demo", TaskStates.Preparation));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Standalone_inventory_reads_are_shared_across_cards_and_ticks_until_refresh(bool fail)
+    {
+        var (authority, _, _) = SeedCanonicalReview();
+        SeedCanonicalReview("second", "AGT-4099", authority);
+        _config["TaskServer:BaseUrl"] = "http://authority.invalid";
+        using var http = new InventoryClient([], fail);
+        var orchestrator = Build(IntegrationStatuses.Pending, authority, new V1ReviewExecutorRegistry(), http);
+
+        await orchestrator.TickOnceAsync(_workspace, default);
+        await orchestrator.TickOnceAsync(_workspace, default);
+
+        Assert.Equal(1, http.Requests);
+        var first = ReadReceipt(_scanner.FindJob("child", Watch)!);
+        var second = ReadReceipt(_scanner.FindJob("second", Watch)!);
+        Assert.Equal(first.GetProperty("deadline").GetString(), second.GetProperty("deadline").GetString());
+        Assert.Contains(fail ? "inventory=unavailable" : "inventory=observed",
+            first.GetProperty("evidence")[0].GetString());
+
+        http.Fail = false;
+        _time.Advance(TimeSpan.FromSeconds(30));
+        await orchestrator.TickOnceAsync(_workspace, default);
+
+        Assert.Equal(2, http.Requests);
+        Assert.Contains("inventory=observed",
+            ReadReceipt(_scanner.FindJob("child", Watch)!).GetProperty("evidence")[0].GetString());
+        Assert.Equal(first.GetProperty("deadline").GetString(),
+            ReadReceipt(_scanner.FindJob("child", Watch)!).GetProperty("deadline").GetString());
+        Assert.Equal(0, _modelCalls);
+    }
+
+    [Fact]
+    public async Task Concurrent_card_processing_shares_one_remote_inventory_read()
+    {
+        var (authority, _, _) = SeedCanonicalReview();
+        SeedCanonicalReview("second", "AGT-4099", authority);
+        _config["TaskServer:BaseUrl"] = "http://authority.invalid";
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var http = new InventoryClient([])
+        {
+            BeforeResponse = async ct => { started.TrySetResult(); await release.Task.WaitAsync(ct); },
+        };
+        var orchestrator = Build(IntegrationStatuses.Pending, authority, new V1ReviewExecutorRegistry(), http);
+
+        var first = orchestrator.ProcessCardAsync(_workspace, "demo", "child", Watch, default);
+        Task second;
+        try
+        {
+            await Task.WhenAny(first, started.Task);
+            Assert.True(started.Task.IsCompleted, "The first card should reach the capability inventory.");
+            second = orchestrator.ProcessCardAsync(_workspace, "demo", "second", Watch, default);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, http.Requests);
+        Assert.Equal(TaskStates.AutoReview, _scanner.FindJob("child", Watch)!.State);
+        Assert.Equal(TaskStates.AutoReview, _scanner.FindJob("second", Watch)!.State);
+    }
+
+    [Fact]
+    public async Task Review_claimed_during_inventory_read_does_not_apply_blocker_effects()
+    {
+        var (authority, review, _) = SeedCanonicalReview();
+        _config["TaskServer:BaseUrl"] = "http://authority.invalid";
+        using var http = new InventoryClient([])
+        {
+            BeforeResponse = _ =>
+            {
+                Assert.True(authority.ClaimReview(review.AttemptId, "reviewer", "host", 1800, "claim").Accepted);
+                return Task.CompletedTask;
+            },
+        };
+        await Build(IntegrationStatuses.Pending, authority, new V1ReviewExecutorRegistry(), http)
+            .TickOnceAsync(_workspace, default);
+
+        Assert.Equal(1, http.Requests);
+        Assert.Equal(AttemptLifecycleState.Leased, authority.GetReview(review.AttemptId)!.State);
+        var child = _scanner.FindJob("child", Watch)!;
+        Assert.Equal(TaskStates.AutoReview, child.State);
+        Assert.False(File.Exists(Path.Combine(child.FolderPath, "logs", "machine-blocker.json")));
+        Assert.Empty(_access.ListByLane("demo", TaskStates.Preparation));
+    }
+
     [Fact]
     public async Task Standalone_authority_inventory_places_verification_on_an_alternate_capable_host()
     {
@@ -257,17 +347,26 @@ public sealed class ReviewDecisionOrchestratorMachineBlockerTests : IDisposable
         var requirements = Contract.ReviewLibraryStepPolicy.ExecutionCapabilities(review.Subject.Plan!)
             .Append(Contract.ReviewCapabilities.ReviewExecutor);
         var capabilities = requirements.Select(key => new Contract.CapabilityHealthDto(key, "verification", "ready", "healthy",
-            null, now, now.AddMinutes(1), true, null, null, null, null, 0, null, null, null, [], [])).ToArray();
+            null, now, now.AddSeconds(10), true, null, null, null, null, 0, null, null, null, [], [])).ToArray();
         var host = new Contract.RunnerCapabilitySnapshotDto("reviewer", "reviewer", "alternate-host", "instance", "1", 1,
             "active", now, now, new("alternate-host", "open", null, null, null, null), capabilities, null);
         using var http = new InventoryClient([host]);
-        await Build(IntegrationStatuses.Pending, authority, new V1ReviewExecutorRegistry(), http).TickOnceAsync(_workspace, default);
+        var orchestrator = Build(IntegrationStatuses.Pending, authority, new V1ReviewExecutorRegistry(), http);
+        await orchestrator.TickOnceAsync(_workspace, default);
         var child = _scanner.FindJob("child", Watch)!;
         Assert.Equal(TaskStates.AutoReview, child.State);
         Assert.Equal("alternate-host", Assert.Single(ReadReceipt(child).GetProperty("capableHosts").EnumerateArray()).GetString());
         Assert.Equal(MachineBlockerAction.PlaceVerification, (MachineBlockerAction)ReadReceipt(child).GetProperty("action").GetInt32());
         Assert.Empty(_access.ListByLane("demo", TaskStates.Preparation));
         Assert.Equal(1, http.Requests);
+
+        _time.Advance(TimeSpan.FromSeconds(11));
+        await orchestrator.TickOnceAsync(_workspace, default);
+
+        Assert.Equal(1, http.Requests);
+        var expired = ReadReceipt(_scanner.FindJob("child", Watch)!);
+        Assert.Empty(expired.GetProperty("capableHosts").EnumerateArray());
+        Assert.Equal(MachineBlockerAction.Wait, (MachineBlockerAction)expired.GetProperty("action").GetInt32());
     }
 
     [Fact]
@@ -343,22 +442,27 @@ public sealed class ReviewDecisionOrchestratorMachineBlockerTests : IDisposable
 
     private sealed class InventoryClient(Contract.RunnerCapabilitySnapshotDto[] hosts, bool fail = false) : HttpMessageHandler, IHttpClientFactory
     {
-        public int Requests { get; private set; }
+        private int _requests;
+        public int Requests => _requests;
+        public bool Fail { get; set; } = fail;
+        public Func<CancellationToken, Task>? BeforeResponse { get; init; }
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false) { BaseAddress = new("http://authority.invalid") };
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Requests++;
-            if (fail) throw new HttpRequestException("Synthetic authority outage.");
+            Interlocked.Increment(ref _requests);
+            if (BeforeResponse is not null) await BeforeResponse(cancellationToken);
+            if (Fail) throw new HttpRequestException("Synthetic authority outage.");
             Assert.Equal("/api/v1/management/remote-hosts", request.RequestUri!.AbsolutePath);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(hosts) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(hosts) };
         }
     }
 
-    private (AttemptAuthorityService Authority, ReviewAttemptDto Review, Contract.ImmutableResultEnvelope Envelope) SeedCanonicalReview()
+    private (AttemptAuthorityService Authority, ReviewAttemptDto Review, Contract.ImmutableResultEnvelope Envelope) SeedCanonicalReview(
+        string id = "child", string key = "AGT-4098", AttemptAuthorityService? authority = null)
     {
-        Seed("child", "AGT-4098", TaskStates.AutoReview);
-        var authority = new AttemptAuthorityService(_config, NullLogger<AttemptAuthorityService>.Instance, () => _time.GetUtcNow().UtcDateTime);
-        var run = authority.AcquireRun("AGT-4098", "demo", null, "coder", "coding-host", 60, "run").RunAttempt!;
+        Seed(id, key, TaskStates.AutoReview);
+        authority ??= new AttemptAuthorityService(_config, NullLogger<AttemptAuthorityService>.Instance, () => _time.GetUtcNow().UtcDateTime);
+        var run = authority.AcquireRun(key, "demo", null, "coder", "coding-host", 60, "run").RunAttempt!;
         var sha = new string('a', 40);
         var envelope = new Contract.ImmutableResultEnvelope("demo", run.AttemptId, new string('0', 40), sha,
             "refs/agent-studio/results/" + run.AttemptId, null, new string('1', 64));
@@ -369,11 +473,11 @@ public sealed class ReviewDecisionOrchestratorMachineBlockerTests : IDisposable
         }).Accepted);
         var plan = new Contract.ReviewPlanDto([new("verify", "review-verification", "dotnet", ["test"])],
             ["review-verification"], LibraryVersion: 1);
-        var review = authority.CreateReviewAttempt(new("AGT-4098", "demo", sha, run.AttemptId,
+        var review = authority.CreateReviewAttempt(new(key, "demo", sha, run.AttemptId,
             "requirements", "policy", [], "review", ResultRef: envelope.ImmutableRemoteRef, Plan: plan)).ReviewAttempt!;
-        ReviewSubjectStore.Write(_scanner.FindJob("child", Watch)!.FolderPath, new()
+        ReviewSubjectStore.Write(_scanner.FindJob(id, Watch)!.FolderPath, new()
         {
-            TaskKey = "AGT-4098", RunAttemptId = run.AttemptId, AttemptChainId = run.AttemptId,
+            TaskKey = key, RunAttemptId = run.AttemptId, AttemptChainId = run.AttemptId,
             ResultSha = sha, ImmutableResultRef = envelope.ImmutableRemoteRef,
         });
         return (authority, review, envelope);
