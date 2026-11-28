@@ -143,10 +143,45 @@ public sealed class ContinueRoundBasePolicyTests
             ImmutableResultRef = OlderRef, CompletedAtUtc = new DateTimeOffset(Saved.AddMinutes(-10)),
         };
         Assert.Contains(ContinueRoundBasePolicy.Collect(projection, null), item => item.Ref == LatestRef);
-        var refs = ContinueRoundBasePolicy.Collect(projection, reviewed);
+        var pin = new ContinuationBaseRecord(OlderRef, OlderSha, ContinueRoundBasePolicy.Reason,
+            "reviewed", Saved, RetainUntilIntegrated: true);
+        var refs = ContinueRoundBasePolicy.Collect(projection, reviewed, pin);
         var decision = ContinueRoundBasePolicy.Decide(null, refs, null, true, Saved);
         Assert.Equal(OlderSha, decision.Base!.CommitSha);
         Assert.Equal(OlderRef, decision.Base.Ref);
+    }
+
+    [Theory]
+    [InlineData("NeedsInput", false)]
+    [InlineData("Blocked", false)]
+    [InlineData("Done", true)]
+    [InlineData("NoOp", true)]
+    public void HistoricalReviewsDoNotHideNewerSalvageWithoutAnIntegrationPin(string outcome, bool noCommits)
+    {
+        var subject = new ReviewSubjectDto("old-subject", "repo", OlderSha, "old-run", "req", "policy", [],
+            Saved.AddHours(-2), ResultRef: OlderRef);
+        var review = new ReviewAttemptDto("old-review", "AGT-1", "repo", "old-run", null, subject,
+            AttemptLifecycleState.Completed, null, 1, 1, subject.CreatedAt, subject.CreatedAt,
+            ReviewTerminalOutcome.Pass, null, OlderSha, null, []);
+        var salvage = new RunAttemptDto("new-run", "AGT-1", "repo", null, AttemptLifecycleState.Failed,
+            null, 2, 1, Saved.AddMinutes(-10), Saved, LatestSha, outcome, null, [],
+            new ImmutableResultEnvelope("repo", "new-run", noCommits ? LatestSha : OlderSha,
+                LatestSha, LatestRef, null, new string('c', 64)));
+        var projection = new AttemptAuthorityProjection("AGT-1", 1, salvage, subject, review, [salvage], [review], false);
+        var folder = new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-1", RunAttemptId = "old-run", ResultSha = OlderSha,
+            ImmutableResultRef = OlderRef, CompletedAtUtc = new DateTimeOffset(subject.CreatedAt),
+        };
+        // Neither persisted review history nor a normal single-use base proves
+        // that the old delivery is still waiting to integrate.
+        foreach (var sidecar in new ReviewSubjectRecord?[] { null, folder })
+        {
+            var candidates = ContinueRoundBasePolicy.Collect(projection, sidecar);
+            Assert.Equal(LatestRef, ContinueRoundBasePolicy.Decide(null, candidates, null, true, Saved).Base!.Ref);
+            var singleUse = new ContinuationBaseRecord(OlderRef, OlderSha, "lost-worker-with-salvage", "old", Saved);
+            Assert.Contains(ContinueRoundBasePolicy.Collect(projection, sidecar, singleUse), item => item.Ref == LatestRef);
+        }
     }
 
     [Fact]

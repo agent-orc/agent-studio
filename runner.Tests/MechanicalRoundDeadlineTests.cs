@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -31,6 +32,45 @@ public sealed class MechanicalRoundDeadlineTests
         Assert.Equal(TimeSpan.FromSeconds(280), deadline.Remaining(TimeSpan.FromSeconds(20), 0));
         Assert.Equal(TimeSpan.FromSeconds(280), deadline.Remaining(TimeSpan.FromSeconds(30), 500_000_000));
         Assert.Equal(TimeSpan.FromSeconds(270), deadline.Remaining(TimeSpan.FromSeconds(40), 0));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ObservationFaultsDoNotExpireALiveRound(bool failSampling, bool failLogging)
+    {
+        var clock = new FakeTimeProvider();
+        var samples = 0;
+        var diagnostics = new List<string>();
+        long? Sample()
+        {
+            if (failSampling && ++samples > 1) throw new IOException("pressure unavailable");
+            return 0;
+        }
+        void Append(string stream, string message)
+        {
+            diagnostics.Add(message);
+            if (failLogging) throw new IOException("log unavailable");
+        }
+        var deadline = MechanicalRoundDeadline.WaitAsync(60, "unused", Append,
+            CancellationToken.None, Sample, clock);
+        Assert.False(deadline.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(60));
+        await deadline;
+        if (failSampling) Assert.Contains(diagnostics, line => line.Contains("observation failed"));
+        Assert.Contains(diagnostics, line => line.Contains("wallSeconds=60.000"));
+    }
+
+    [Fact]
+    public async Task CallerCancellationStillEndsAMonitoredRound()
+    {
+        using var stop = new CancellationTokenSource();
+        var clock = new FakeTimeProvider();
+        var deadline = MechanicalRoundDeadline.WaitAsync(300, "unused", (_, _) => { },
+            stop.Token, () => 0, clock);
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => deadline);
     }
 
     [Fact]

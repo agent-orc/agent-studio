@@ -5080,9 +5080,11 @@ the conflict receipt. Ordinary salvage bases retain their single-use behavior.
 The completion endpoint persists the fallback base and fresh-session reason before
 handing the lane decision to either authority. A failed write returns 503 while
 the card remains in Progress; an Engine return cannot bypass this custody step.
-While a reviewed delivery exists, continue-base discovery excludes failed runs
-and envelopes whose result equals their base, so an empty NeedsInput attempt
-cannot displace that delivery.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
 
 
 The existing decision library still bounds automatic rounds at two per card and

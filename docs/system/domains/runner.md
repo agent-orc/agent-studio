@@ -1279,7 +1279,10 @@ unreported claim expires with its lease and is queued again.
   accounting, charged duration excludes that worker group's `cpu.pressure` full
   stall intervals. It includes provider, I/O and tool waits. Logs name the measure
   and report wall seconds and excluded CPU wait. Without that counter, the log
-  explicitly records the existing wall-clock fallback. Lower card limits and
+  explicitly records the existing wall-clock fallback. A pressure-observation fault
+  switches subsequent intervals to wall-clock charging without resetting the budget.
+  Diagnostic write failures cannot expire the watchdog or stop the live CLI.
+  Lower card limits and
   caller cancellation still apply. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.

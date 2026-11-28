@@ -3673,6 +3673,17 @@
             attempts cannot replace the delivery. CPU full stall is excluded when available.
             The original run escalated as missing-integration-preparation.</td>
         </tr>
+        <tr id="case-integration-recovery-review-follow-up">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-recovery-review-follow-up</span></td>
+          <td>Review found that historical passes could hide newer salvage and watchdog
+            observation faults could be mistaken for duration expiry, stopping a live CLI.</td>
+          <td>Base discovery treated any historical passing review as outstanding delivery.
+            The watchdog continuation discarded fault status as if its deadline had elapsed.</td>
+          <td>Only a retained integration pin protects delivery discovery. Pressure faults
+            fall back to wall-clock charging; diagnostic failures leave the monitor alive.
+            Cancellation remains distinct from an unexpected deadline fault.</td>
+        </tr>
       </tbody>
     </table>
 
