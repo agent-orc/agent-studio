@@ -303,6 +303,51 @@ public sealed class DispatchEndpointTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Engine_pause_receipt_only_transfers_a_still_paused_assignment(bool resumeBeforeReceipt)
+    {
+        await using var factory = Factory();
+        const string project = "Forecast Project";
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName(project)!.WorkspaceId;
+        var (clock, activations, owner) = ActivateWarden(workspace);
+        var store = services.GetRequiredService<DispatchStore>();
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        var runs = services.GetRequiredService<MonolithOrchestrationStore>();
+        var mode = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var gateway = new AiOperatorDecisionGateway(mode, runs);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, clock, activations, gateway);
+        store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
+        var holder = scheduler.Refresh(project, "wave")!;
+        Assert.Equal("area-warden", holder.Persona);
+        activations.Pause(workspace, holder.Persona, new(), owner);
+
+        mode["Orchestration:Transitions:OperatorDecision"] = "Engine";
+        Assert.Null(scheduler.Refresh(project, "wave"));
+        var run = Assert.Single(runs.List(project, "pending"));
+        var occurrence = runs.GetOccurrence(run.RunId)!;
+        var payload = AiOperatorDecisionGateway.ReadPayload(run.PayloadJson);
+        var output = AgentStudio.OrchestrationDecisions.AiOperatorDecisionPolicy.Decide(payload);
+        Assert.Equal("assigned-persona-unavailable", output.DispatchLease!.Reason);
+        var receipt = AiOperatorDecisionGateway.ReadDecision(
+            JsonSerializer.Serialize(new { operatorDecision = output }, JsonSerializerOptions.Web));
+        var application = new AiOperatorApplication(run.RunId, run.ProjectId, run.TaskId, occurrence.ExpectedSourceState,
+            "apply", payload, receipt, occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch);
+
+        if (resumeBeforeReceipt)
+        {
+            activations.Resume(workspace, holder.Persona, new(), owner);
+            Assert.Equal(holder.Fence, scheduler.Refresh(project, "wave")!.Fence);
+        }
+        await scheduler.ApplyAsync(application, default);
+        await scheduler.ApplyAsync(application, default);
+        var lease = store.ReadLease(project)!;
+        Assert.Equal(resumeBeforeReceipt ? holder.Persona : "queue-keeper", lease.Persona);
+        Assert.Equal(resumeBeforeReceipt ? holder.Fence : holder.Fence + 1, lease.Fence);
+    }
+
+    [Theory]
     [InlineData("local")]
     [InlineData("remote-claim")]
     public async Task Two_ready_cards_sharing_a_module_use_only_one_of_two_slots(string path)

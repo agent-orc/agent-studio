@@ -47,14 +47,9 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
                 return old;
             var state = old?.Rollout ?? new DispatchLeaseState(Champion: old?.Persona ?? "queue-keeper");
             var projection = review.Review(project, registered.WorkspaceId, watchPath, null, null);
-            var available = projection.Competition.Where(c => c.Evaluation.EligibleForAlternatingLive
-                    && projection.Personas.First(r => r.Raw.Persona == c.Challenger).Raw.Strategy != DispatchStrategies.PackageThenChain
-                    && scoped.Contains(c.Challenger)).Select(c => c.Challenger).ToHashSet(StringComparer.Ordinal);
-            if (scoped.Contains(state.Champion)) available.Add(state.Champion);
-            if (state.Challenger is { } challenger && scoped.Contains(challenger)) available.Add(challenger);
-            available.Add("queue-keeper");
             var candidates = projection.Competition.Select(c => new DispatchChallenger(c.Challenger,
                 projection.Personas.First(r => r.Raw.Persona == c.Challenger).Raw.Strategy, c.Facts)).ToArray();
+            var available = state.AvailablePlanners(candidates, scoped);
             var cards = scanner.ScanAllJobsWithArchive().Where(c => !c.Fixture
                 && c.ProjectName.Equals(project, StringComparison.OrdinalIgnoreCase)).ToArray();
             var integrated = cards.Select(c => (Card: c, At: DispatchReviewService.IntegratedAt(c, timeline.ReadAll(c.FolderPath))))
@@ -177,8 +172,9 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
         if (registered is null || settings.Get(registered.DisplayName).DispatchMode != "live") return Task.CompletedTask;
         lock (_gates.GetOrAdd(registered.DisplayName, _ => new object()))
         {
-            if (decision.Persona != "queue-keeper" && !ScopedPlanners(registered.WorkspaceId, registered.Id,
-                registered.DisplayName, store.ReadLease(registered.DisplayName)).Contains(decision.Persona))
+            var scoped = ScopedPlanners(registered.WorkspaceId, registered.Id,
+                registered.DisplayName, store.ReadLease(registered.DisplayName));
+            if (!decision.CanApplyWith(occurrence, scoped))
                 return Task.CompletedTask;
             var lease = store.ApplyLeaseDecision(registered.DisplayName, occurrence.ExpectedFence, decision, time.GetUtcNow(), "platform");
             if (lease is not null) PublishGuard(registered.WorkspaceId, registered.DisplayName, lease);

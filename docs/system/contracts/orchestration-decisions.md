@@ -1090,7 +1090,11 @@ Automatic changes use the existing `OperatorDecision` switch through
 `AiOperatorDecisionGateway` with decider `dispatch-lease`. Monolith is the
 default; Engine mode waits for its receipt. The effect compares the frozen
 lease fence before applying, so a later Owner control supersedes pending
-receipts. Both pickup paths refresh the scheduler before recording a live
+receipts. A pause handoff also depends on the available planners recorded in
+the occurrence. The effect rechecks that set using current scoped grants and
+the original competition evidence, since a resume can leave the fence
+unchanged. If availability changed, the next refresh collects fresh facts.
+Both pickup paths refresh the scheduler before recording a live
 plan. A change to the active scoped grants invalidates the one-minute refresh
 cache. An existing lease assignment carries its certified project plan grant
 while the activation stays in scope and its descriptor supports planning.

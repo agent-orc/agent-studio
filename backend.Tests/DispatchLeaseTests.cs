@@ -122,6 +122,7 @@ public sealed class DispatchLeaseTests : IDisposable
         var facts = Facts() with { CurrentPersona = "area-warden", Guard = new("sample", 20, 15, 5, true) };
         var fallback = DispatchLeasePolicy.Decide(state, facts);
         Assert.Equal("queue-keeper", fallback.Persona);
+        Assert.True(fallback.CanApplyWith(new(state, facts, 1, At.AddHours(1)), new HashSet<string> { "area-warden" }));
         Assert.Equal("T1", fallback.AuthorityTier);
         Assert.Equal(70, fallback.FeedImportance);
         Assert.NotNull(fallback.State.Guard);

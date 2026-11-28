@@ -11,6 +11,17 @@ public sealed record DispatchLeaseState(string Champion = "queue-keeper", string
     DispatchGuardFallback? Guard = null, string? UndoneSample = null)
 {
     public IReadOnlyList<DispatchLeaseWindow> Windows { get; init; } = [];
+
+    public HashSet<string> AvailablePlanners(IReadOnlyList<DispatchChallenger> candidates, IReadOnlySet<string> scoped)
+    {
+        var available = candidates.Where(c => scoped.Contains(c.Persona) && c.Strategy != DispatchStrategies.PackageThenChain
+                && DispatchCompetitionPolicy.Evaluate(c.Facts).EligibleForAlternatingLive)
+            .Select(c => c.Persona).ToHashSet(StringComparer.Ordinal);
+        if (scoped.Contains(Champion)) available.Add(Champion);
+        if (Challenger is { } rival && scoped.Contains(rival)) available.Add(rival);
+        available.Add("queue-keeper");
+        return available;
+    }
 }
 public sealed record DispatchLeaseFacts(DateTimeOffset Now, string? Wave, string? CurrentPersona,
     IReadOnlyList<DispatchChallenger> Challengers, IReadOnlyList<string> Available,
@@ -19,7 +30,17 @@ public sealed record DispatchLeaseFacts(DateTimeOffset Now, string? Wave, string
 public sealed record DispatchLeaseDecision(DispatchLeaseState State, string Persona, string Window,
     string Reason, bool Allowed = true, int? FeedImportance = null)
 {
+    internal const string AssignmentUnavailable = "assigned-persona-unavailable";
     public string AuthorityTier => "T1";
+
+    public bool CanApplyWith(DispatchLeaseOccurrence occurrence, IReadOnlySet<string> scopedPlanners)
+    {
+        // A pause handoff depends on availability at collection. A resume need not advance the lease fence.
+        if (Reason == AssignmentUnavailable)
+            return occurrence.State.AvailablePlanners(occurrence.Facts.Challengers, scopedPlanners)
+                .SetEquals(occurrence.Facts.Available);
+        return Persona == "queue-keeper" || scopedPlanners.Contains(Persona);
+    }
 }
 public sealed record DispatchLeaseOccurrence(DispatchLeaseState State, DispatchLeaseFacts Facts,
     long ExpectedFence, DateTimeOffset? LeaseExpiresAt);
@@ -103,7 +124,7 @@ public static class DispatchLeasePolicy
         DispatchLeaseDecision Assign(string assigned, string reason)
             => assigned == "queue-keeper" || facts.Available.Contains(assigned)
                 ? new(state, assigned, window, reason)
-                : new(state, "queue-keeper", window, "assigned-persona-unavailable");
+                : new(state, "queue-keeper", window, DispatchLeaseDecision.AssignmentUnavailable);
     }
 
     /// <summary>Only the later admission of a named collision owns its conflict, regardless of which card integrated last.</summary>
