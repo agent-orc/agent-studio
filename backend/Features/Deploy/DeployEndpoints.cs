@@ -230,20 +230,28 @@ public static class DeployEndpoints
             EnvironmentAction(context, projectName, environmentId, request, deploy, readiness, rollback: true, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapGet("/api/deploy/matrix", (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>
+        app.MapGet("/api/deploy/matrix", async (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>
         {
-            var matrix = deploy.Matrix();
+            var matrix = deploy.Matrix() with {
+                HasDeployRecords = context.RequestServices.GetRequiredService<EndpointDataSource>().Endpoints
+                    .OfType<RouteEndpoint>().Any(endpoint => endpoint.RoutePattern.RawText?.Trim('/') == "api/operations/deploy-records"
+                        && endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods.Contains("GET") == true),
+            };
             if (tenant is not null)
                 matrix = matrix with { Projects = matrix.Projects.Select(row => row with
                     { TenantStatuses = row.TenantStatuses.Where(status => status.Tenant == tenant).ToArray() })
                     .Where(row => row.TenantStatuses.Count > 0).ToArray() };
-            return Results.Ok(context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                ? matrix with
-                {
-                    Projects = matrix.Projects
-                        .Where(row => ProjectAccessAuthorization.Allows(human.User, row.ProjectId, projects)).ToArray(),
-                }
-                : matrix);
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+                matrix = matrix with { Projects = matrix.Projects.Where(row =>
+                    ProjectAccessAuthorization.Allows(human.User, row.ProjectId, projects)).ToArray() };
+            if (tenant is null && context.RequestServices.GetService<ObservedInstallation>() is { } observer)
+            {
+                var rows = new List<DeployMatrixRow>();
+                foreach (var row in matrix.Projects)
+                    rows.Add(row with { Installation = await observer.ReadAsync(row, context.RequestAborted) });
+                matrix = matrix with { Projects = rows };
+            }
+            return Results.Ok(matrix);
         });
 
         app.MapGet("/api/deploy/cards", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>

@@ -9,7 +9,12 @@ public sealed record StudioReleaseEntry(string Revision, DateTime AtUtc, bool Ob
 public sealed record StudioCardLiveState(string State, string? Revision = null, DateTime? SinceUtc = null);
 public sealed record StudioReleasesView(string Project, string RunningRevision, DateTime ComputedAtUtc,
     IReadOnlyList<StudioReleaseCard> Pending, IReadOnlyList<StudioReleaseEntry> Releases,
-    IReadOnlyDictionary<string, StudioCardLiveState> CardStates, string? Detail = null);
+    IReadOnlyDictionary<string, StudioCardLiveState> CardStates, string? Detail = null)
+{
+    public string? Branch { get; init; }
+    public string? Tip { get; init; }
+    public IReadOnlyList<WaitingDelivery> Waiting { get; init; } = [];
+}
 
 /// <summary>Delivery membership is ancestry, never a task key in a commit message or a timestamp comparison.</summary>
 public static class StudioReleaseProjection

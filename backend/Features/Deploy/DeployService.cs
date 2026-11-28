@@ -979,36 +979,45 @@ public sealed class DeployService
     public DeployMatrixResponse Matrix()
     {
         var rows = new List<DeployMatrixRow>();
-        foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
-                     .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var watch in _scanner.GetWatchPaths().DistinctBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
         {
+            var project = watch.Name;
+            var registered = _registry?.FindByStorageLocation(watch.Path) ?? _registry?.FindByIdOrDisplayName(project);
+            var source = _instance?.IsSource(project) == true;
+            DeployMatrixRow row;
+            IReadOnlyList<EnvironmentDeclaration> declarations = [];
             try
             {
-                // Every watched project gets a row (AGT-3949). Reading the
-                // queue persists its state, so a project without environment
-                // declarations is listed as such without that read; only the
-                // source project of this instance still has its Production.
-                var declared = _environments.Declarations(project) is { Count: > 0 };
-                if (!declared && _instance?.IsSource(project) != true)
+                declarations = _environments.Declarations(project) ?? [];
+                // Reading status reconciles the queue. Plain URL targets need no queue.
+                var statuses = declarations.Count > 0 || source
+                    ? Status(project) ?? [] : [];
+                bool Visible(EnvironmentStatus status) => status.Instance is null
+                    ? status.Environment.Kind != EnvironmentKinds.Preview
+                    : !declarations.Any(item => item.Name.Equals(status.Environment.Name, StringComparison.OrdinalIgnoreCase));
+                var visible = statuses.Where(Visible).ToList();
+                foreach (var item in declarations.Where(item => visible.All(status => status.Environment.Id != item.Id)))
+                    visible.Add(new(new(item.Id, project, item.Name, item.Order ?? 0, EnvironmentKinds.Other),
+                        null, null, null, [], EnvironmentHealth.Unknown));
+                row = new(project, visible, null)
                 {
-                    rows.Add(new(project, [], null) { EnvironmentsDeclared = false });
-                    continue;
-                }
-                var statuses = Status(project)?.Where(item => item.Environment.Kind is
-                    EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray() ?? [];
-                rows.Add(new(project, statuses, null)
-                {
-                    EnvironmentsDeclared = declared,
-                    TenantStatuses = (Tenants(project) ?? []).SelectMany(tenant => Status(project, tenant.Name) ?? [])
-                        .Where(item => item.Environment.Kind is EnvironmentKinds.Staging or EnvironmentKinds.Production)
-                        .ToArray(),
-                });
+                    EnvironmentsDeclared = declarations.Count > 0,
+                    TenantStatuses = declarations.Count == 0 ? [] : (Tenants(project) ?? [])
+                        .SelectMany(tenant => Status(project, tenant.Name) ?? []).Where(Visible).ToArray(),
+                };
             }
             catch (JsonException ex)
             {
                 _logger.LogWarning(ex, "Deploy matrix skipped project {Project}: invalid deployment state", project);
-                rows.Add(new(project, [], ex.Message));
+                row = new(project, [], ex.Message);
             }
+            var urls = registered?.Urls.OrderBy(url => url.SortOrder)
+                .Where(url => !declarations.Any(item => item.Name.Equals(url.Label, StringComparison.OrdinalIgnoreCase))
+                    && !(source && url.Label.Equals(InstanceDeployService.EnvironmentName, StringComparison.OrdinalIgnoreCase)))
+                .Select(url => new DeploymentUrl(registered.Id, url.Id, string.IsNullOrWhiteSpace(url.Label) ? url.Url : url.Label, url.Url))
+                .ToArray() ?? [];
+            rows.Add(row with { RegistryId = registered?.Id, Urls = urls });
         }
         return new([EnvironmentKinds.Staging, EnvironmentKinds.Production], rows);
     }

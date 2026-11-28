@@ -31,7 +31,7 @@ public sealed class ProjectUrlReadinessService
         ProjectRecord project,
         ProjectUrlRecord url,
         string? studioOrigin,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool inspectBuildStamp = false)
     {
         var started = Stopwatch.GetTimestamp();
         if (!Uri.TryCreate(url.Url, UriKind.Absolute, out var target)
@@ -61,7 +61,18 @@ public sealed class ProjectUrlReadinessService
             var kind = statusCode is >= 200 and < 300
                 ? framePolicy == "blocked" ? "frame-blocked" : "healthy"
                 : "http-error";
-            return Finish(project, url, kind, statusCode, framePolicy, policyReason, started);
+            var result = Finish(project, url, kind, statusCode, framePolicy, policyReason, started);
+            if (!inspectBuildStamp || !response.IsSuccessStatusCode) return result;
+            try
+            {
+                return result with { Commit = await BuildStamp(response, timeout.Token) };
+            }
+            catch (Exception ex) when (ex is IOException or HttpRequestException
+                || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex, "Build stamp unavailable for project URL {UrlId}", url.Id);
+                return result;
+            }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -71,6 +82,19 @@ public sealed class ProjectUrlReadinessService
         {
             return Finish(project, url, "offline", null, "unknown", ex.Message, started);
         }
+    }
+
+    private static async Task<string?> BuildStamp(HttpResponseMessage response, CancellationToken token)
+    {
+        static string? Sha(string? value) => value is { Length: >= 7 and <= 40 } && value.All(Uri.IsHexDigit)
+            ? value.ToLowerInvariant() : null;
+        if (Sha(HeaderValues(response, "X-Build-Commit").FirstOrDefault()) is { } header) return header;
+        if (response.Content.Headers.ContentType?.MediaType is not ("text/html" or "application/xhtml+xml")) return null;
+        using var stream = await response.Content.ReadAsStreamAsync(token);
+        var prefix = new byte[32 * 1024];
+        var count = await stream.ReadAtLeastAsync(prefix, prefix.Length, throwOnEndOfStream: false, cancellationToken: token);
+        using var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(System.Text.Encoding.UTF8.GetString(prefix, 0, count));
+        return Sha(document.Head?.QuerySelector("meta[name=build-commit],meta[name=git-commit]")?.GetAttribute("content"));
     }
 
     private ProjectUrlReadinessResult Finish(
@@ -151,4 +175,5 @@ public sealed record ProjectUrlReadinessResult(
     int? StatusCode,
     string FramePolicy,
     string? Detail,
-    double DurationMs);
+    double DurationMs,
+    string? Commit = null);
