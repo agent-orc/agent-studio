@@ -181,18 +181,27 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
     [InlineData("cwd", false)]
     [InlineData("fd", false)]
     [InlineData("argument", false)]
+    [InlineData("environment", false)]
     [InlineData("cwd", true)]
     [InlineData("fd", true)]
     [InlineData("argument", true)]
+    [InlineData("environment", true)]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     [Trait("Category", "MachineBound")]
-    public async Task Terminal_release_preserves_child_references_without_cache_environment(string reference, bool linkRuns)
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Terminal_release_and_sweep_preserve_child_references_through_symlinks(string reference, bool linkRuns)
     {
         PlatformGate.LinuxOnly("inspects a live child's procfs links");
         var slot = Claim();
         var workAlias = Directory.CreateSymbolicLink(Path.Combine(_work, "alias"), ".").FullName;
         var path = RunnerPreparationCopies.RootFor(workAlias, slot)!;
         var childPath = linkRuns ? LinkRunsDirectory(slot) : path;
+        if (reference is "argument" or "environment")
+        {
+            var childWork = linkRuns ? _work
+                : Directory.CreateSymbolicLink(Path.Combine(_work, "child-alias"), "alias").FullName;
+            childPath = RunnerPreparationCopies.RootFor(childWork, slot)!;
+        }
         Prepare(slot, 21);
         _state.Delete(slot);
         var start = new ProcessStartInfo("/bin/sh")
@@ -212,6 +221,7 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         };
         start.ArgumentList.Add($"set -eu; read -r root; {bind}; echo ready; read -r done");
         if (reference == "argument") start.ArgumentList.Add(Path.Combine(childPath, "package"));
+        if (reference == "environment") start.Environment["NPM_CONFIG_CACHE"] = Path.Combine(childPath, "npm", "cache");
         using var child = Process.Start(start)!;
         try
         {
@@ -219,19 +229,48 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
             Assert.Equal("ready", await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)));
             RunnerPreparationCopies.Release(workAlias, slot, _ => { });
             Assert.True(File.Exists(Path.Combine(path, "package")));
-            if (!linkRuns)
-                Assert.Equal(21, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 0, true, _ => { }));
+            Assert.True(File.Exists(Path.Combine(path, ".release-pending")));
+            Assert.Equal(21, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 0, true, _ => { }));
+            Assert.True(File.Exists(Path.Combine(path, "package")));
         }
         finally
         {
             child.StandardInput.Close();
             await child.WaitForExitAsync();
         }
-        if (linkRuns)
-            RunnerPreparationCopies.Release(workAlias, slot, _ => { });
-        else
-            Assert.Equal(0, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 100, false, _ => { }));
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 100, false, _ => { }));
         Assert.False(Directory.Exists(path));
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public void Startup_counts_a_shared_runs_target_once_and_keeps_the_legacy_binding()
+    {
+        PlatformGate.LinuxOnly("uses symlinked preparation directories");
+        var slot = Claim();
+        var physical = LinkRunsDirectory(slot);
+        var path = Prepare(slot, 21);
+        _state.Save(slot with { PreparationCopyId = null });
+        File.WriteAllText(Path.Combine(slot.WorkerDirectory, "spec.json"), JsonSerializer.Serialize(new
+        {
+            environment = new Dictionary<string, string> { ["NUGET_PACKAGES"] = Path.Combine(physical, "nuget") }
+        }));
+        var other = Claim("other-card", "other-project");
+        var otherRuns = Directory.GetParent(RunnerPreparationCopies.RootFor(_work, other)!)!;
+        otherRuns.Parent!.Create();
+        Directory.CreateSymbolicLink(otherRuns.FullName, Path.GetDirectoryName(physical)!);
+        var orphan = Claim("orphan");
+        var orphanPath = Prepare(orphan, 12);
+        _state.Delete(orphan);
+        var neighbor = Directory.CreateDirectory(Path.Combine(otherRuns.FullName, "unrelated")).FullName;
+        var linkedCopy = Path.Combine(otherRuns.FullName, Guid.NewGuid().ToString("N"));
+        Directory.CreateSymbolicLink(linkedCopy, neighbor);
+
+        Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, true, _ => { }));
+        Assert.True(File.Exists(Path.Combine(path, "package")));
+        Assert.False(Directory.Exists(orphanPath));
+        Assert.True(Directory.Exists(neighbor));
+        Assert.True(Directory.Exists(linkedCopy));
     }
 
     [SkippableFact]

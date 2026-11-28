@@ -37,7 +37,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             if (!environment.TryGetValue(key, out var path) || !Path.IsPathFullyQualified(path)) continue;
             var root = Directory.GetParent(path)?.FullName;
             if (root is not null && Guid.TryParseExact(Path.GetFileName(root), "N", out _)
-                && Paths.Equals(Path.GetDirectoryName(root), runs)) return root;
+                && IsSameDirectory(Path.GetDirectoryName(root)!, runs)) return root;
         }
         return null;
     }
@@ -157,16 +157,21 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         long limit, bool startup, Action<string> log)
     {
         var roots = new List<(DirectoryInfo Directory, long Bytes, bool Pending)>();
-        var work = new DirectoryInfo(Path.GetFullPath(workDir));
+        if (PhysicalDirectory(Path.GetFullPath(workDir)) is not { } physicalWork) return 0;
+        var work = new DirectoryInfo(physicalWork);
         if (!work.Exists) return 0;
+        var scanned = new HashSet<string>(Paths);
         foreach (var project in work.EnumerateDirectories().Prepend(work))
         {
             var cache = new DirectoryInfo(Runs(project.FullName));
-            if (!cache.Exists || new[] { project, cache.Parent!.Parent!, cache.Parent, cache }
+            if (!cache.Exists || new[] { project, cache.Parent!.Parent!, cache.Parent }
                 .Any(dir => dir.Attributes.HasFlag(FileAttributes.ReparsePoint))) continue;
-            foreach (var dir in cache.EnumerateDirectories())
+            // A .runs link can relocate this store or share it across projects.
+            if (PhysicalDirectory(cache.FullName) is not { } physicalRuns || !scanned.Add(physicalRuns)) continue;
+            foreach (var dir in new DirectoryInfo(physicalRuns).EnumerateDirectories())
             {
-                if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                if (!Guid.TryParseExact(dir.Name, "N", out _)
+                    || dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
                 roots.Add((dir, Measure(dir), File.Exists(Path.Combine(dir.FullName, ReleasePending))));
             }
         }
@@ -175,7 +180,8 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         if (roots.Count == 0 || (!startup && total <= limit && !roots.Any(root => root.Pending))) return total;
         // A slot reserves its unique id before creating any files. Reading the slots
         // after listing candidates closes the race with a concurrently starting attempt.
-        var referenced = slots().Select(slot => RootFor(workDir, slot)).OfType<string>().ToHashSet(Paths);
+        var referenced = slots().Select(slot => RootFor(workDir, slot)).OfType<string>()
+            .Select(path => PhysicalDirectory(path) ?? path).ToHashSet(Paths);
         var candidates = roots.Where(root => !referenced.Contains(root.Directory.FullName))
             .OrderBy(root => root.Directory.LastWriteTimeUtc).ThenBy(root => root.Directory.FullName, Paths).ToArray();
         if (candidates.Length == 0) return total;
@@ -212,13 +218,43 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
     [return: MarshalAs(UnmanagedType.LPUTF8Str)]
     private static extern string? RealPath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, nint buffer);
 
+    private static bool IsSameDirectory(string first, string second) =>
+        Paths.Equals(first, second)
+        || (PhysicalDirectory(first) is { } physical && Paths.Equals(physical, PhysicalDirectory(second)));
+
+    private static string? PhysicalDirectory(string path)
+    {
+        if (OperatingSystem.IsLinux()) return RealPath(path, 0);
+        var directory = new DirectoryInfo(path);
+        if (!directory.Exists) return null;
+        if (directory.Parent is { } parent)
+        {
+            if (PhysicalDirectory(parent.FullName) is not { } physicalParent) return null;
+            directory = new DirectoryInfo(Path.Combine(physicalParent, directory.Name));
+        }
+        return directory.ResolveLinkTarget(returnFinalTarget: true) is { } target
+            ? PhysicalDirectory(target.FullName)
+            : directory.FullName;
+    }
+
+    private static string? ResolveExistingPrefix(string path)
+    {
+        // A binding or argument can name a cache subdirectory the tool has yet to create.
+        for (string? prefix = path; prefix is not null; prefix = Path.GetDirectoryName(prefix))
+        {
+            if (RealPath(prefix, 0) is { } physical)
+                return physical;
+        }
+        return null;
+    }
+
     // A child can exec with a clean environment and keep its cwd, file descriptors
     // or mapped package files. Read procfs once per batch and retain only copy roots.
     private static HashSet<string> ProcessReferences(string[] candidates)
     {
         var referenced = new HashSet<string>(Paths);
         if (!OperatingSystem.IsLinux()) return referenced;
-        // argv and environ can use the configured spelling. Kernel links use the physical path.
+        // Keep the configured spelling as well as the physical path reported by kernel links.
         var spellings = new List<(string Prefix, string Root)>();
         foreach (var root in candidates)
         {
@@ -254,21 +290,11 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
     private static IEnumerable<string> ProcessPaths(string process, string[] runsDirectories)
     {
-        var environment = ReadProcFile(process, "environ");
-        foreach (var entry in environment.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var supplied in ProcessSuppliedPaths(process))
         {
-            var split = entry.IndexOf('=');
-            if (split > 0 && CacheVariables.Contains(entry[..split], StringComparer.OrdinalIgnoreCase)
-                && Path.IsPathFullyQualified(entry[(split + 1)..]))
-                yield return Path.GetFullPath(entry[(split + 1)..]);
-        }
-
-        // Some tools receive a package or browser path as an argument and open it later.
-        var arguments = ReadProcFile(process, "cmdline");
-        foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
-            if (Path.IsPathFullyQualified(value)) yield return Path.GetFullPath(value);
+            var path = Path.GetFullPath(supplied);
+            yield return path;
+            if (ResolveExistingPrefix(supplied) is { } physical && physical != path) yield return physical;
         }
 
         if (new DirectoryInfo(Path.Combine(process, "cwd")).LinkTarget is { } cwd) yield return cwd;
@@ -287,6 +313,26 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         {
             var start = line.IndexOf('/');
             if (start >= 0) yield return line[start..];
+        }
+    }
+
+    private static IEnumerable<string> ProcessSuppliedPaths(string process)
+    {
+        var environment = ReadProcFile(process, "environ");
+        foreach (var entry in environment.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = entry.IndexOf('=');
+            if (split > 0 && CacheVariables.Contains(entry[..split], StringComparer.OrdinalIgnoreCase)
+                && Path.IsPathFullyQualified(entry[(split + 1)..]))
+                yield return entry[(split + 1)..];
+        }
+
+        // Some tools receive a package or browser path as an argument and open it later.
+        var arguments = ReadProcFile(process, "cmdline");
+        foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
+            if (Path.IsPathFullyQualified(value)) yield return value;
         }
     }
 

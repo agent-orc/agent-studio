@@ -16,7 +16,9 @@ restoring npm, NuGet and Playwright from the project's published entries. The co
 survives daemon handoff and same-attempt resume. Terminal cleanup releases it on
 success, failure, cancellation and lease loss. On Linux, terminal cleanup and eviction check surviving
 processes for cache bindings, path arguments, working directories, open files,
-executables and file mappings inside the copy. When a child still uses a copy
+executables and file mappings inside the copy. Bindings and arguments can refer
+to a copy through symlinked paths, including cache subdirectories the child has
+yet to create. When a child still uses a copy
 selected for release, the runner marks it for the five-minute sweep. This also
 covers copies first discovered at startup or under pressure. The sweep retries
 below the size limit once the last reference clears. A new round receives a fresh copy.
@@ -26,7 +28,9 @@ The coding daemon sweeps unreferenced copies at startup. Every five minutes it
 measures file bytes under the runner's project and legacy preparation roots and
 evicts the oldest unreferenced copies until the total fits the smaller of 20 GB
 and 15 percent of the work disk. `RUNNER_PREPARATION_COPIES_MAX_GB` changes the
-absolute ceiling. Live copies can exceed the target. Host filesystem telemetry
+absolute ceiling. The sweep follows a symlinked work directory or `.runs`
+directory, counts shared `.runs` targets once, and considers only attempt copy
+directories. Live copies can exceed the target. Host filesystem telemetry
 reports the measured total as `ownedBytes["preparation copies"]`. A disk hold
 names free space and the preparation footprint in the card and Operations.
 
