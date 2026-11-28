@@ -70,6 +70,26 @@ unreconciled rejected tip. See the
 
 ## Gate economics and integration lane
 
+`GET /api/operator/coding-capacity` includes a `wait` projection on each
+authorized project row. It reports up to 50 live integration deliveries with
+their lane, queued review attempt and result SHA when available, queue phase
+and age. An admission observation within two integration recheck intervals,
+with overlapping paths and a matching current recovery receipt, yields
+`intentional-wait` with reason `wait-for-holder`. The next check uses the
+integration recheck interval.
+Each delivery shows up to eight reservations and 20 overlapping files per
+reservation. Dependent counts cover the returned deliveries. Legacy recovery
+receipts supply the holder's original delivery time as `sinceUtc` and have no
+recorded expiry.
+
+A known successor run or review can yield
+`confirmed-lost-ownership`. Missing or expired evidence yields `unknown`.
+The projection also includes the current fenced dispatch plan when available,
+observed gate and integration owners, and the latest observed progress time.
+Gate completions and integration ownership are observed by the serving
+process. The read performs no recovery or model calls, and never advises an API
+restart.
+
 The batch gate state read reports `phaseAtUtc` for each batch and
 `startedAtUtc` for each run. A `Running` phase also reports whether this
 process owns a live flight and, when it does not, the recovery delay and next

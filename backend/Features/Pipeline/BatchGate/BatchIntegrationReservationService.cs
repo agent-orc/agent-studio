@@ -318,6 +318,12 @@ public sealed class BatchIntegrationReservationService
                 ? holder : null;
     }
 
+    internal IntegrationReservationJob? ReadHolder(string project)
+    {
+        if (!_projects.TryGetValue(project, out var gate)) return null;
+        lock (gate) return gate.Holder;
+    }
+
     private static string Describe(IntegrationReservationJob job)
         => job.TaskKey is null ? job.Kind : $"{job.Kind} {job.TaskKey}";
 
