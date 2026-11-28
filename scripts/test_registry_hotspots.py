@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -36,10 +37,75 @@ class RegistryHotspotTests(unittest.TestCase):
             self.assertEqual([], hotspots.guard(rows[:8] * 2, repo, set(), 8))
             problems = hotspots.guard(rows, repo, set(), 8)
             self.assertEqual(1, len(problems))
-            self.assertIn("Generate the inventory", problems[0])
+            self.assertEqual(dict(path=path, week="2026-11-23", count=9), problems[0])
             self.assertEqual([], hotspots.guard(rows, repo, {path}, 8))
             rows[-1]["at"] = "2026-11-30T00:00:00Z"
             self.assertEqual([], hotspots.guard(rows, repo, set(), 8))
+
+    def test_concurrent_eighth_cards_warn_after_merge_and_only_block_a_touching_review(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            path = "NewRegistration.cs"
+            output = repo / "report"
+
+            def git(*args):
+                return subprocess.check_output(["git", "-C", folder, *args], env=GIT_TIME,
+                                               stderr=subprocess.DEVNULL).decode().strip()
+
+            def commit(message, filename, content):
+                (repo / filename).write_text(content)
+                git("add", "--", filename)
+                git("commit", "-qm", message)
+
+            def check(exit_code, review=True):
+                env = os.environ.copy()
+                if review:
+                    env["AGENT_REVIEW_NAMESPACE"] = "fixture-attempt"
+                else:
+                    env.pop("AGENT_REVIEW_NAMESPACE", None)
+                result = subprocess.run([sys.executable, hotspots.__file__, "--guard", "--repo", folder,
+                                         "--output", str(output)], env=env, capture_output=True, text=True)
+                self.assertEqual(exit_code, result.returncode, result.stdout + result.stderr)
+                return result.stdout + result.stderr
+
+            git("init", "-q", "-b", "develop")
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            content = "services.AddSingleton<X>();\n" * 10
+            commit("base", path, content)
+            for card in range(1, 8):
+                content += f"// {card}\n"
+                commit(f"Integrate AGT-{card}", path, content)
+            base = git("rev-parse", "HEAD")
+            for card in [8, 9]:
+                git("switch", "-qc", f"card-{card}", base)
+                # Independent edits at opposite ends merge cleanly.
+                change = "// first\n" + content if card == 8 else content + "// last\n"
+                commit(f"AGT-{card}: change registration", path, change)
+                check(0)
+            git("switch", "-q", "develop")
+            git("merge", "--no-ff", "-qm", "Integrate AGT-8", "card-8")
+            # Exact-result review can be detached and can span several commits.
+            git("update-ref", "refs/remotes/origin/develop", base)
+            git("switch", "--detach", "-q")
+            commit("AGT-9: change registration", path, "// first\n" + content + "// last\n")
+            commit("Finish the card\n\nIntegrate the notes.\n\nAgent-Studio-Task: AGT-9", "notes.txt", "done")
+            ninth = git("rev-parse", "HEAD")
+            self.assertIn("9 distinct cards", check(1))
+            git("switch", "-q", "develop")
+            git("merge", "--no-ff", "-qm", "Integrate AGT-9", "card-9")
+            self.assertIn("WARNING", check(0, review=False))
+            report = json.loads((output / "registry-hotspots.json").read_text())
+            self.assertEqual([path], [draft["area"] for draft in report["cardDrafts"]])
+            git("switch", "--detach", "-q")
+            commit("AGT-10: unrelated", "notes.txt", "unrelated")
+            self.assertIn("WARNING", check(0))
+            # Review clones may contain the subject history without a named target branch.
+            git("update-ref", "-d", "refs/remotes/origin/develop")
+            git("branch", "-D", "develop")
+            check(0)
+            git("checkout", "--detach", "-q", ninth)
+            self.assertIn("scripts/registry-hotspots.json", check(1))
 
     def test_ledger_filters_project_target_period_and_deduplicates_collisions(self):
         with tempfile.TemporaryDirectory() as folder:

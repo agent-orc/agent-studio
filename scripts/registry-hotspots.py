@@ -53,6 +53,38 @@ def owner(repo, body):
     return None
 
 
+def changed_paths(repo, base, ref):
+    paths, _ = git(repo, "diff", "--name-only", "-z", base, ref, "--")
+    return [p for p in paths.split("\0") if p]
+
+
+def review_change(repo, ref, target, start):
+    """Return the integration base and the pending card's net change for exact-subject review."""
+    info, _ = git(repo, "show", "-s", "--format=%H%x00%cI%x00%B", ref)
+    sha, at, body = info.split("\0", 2)
+    if body.startswith("Integrate "):
+        return ref, None
+    refs = (f"refs/heads/{target}", f"refs/remotes/origin/{target}")
+    available, _ = git(repo, "for-each-ref", "--format=%(refname)", *refs)
+    targets = [branch for branch in available.splitlines() if branch in refs]
+    # Target refs may be stale or absent in detached review clones. Include the
+    # newest reachable receipt, checking its subject since --grep also searches bodies.
+    receipts, _ = git(repo, "log", "--topo-order", "--since=" + start.isoformat(),
+                      "--grep=^Integrate ", "--format=%H %s", sha)
+    for line in receipts.splitlines():
+        revision, _, subject = line.partition(" ")
+        if subject.startswith("Integrate "):
+            targets.append(revision)
+            break
+    if not targets:
+        return ref, None
+    base, code = git(repo, "merge-base", sha, *targets, allowed=(0, 1))
+    base = base.strip()
+    if code or base == sha:
+        return ref, None
+    return base, dict(card=owner(repo, body) or sha, at=at, paths=changed_paths(repo, base, sha))
+
+
 def integrated(repo, ref, start, end):
     rows = []
     unknown = []
@@ -63,8 +95,7 @@ def integrated(repo, ref, start, end):
         if card is None:
             unknown.append(sha)
             continue
-        paths, _ = git(repo, "diff", "--name-only", "-z", parents[0], sha)
-        rows.append(dict(card=card, sha=sha, at=at, paths=[p for p in paths.split("\0") if p]))
+        rows.append(dict(card=card, sha=sha, at=at, paths=changed_paths(repo, parents[0], sha)))
     return rows, unknown
 
 
@@ -130,12 +161,15 @@ def registry_style(path, text):
                 and len(text.splitlines()) >= 80))
 
 
+def week_of(stamp):
+    at = instant(stamp)
+    return (at.date() - dt.timedelta(days=at.weekday())).isoformat()
+
+
 def guard(rows, repo, handled, threshold):
     weeks = collections.defaultdict(list)
     for row in rows:
-        at = instant(row["at"])
-        monday = (at.date() - dt.timedelta(days=at.weekday())).isoformat()
-        weeks[monday].append(row)
+        weeks[week_of(row["at"])].append(row)
     problems = []
     for week, entries in sorted(weeks.items()):
         for hot in rank(entries, distinct_cards=True):
@@ -143,9 +177,7 @@ def guard(rows, repo, handled, threshold):
             file = repo / path
             if hot["count"] > threshold and path not in handled and file.is_file():
                 if registry_style(path, file.read_text(errors="replace")):
-                    problems.append(f"{path}: {hot['count']} distinct cards in UTC week {week} (limit {threshold}). "
-                                    "Generate the inventory, split additions by feature, or register a bounded "
-                                    "append-only section in scripts/registry-hotspots.json with its strategy and size.")
+                    problems.append(dict(**hot, week=week))
     return problems
 
 
@@ -161,7 +193,10 @@ def main():
                                      str(Path.home() / ".local/share")))
     parser.add_argument("--conflicts", type=Path, default=local_data / "agentstudio/integration-conflicts")
     parser.add_argument("--output", type=Path, default=Path(os.environ.get("JOB_RESULTS_DIR", "results")))
-    parser.add_argument("--guard", action="store_true")
+    parser.add_argument("--guard", nargs="?", choices=("integration", "review"),
+                        const="review" if os.environ.get("AGENT_REVIEW_NAMESPACE") else "integration",
+                        help="Warn and draft on integration. In review, enforce the limit on the card's net changes "
+                             "(the Studio review host selects review automatically).")
     args = parser.parse_args()
     if args.end:
         end = instant(args.end)
@@ -172,7 +207,9 @@ def main():
     start = instant(args.start) if args.start else end - dt.timedelta(days=7)
     if start >= end:
         parser.error("--from must precede --to (UTC half-open interval)")
-    cards, unknown = integrated(args.repo, args.ref, start, end)
+    base, review = (review_change(args.repo, args.ref, args.target, start)
+                    if args.guard == "review" else (args.ref, None))
+    cards, unknown = integrated(args.repo, base, start, end)
     conflicts, warnings = ([], []) if args.guard else recorded_conflicts(
         args.conflicts, args.project, args.target, start, end)
     source = "not-read-for-guard" if args.guard else "ledger"
@@ -188,15 +225,7 @@ def main():
                   conflictRecords=conflicts, integrations=cards, warnings=warnings,
                   limitations="Git fallback replays surviving sync merges on all refs; missing and rewritten attempts "
                   "cannot be counted. Sync timestamps are recovery times. No historical attempt denominator is inferred.")
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "registry-hotspots.json").write_text(json.dumps(report, indent=2) + "\n")
-    lines = [f"# Registry hotspots: {start.isoformat()} to {end.isoformat()}",
-             f"\n{report['integratedCards']} distinct integrated cards, {len(cards)} attributed integration commits.",
-             f"\nConflict source: {source}. {report['limitations']}"]
-    for title, key in [("Integrated cards touching each file", "touches"), ("Conflicts naming each file", "conflicts")]:
-        lines += [f"\n## {title}\n", "| File | Count |", "|---|---:|"]
-        lines += [f"| {row['path']} | {row['count']} |" for row in report[key]]
-    (args.output / "registry-hotspots.md").write_text("\n".join(lines) + "\n")
+    failures = []
     if args.guard:
         config = json.loads((Path(__file__).with_suffix(".json")).read_text())
         handled = {r['path'] for r in config['handled']}
@@ -208,9 +237,34 @@ def main():
                 if (content.count(registration['startMarker']) == 1
                         and content.count(registration['endMarker']) == 1):
                     handled.add(registration['path'])
-        problems = guard(cards, args.repo, handled, config['weeklyCardLimit'])
-        if problems:
-            raise SystemExit("\n".join(problems))
+        threshold = config['weeklyCardLimit']
+        pending = [review] if review and start <= instant(review["at"]) < end else []
+        drafts = {}
+        for hot in guard(cards + pending, args.repo, handled, threshold):
+            path, week = hot["path"], hot["week"]
+            message = (f"{path}: {hot['count']} distinct cards in UTC week {week} (limit {threshold}). "
+                       "Record the strategy and size in scripts/registry-hotspots.json. Generate the inventory, "
+                       "split additions by feature, or register a bounded append-only section.")
+            if pending and week == week_of(review["at"]) and path in review["paths"]:
+                failures.append(message)
+            else:
+                warnings.append(message)
+                drafts[path] = dict(title=f"Record a hotspot strategy for {path}", area=path, prompt=message)
+                print(f"WARNING: {message}")
+        report["cardDrafts"] = list(drafts.values())
+        for draft in drafts.values():
+            print("Card draft: " + json.dumps(draft))
+    args.output.mkdir(parents=True, exist_ok=True)
+    (args.output / "registry-hotspots.json").write_text(json.dumps(report, indent=2) + "\n")
+    lines = [f"# Registry hotspots: {start.isoformat()} to {end.isoformat()}",
+             f"\n{report['integratedCards']} distinct integrated cards, {len(cards)} attributed integration commits.",
+             f"\nConflict source: {source}. {report['limitations']}"]
+    for title, key in [("Integrated cards touching each file", "touches"), ("Conflicts naming each file", "conflicts")]:
+        lines += [f"\n## {title}\n", "| File | Count |", "|---|---:|"]
+        lines += [f"| {row['path']} | {row['count']} |" for row in report[key]]
+    (args.output / "registry-hotspots.md").write_text("\n".join(lines) + "\n")
+    if failures:
+        raise SystemExit("\n".join(failures))
     print(f"{report['integratedCards']} cards; {len(conflicts)} conflicts ({source}); reports: {args.output}")
 
 
