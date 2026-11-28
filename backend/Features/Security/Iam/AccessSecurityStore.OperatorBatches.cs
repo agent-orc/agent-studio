@@ -78,11 +78,12 @@ public sealed partial class AccessSecurityStore
                     ResultReason = item.Refusal ?? (!request.Approve ? "Batch rejected." : !request.Selected.Contains(item.Index)
                         ? "Deselected by the Owner." : "Waiting for Studio execution."),
                 }).ToList() };
-            if (request.Approve) _executingBatches.Add(id);
             next.OperatorBatches[next.OperatorBatches.FindIndex(candidate => candidate.Id == id)] = decided;
             SaveLocked(next);
             AppendIamAudit(owner.User.Id, request.Approve ? "operator-batch.confirm" : "operator-batch.reject", "operator-batch", id,
                 new { request.Selected, decided.ApprovedBy });
+            // A saved decision without a successful audit has no live executor.
+            if (request.Approve) _executingBatches.Add(id);
             return decided;
         }
     }
