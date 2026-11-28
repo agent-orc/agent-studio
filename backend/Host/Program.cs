@@ -1611,6 +1611,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
+builder.Services.AddSingleton<OperatorPressureReader>();
 // Resolved per read: the deploy fact titles a job by the Deploy area's names (AGT-3987).
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDeployFactSource(
     sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(), sp.GetRequiredService<ProjectRegistry>(),

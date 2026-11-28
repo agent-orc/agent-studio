@@ -57,11 +57,46 @@ fallback may return). The forecast is a selection preview and writes no
 selection ledger entry. The usage detail's Capacity section renders this list.
 
 The route accepts an operator or viewer token with `project.read`. Card
-fallbacks, waits, and pins are limited to projects it can read. A principal
-without installation-wide `workspace.operate` receives cached quota only,
-with raw CLI samples removed, exactly as on `GET /api/cli/quota`. An
-installation-wide reader gets the same background refresh behavior as that
-quota route. Reading capacity does not change routing.
+fallbacks, waits, and pins are limited to projects it can read. Installation
+quota and host evidence require workspace-wide `workspace.operate`. A
+project-only response has empty quota and host arrays, with generic card
+outcomes and null quota deadlines. Workspace readers get the same background
+quota refresh behavior as `GET /api/cli/quota`.
+
+`pressure.at` is the UTC time of the read. `pressure.hosts[]` groups evidence
+by host, executor and role. It timestamps the resource sample and the slot
+reading independently. It reports effective and occupied slots, reported CPU
+cores, one-minute load per core, RAM, swap use and traffic, CPU I/O wait,
+filesystem free and total bytes and free percent, and observed claim holds.
+Disk admission uses the existing pressure thresholds and hysteresis. Resource
+samples older than 15 minutes are stale. Missing counters are null. A missing
+or invalid disk reading yields `diskLevel: "unknown"`. The workspace inventory
+is `partial` when the configured Task Server host read is unavailable.
+
+`pressure.readyWork[]` and each host's `readyWork[]` name the queue source,
+count and oldest known wait. Coding counts use the Ready lane or the part
+assigned to that host. Review counts are from the shared pending-attempt
+queue. Pull and SSH gate queues have separate sources. Claimed-gate queue
+depth stays unknown where the Task Server exposes no aggregate queue reading.
+A Ready count measures lane membership. Eligibility, claim holds and the
+selection preview provide the context for interpreting that count.
+
+`pressure.quota[]` retains one row per provider, subscription and observed
+window. Failed, stale, unconfirmed and expired readings have null current
+usage and UTC reset. A provider reset label can be present by itself. The
+row gives the configured cap and pace, short-step reserve, effective cap for
+regular work, admission pacing target and recent measured rate from that
+subscription's history. `paceReleaseAt` estimates when this window alone
+would admit work if usage stayed at the current reading. It requires fresh
+usage and a known reset. `lastAdmission` and
+`acceptedFallback` refer to selection ledger receipts attributable to that
+window and account. A receipt without sufficient attribution yields null.
+
+`pressure.codingAdmissions[]` gives each visible Ready card's local selection
+preview. `class` distinguishes `first-launch`, `recovery` and `unclassified`.
+`hardPinned` comes from the effective routing request and applies independently
+of work class. `retryAt` requires current quota evidence for the preview's
+account. Reading capacity leaves the admission policy and claims unchanged.
 
 `GET /api/operator/coding-capacity` (AGT-4053) reads the published board,
 archive-inclusive dependency graph, fresh coding hosts and cached selection

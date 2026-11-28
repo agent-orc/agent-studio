@@ -290,7 +290,8 @@ public static class V1ReviewPlaneEndpoints
                             hostTelemetry.SwapInBytesPerSecond, hostTelemetry.SwapOutBytesPerSecond,
                             hostTelemetry.CpuStealPercent, hostTelemetry.IoWaitPercent,
                             hostTelemetry.CpuCores, hostTelemetry.ActiveSlots,
-                            Filesystems: hostTelemetry.Filesystems));
+                            Filesystems: hostTelemetry.Filesystems,
+                            SwapUsedBytes: hostTelemetry.SwapUsedBytes, SwapTotalBytes: hostTelemetry.SwapTotalBytes));
                     }
                     catch (IOException error) when (AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(error))
                     {

@@ -156,8 +156,13 @@ public sealed class GateSlotUsageTracker
     /// <summary>The last remote slot count, or null when none was reported within <paramref name="maxAge"/>.</summary>
     public GateSlotUsage? RemoteSnapshot(TimeSpan maxAge)
     {
-        lock (_reachabilityLock)
-            return _remote is { } remote && _clock.GetUtcNow() - remote.At <= maxAge ? remote.Usage : null;
+        var observation = RemoteObservation();
+        return observation is { } remote && _clock.GetUtcNow() - remote.At <= maxAge ? remote.Usage : null;
+    }
+
+    internal (GateSlotUsage Usage, DateTimeOffset At)? RemoteObservation()
+    {
+        lock (_reachabilityLock) return _remote;
     }
 
     public void Configure(int total) => Volatile.Write(ref _total, total);

@@ -54,4 +54,31 @@ public sealed class HostPlacementTelemetryTests
         var second = sampler.SampleNow(0);
         Assert.True(second.NetworkReceiveBytesPerSecond is null or >= 0);
     }
+
+    [Fact]
+    public void Linux_memory_sample_preserves_full_swap_and_distinguishes_unreported_swap()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var proc = Directory.CreateTempSubdirectory("pressure-meminfo-");
+        try
+        {
+            var meminfo = Path.Combine(proc.FullName, "meminfo");
+            var sampler = new HostTelemetrySampler(probe: FixedHostFilesystemProbe.Healthy, proc: proc.FullName);
+            File.WriteAllText(meminfo, "MemTotal: 48000 kB\nMemAvailable: 0 kB\nSwapTotal: 16000 kB\nSwapFree: 0 kB\n");
+            var full = RunnerCapabilityProbe.Telemetry(sampler.SampleNow(1))!;
+            Assert.Equal(48000L * 1024, full.MemoryUsedBytes);
+            Assert.Equal(16000L * 1024, full.SwapTotalBytes);
+            Assert.Equal(full.SwapTotalBytes, full.SwapUsedBytes);
+
+            File.WriteAllText(meminfo, "MemTotal: 48000 kB\n");
+            var partial = RunnerCapabilityProbe.Telemetry(sampler.SampleNow(0))!;
+            Assert.Null(partial.MemoryUsedBytes);
+            Assert.Null(partial.SwapTotalBytes);
+            Assert.Null(partial.SwapUsedBytes);
+        }
+        finally
+        {
+            proc.Delete(recursive: true);
+        }
+    }
 }
