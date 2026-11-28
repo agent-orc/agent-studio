@@ -68,6 +68,13 @@ def fake(program, args, root):
             print("id-of-" + args[-1])
         elif "IPAddress" in args[-2]:
             print("192.0.2.10")
+        elif args[-1] == "copy-web":
+            first_check = root / "first-web-check"
+            if first_check.exists():
+                print(first_check.read_text())
+                first_check.unlink()
+            else:
+                print(os.getenv("WEB_HEALTH", "true healthy"))
         else:
             print(os.getenv("HEALTH", "true healthy"))
     elif args[:2] == ["network", "create"]:
@@ -164,7 +171,7 @@ def copies(root):
     for script in (preflight, shadow, TOOLS / "prune-prep-runs.sh"):
         assert "Usage:" in call(script, "--help")
     for state, code, result in [("true healthy", 0, "healthy"), ("false starting", 1, "exited"),
-                                ("true starting", 1, "unhealthy")]:
+                                ("true starting", 1, "unhealthy"), ("true", 1, "unhealthy")]:
         out = call(preflight, "candidate", "0", HEALTH=state, code=code)
         assert out.splitlines()[-1].startswith(f"result={result} seconds=")
         assert "startup-phase [redacted]" in out
@@ -176,8 +183,11 @@ def copies(root):
     call(shadow, "start", FREE_PERCENT="14", code=2)
     call(shadow, "start", NO_WATCHDOG="1", code=3)
     call(shadow, "start", FAIL_WEB="1", code=3)
+    (root / "first-web-check").write_text("true unhealthy")
+    call(shadow, "start", WEB_HEALTH="false", code=1)
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network"))
-    call(shadow, "start", FREE_PERCENT="15")
+    call(shadow, "start", WEB_HEALTH="true", FREE_PERCENT="15")
+    assert "api=healthy web=running" in call(shadow, "status", WEB_HEALTH="true")
     old_watch = json.loads((root / "watch").read_text())
     assert "limit_bytes=4294967296" in call(shadow, "status")
     assert "lifetime_seconds=1800" in call(shadow)

@@ -262,9 +262,10 @@ def health(container):
                         "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", container)
     except Failure:
         return "exited"
-    if not state.startswith("true"):
+    running, _, status = state.partition(" ")
+    if running != "true":
         return "exited"
-    return "healthy" if state == "true healthy" else "unhealthy"
+    return status or "running"
 
 
 def diagnostics(container, service, log):
@@ -315,7 +316,10 @@ def preflight(copies, tag, deadline):
             while True:
                 result = health(container)
                 elapsed = int(time.monotonic() - start)
-                if result != "unhealthy" or elapsed >= deadline:
+                if result in ("healthy", "exited"):
+                    break
+                if elapsed >= deadline:
+                    result = "unhealthy"
                     break
                 time.sleep(min(3, deadline - elapsed))
             diagnostics(container, service, log)
@@ -391,10 +395,11 @@ def start_shadow(copies, tag):
             reason = shadow_limit(run, session)
             if reason:
                 raise Failure(f"Shadow {reason}", 1)
-            states = [health(session[role]) for role in ("api", "web")]
-            if states == ["healthy", "healthy"]:
+            api_state = health(session["api"])
+            web_state = health(session["web"])
+            if api_state == "healthy" and web_state in ("healthy", "running"):
                 break
-            if "exited" in states or time.monotonic() - session["start"] >= 420:
+            if "exited" in (api_state, web_state) or time.monotonic() - session["start"] >= 420:
                 diagnostics(session["api"], services[api], print)
                 raise Failure("Shadow failed to become healthy", 1)
             time.sleep(3)
