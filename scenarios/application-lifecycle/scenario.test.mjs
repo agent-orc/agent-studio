@@ -4,6 +4,8 @@ import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { scenarioSteps } from '../../scripts/release/product-scenario/steps.mjs';
+import { runFixtureRelease } from './release.mjs';
 import { waitForCompletion } from './completion.mjs';
 
 function observe(states) {
@@ -83,4 +85,60 @@ test('a failed fixture restart replaces stale evidence and preserves the other s
   assert.match(recovered, /incomplete or invalid JSON/);
   assert.match(recovered, /exited with code 17/);
   assert.doesNotMatch(recovered, /Signed in this time|exited with code 13/);
+});
+
+test('the reviewed release claims the queued stage and approved production jobs for the card digest', async () => {
+  const release = { id: 'reviewed', version: '2', cardKeys: ['CC-1'], artifactDigests: ['wish-digest'] };
+  const unrelated = { id: 'other', cardKeys: [], artifactDigests: ['other-digest'] };
+  const queue = [];
+  const promotions = [];
+  const environments = ['stage', 'production'].map(kind => ({
+    declaration: { id: kind, kind }, health: 'healthy', deployedArtifact: 'baseline',
+  }));
+  const events = [];
+  let reads = 0;
+  const owner = {
+    releases: async () => ++reads < 2 ? [unrelated] : [unrelated, release],
+    environments: async () => {
+      if (reads >= 3 && !queue.length) queue.push({ status: 'queued', environmentId: 'stage', artifact: 'wish-digest' });
+      return structuredClone({ jobs: queue, environments, promotions });
+    },
+  };
+  const page = { openAddress: async () => ({ status: 200 }), screenshot: async name => name,
+    measureButton: async () => ({ found: true, status: 200, pixels: { width: 80, height: 28 } }) };
+  function person(actor) {
+    const api = {
+      async approvePromotion(_, artifact) {
+        events.push([actor, artifact]);
+        if (actor === 'pm') return { status: 403 };
+        queue.push({ status: 'queued', environmentId: 'production', artifact });
+        return { status: 200 };
+      },
+    };
+    return { page, api };
+  }
+  const people = new Map([['pm', person('pm')], ['manager', person('manager')]]);
+  async function deploy(kind, artifact) {
+    const job = queue.find(job => job.status === 'queued' && job.environmentId === kind && job.artifact === artifact);
+    assert.ok(job, 'only a queued job can be claimed');
+    job.status = 'succeeded';
+    events.push([kind, artifact]);
+    environments.find(env => env.declaration.kind === kind).deployedArtifact = artifact;
+    if (kind === 'stage') promotions.push({ artifact, status: 'pending' });
+    return { environment: kind, artifact, healthStatus: 200 };
+  }
+  let now = 0;
+  const clock = { now: () => new Date(now), sleep: async ms => { now += ms; } };
+  const ctx = { owner, people, clock, refusals: [], config: { pollMs: 10, releaseTimeoutMs: 50, deployTimeoutMs: 50 },
+    state: { project: { name: 'Click Counter' }, card: { key: 'CC-1' }, preview: { status: 'ready' },
+      addresses: { stage: 'stage', production: 'production' } } };
+  const evidence = {};
+  const record = { note: (key, value) => { evidence[key] = value; }, screenshot() {} };
+  const step = scenarioSteps().find(step => step.id === 'release');
+  await runFixtureRelease(step, ctx, record, { deploy });
+  assert.deepEqual(events, ['stage', 'pm', 'manager', 'production'].map(who => [who, 'wish-digest']));
+  assert.equal(evidence.sameDigestAsStage, true);
+  assert.equal(evidence.stageJob.healthStatus, 200);
+  assert.equal(evidence.productionJob.healthStatus, 200);
+  assert.ok(queue.every(job => job.status === 'succeeded'));
 });

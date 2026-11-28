@@ -362,11 +362,13 @@ async function acceptPreview(ctx, record) {
   record.screenshot(await page.screenshot('accepted'), 'Accepted; a release approver decides when it goes live');
 }
 
-async function releaseToProduction(ctx, record) {
+async function releaseToProduction(ctx, record, {
+  deploymentView = () => ctx.owner.environments(ctx.state.project.name), release,
+} = {}) {
   const { config, state } = ctx;
   const manager = ctx.people.get('manager');
   const pm = ctx.people.get('pm');
-  const staged = await waitForStage(ctx, state.card.key);
+  const staged = await waitForStage(ctx, deploymentView, release);
   record.note('release', staged.release.version);
   record.note('commit', staged.release.commitSha);
   record.note('artifact', staged.artifact);
@@ -387,7 +389,7 @@ async function releaseToProduction(ctx, record) {
   record.note('managerApproval', { status: approved.status, error: approved.body?.error ?? null });
   expect(approved.status >= 200 && approved.status < 300, `The manager's release answered ${approved.status}.`, { body: approved.body });
   const production = await waitFor(`production health of ${staged.artifact}`, async () => {
-    const view = await ctx.owner.environments(state.project.name);
+    const view = await deploymentView('production', [staged.artifact]);
     const live = environment(view, 'production');
     if (live?.history?.some(item => item.artifact === staged.artifact && item.status === 'failed'))
       throw new StepFailure(`Production failed for ${staged.artifact}.`, { history: live.history.slice(0, 3) });
@@ -546,15 +548,15 @@ async function beforeAfter(ctx) {
   };
 }
 
-/** Waits until the release that carries `cardKey` runs healthy on stage and waits for the production approval. */
-async function waitForStage(ctx, cardKey) {
+async function waitForStage(ctx, deploymentView, fixtureRelease) {
   const { owner, config, state } = ctx;
-  return waitFor(`stage of the release with ${cardKey}`, async () => {
-    const release = (await owner.releases(state.project.name))
-      .filter(item => (item.cardKeys ?? []).includes(cardKey))
+  const subject = fixtureRelease ? `fixture release ${fixtureRelease.version}` : `the release with ${state.card.key}`;
+  return waitFor(`stage of ${subject}`, async () => {
+    const release = fixtureRelease ?? (await owner.releases(state.project.name))
+      .filter(item => (item.cardKeys ?? []).includes(state.card.key))
       .sort((a, b) => String(b.createdAtUtc).localeCompare(String(a.createdAtUtc)))[0];
     if (!release) return null;
-    const view = await owner.environments(state.project.name);
+    const view = await deploymentView('stage', release.artifactDigests ?? []);
     const promotion = [...view.promotions].reverse().find(item => (release.artifactDigests ?? []).includes(item.artifact));
     if (!promotion) return null;
     if (promotion.status === 'failed')

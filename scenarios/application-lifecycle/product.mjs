@@ -7,6 +7,7 @@ import { writeFile } from 'node:fs/promises';
 import { playScenario } from '../../scripts/release/product-scenario/play.mjs';
 import { parseConfig } from '../../scripts/release/product-scenario/config.mjs';
 import { StepFailure } from '../../scripts/release/product-scenario/runner.mjs';
+import { runFixtureRelease } from './release.mjs';
 import { installation, nextTotpWindow, projectName, studio, workspace } from './installation.mjs';
 
 const site = await installation();
@@ -58,18 +59,7 @@ function prepareSteps(steps) {
           record.note('controls', { status, acceptVisible: button.visible });
           throw new StepFailure('No reviewed delivery is available for acceptance.');
         }
-        if (step.id === 'release' && !ctx.state.preview) {
-          const release = await site.publish('approval-check');
-          const artifact = release.artifactDigests[0];
-          const result = await site.deploy('stage', artifact);
-          assert.equal(result.healthStatus, 200);
-          await page.openAddress(site.targets.stage.address);
-          const pm = await ctx.people.get('pm').api.approvePromotion(projectName, artifact);
-          const manager = await ctx.people.get('manager').api.approvePromotion(projectName, artifact);
-          record.note('approvalProbe', { version: release.version, artifact, pm: pm.status, manager: manager.status, managerAnswer: manager.body });
-          if (manager.status === 200) record.note('production', await site.deploy('production', artifact));
-          throw new StepFailure('Approval was tried on a separate staged fixture release. No accepted wish release. PM HTTP ' + pm.status + ', manager HTTP ' + manager.status);
-        }
+        if (step.id === 'release') return await runFixtureRelease(step, ctx, record, site);
         try {
           await step.run(ctx, record);
         } catch (error) {
