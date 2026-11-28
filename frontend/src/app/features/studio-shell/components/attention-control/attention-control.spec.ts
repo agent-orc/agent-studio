@@ -71,6 +71,26 @@ describe('AttentionControlComponent', () => {
     });
   }
 
+  it('opens Access for ended elevation without opening a task or project tab', async () => {
+    const item: OperatorAttentionItem = { id: 'elevation-ended', type: 'elevation.rate-ended', project: null,
+      cardKey: null, cards: [], reason: 'Elevation ended after rate refusals.',
+      observedAt: '2026-11-09T09:00:00Z', suggestedOperations: [] };
+    const { fixture, http, overlays, openTab, openReferenceOrNotify } = await setup('ok', 0, [item]);
+    fixture.componentInstance.toggle();
+    http.expectOne('/api/operator/attention').flush({ items: [item], count: 1 });
+    http.expectNone('/api/tasks/acceptance-readiness');
+    http.expectOne('/api/operator/backups').flush({ state: 'ok', stale: false,
+      generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
+    await fixture.whenStable();
+    const action = document.querySelector<HTMLButtonElement>('[data-testid="attention-row"] button');
+    expect(action).not.toBeNull();
+    action!.click();
+    expect(overlays.open).toHaveBeenCalledExactlyOnceWith('access');
+    expect(openTab).toHaveBeenCalledExactlyOnceWith({ kind: 'workspace-settings' });
+    expect(openReferenceOrNotify).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.open()).toBe(false);
+  });
+
   it('updates policy recommendations without changing the owner-item identity', async () => {
     const item: OperatorAttentionItem = { id: 'expired', type: 'post-merge.red-incident',
       project: 'alpha', cardKey: 'AGT-1', cards: ['AGT-1'], reason: 'Quarantine expired.',
