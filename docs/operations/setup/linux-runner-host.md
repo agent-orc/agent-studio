@@ -1015,19 +1015,42 @@ being promoted.
    launcher is still available. Preserve the normal Review drain and handoff
    checks; `--force` does not bypass release provenance.
 2. For each active or rollback release, recover the exact original publish tree
-   from the independently trusted publisher, including its original `release-id`
-   and all directories. Use the new helper from the trusted operator checkout to
-   compute its digest, then install the approval as above. Before the installed
-   helper is upgraded, the equivalent digest command is:
+   from the independently trusted publisher, including all directories and any
+   archived `release-id`. Confirm the release identity against the publisher's
+   authenticated records and the existing release directory name. Match the
+   layout produced by the helper that originally promoted that release:
+
+   **Legacy promotion removed `release-id` from the installed tree.** Hash a
+   disposable copy of the trusted publisher artifact with only that marker
+   removed if present. An original `dotnet publish` artifact may already lack
+   the marker because the old procedure added it only to incoming. Keep the
+   original artifact intact. From the trusted operator checkout, before
+   upgrading the installed helper:
 
    ```bash
-   sudo bash ./deploy/agent-host/agent-runner-deploy --release-digest /absolute/trusted/publish
+   trusted_publish=/absolute/trusted/publish
+   (
+     set -euo pipefail
+     approval_tree="$(mktemp -d)"
+     trap 'rm -rf -- "$approval_tree"' EXIT
+     cp -R --no-preserve=all "$trusted_publish/." "$approval_tree/"
+     rm -f -- "$approval_tree/release-id"
+     sudo bash ./deploy/agent-host/agent-runner-deploy --release-digest "$approval_tree"
+   )
    ```
 
-   Store the resulting digest under that release's existing directory name,
-   which must match its publisher identity. Do not hash the host's current tree
-   and bless it. If the original trusted artifact or authenticated publisher
-   digest is unavailable, leave admission paused and restore or promote a new
+   **New promotion retains `release-id`.** For a release promoted by the new
+   helper, hash the complete trusted publisher tree, including the unchanged
+   marker, with `sudo bash ./deploy/agent-host/agent-runner-deploy --release-digest
+   /absolute/trusted/publish`. Do not apply the legacy conversion to this layout.
+
+   Install the resulting digest as above under that release's existing
+   directory name. The verifier hashes the complete installed tree in both
+   cases; it does not ignore `release-id` or modify installed releases. Do not
+   hash the host's current tree and bless it. A publisher digest for the original
+   tree including `release-id` cannot approve a legacy tree without the marker;
+   obtain the trusted artifact or an authenticated digest for the legacy layout.
+   If neither is available, leave admission paused and restore or promote a new
    independently approved release before resuming container work.
 3. Verify the active release and each intended rollback target with the new
    checked-out verifier before enabling the new launcher:

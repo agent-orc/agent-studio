@@ -432,6 +432,41 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertNotEqual(0, self.run_helper(
             f'verify_release_provenance "{self.release}" other-release').returncode)
 
+    def test_runbook_legacy_approval_matches_the_promoted_layout(self):
+        runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
+        migration = runbook.split("### Release approval migration", 1)[1]
+        commands = migration.split("```bash\n", 1)[1].split("```", 1)[0]
+        trusted_publish = self.root / "trusted-publish"
+        shutil.copytree(self.release, trusted_publish)
+        # Legacy promotion selected the directory name, then removed release-id.
+        # Publisher archives may contain the marker or just dotnet publish output.
+        checkout = self.root / "checkout"
+        helper = checkout / "deploy/agent-host/agent-runner-deploy"
+        helper.parent.mkdir(parents=True)
+        helper.write_text(self.helper.read_text().replace('[[ "$EUID" -eq 0 ]]', 'true'))
+        commands = commands.replace("/absolute/trusted/publish", str(trusted_publish))
+        for has_marker in (False, True):
+            with self.subTest(publisher_has_release_id=has_marker):
+                marker = trusted_publish / "release-id"
+                if has_marker:
+                    marker.write_text(self.release_id + "\n")
+                result = subprocess.run(
+                    ["bash", "-c", 'set -euo pipefail; sudo() { [[ "$1" == bash ]] || return 90; "$@"; };\n' + commands],
+                    cwd=checkout, capture_output=True, text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                (self.approvals / f"{self.release_id}.sha256").write_text(result.stdout.strip() + "\n")
+                verification = self.verify()
+                self.assertEqual(0, verification.returncode, verification.stderr)
+                self.assertEqual(has_marker, marker.exists())
+                if has_marker:
+                    self.assertEqual(self.release_id + "\n", marker.read_text())
+        self.assertFalse((self.release / "release-id").exists())
+        # Layout conversion must not bless unexplained host content changes.
+        (self.release / "agent-host.dll").write_bytes(b"changed legacy assembly")
+        self.assertNotEqual(0, self.verify().returncode)
+        self.assertEqual("", self.log.read_text())
+
     def test_approval_ownership_and_directory_ownership_are_enforced(self):
         self.approve()
         # Model another UID without requiring privilege to chown fixture files.
