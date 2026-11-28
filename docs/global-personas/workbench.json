@@ -4,10 +4,10 @@
   "title": "Global personas",
   "summary": "Four existing roles take responsibility for installation duties, Owner assignments and measurable goals. The first slice takes model discovery through qualification, scoped route adoption and rollback evidence.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-28T10:09:54Z",
+  "updatedAt": "2026-11-28T12:43:39Z",
   "sourceTaskKeys": [
     "AGT-4377"
   ],
@@ -231,5 +231,6 @@
       }
     }
   ],
-  "key": "AGT-W3473"
+  "key": "AGT-W3473",
+  "editedBy": "AGT-4377"
 }
