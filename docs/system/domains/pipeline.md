@@ -352,10 +352,21 @@ The run host is the fallback. Once the oldest pending integration reaches the
 project's `windowMinutes`, occupied coding slots and host load no longer veto
 that window. It runs sequentially inside the existing worker test envelope;
 its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering puts merge
-checks first. Fixed-slot gate admission preserves the separate integration
+fallback still waits for free coding capacity. Gate queue ordering uses attempt
+creation time first, with merge precedence only at the same instant. Both
+authorities scan bounded pages of 32 in that order until eligible work is found,
+so later arrivals cannot indefinitely overtake either queue. The daemon keeps
+two durable flights and continues claiming while ordinary execution is active.
+A claimed successor in the same lane waits for its predecessor to finish and
+for claim recovery before materializing, including when the predecessor faults
+or is independently cancelled. Shutdown cancellation still stops the wait.
+Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
