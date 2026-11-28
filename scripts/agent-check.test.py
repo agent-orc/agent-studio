@@ -2,9 +2,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
+import select
 import subprocess
 import sys
 import tempfile
@@ -96,6 +98,21 @@ class AgentCheckTests(unittest.TestCase):
             "Failed e2e/example.spec.ts:13:3 › opens the panel | Error: expect(locator).toBeVisible() failed",
         ])
 
+    def test_slow_vstest_failures_keep_their_names_and_assertions(self):
+        result = self.run_fixture(
+            "  Failed SampleTests.Slow [1 m 2 s]\n"
+            "  Error Message:\n"
+            "   Assert.Equal() Failure: Values differ\n"
+            "  Failed SampleTests.Slower [1 h 3 m 2 s]\n"
+            "  Error Message:\n"
+            "   Assert.True() Failure\n",
+            1, "test", "SampleTests", "--project", "backend",
+        )
+        self.assertEqual(result.stdout.splitlines()[1:], [
+            "Failed SampleTests.Slow | Assert.Equal() Failure: Values differ",
+            "Failed SampleTests.Slower | Assert.True() Failure",
+        ])
+
     def test_empty_filter_match_fails(self):
         result = self.run_fixture("No test matches the given testcase filter\n", 0, "test", "Missing", "--project", "backend")
         self.assertEqual(result.returncode, 1)
@@ -141,18 +158,19 @@ class AgentCheckTests(unittest.TestCase):
                 follower_waiting.set()
             return original_flock(file, operation)
 
-        def run_check(*_args):
+        def run_worker(flight, *_args):
             owner_started.set()
             if not release_owner.wait(10):
                 raise TimeoutError("The test did not release the first check")
-            return 1, "shared failed result"
+            flight.write(b'[1, "shared failed result"]')
+            flight.flush()
 
         def invocation():
             return tuple(agent_check.shared_result(key, [], 1, self.results, "agent-check build", "build"))
 
         with (
             patch.object(agent_check.fcntl, "flock", side_effect=observe_wait),
-            patch.object(agent_check, "run_check", side_effect=run_check) as run,
+            patch.object(agent_check, "run_worker", side_effect=run_worker) as run,
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
             leader = executor.submit(invocation)
@@ -169,6 +187,52 @@ class AgentCheckTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertEqual(invocation(), leader.result())
             self.assertEqual(run.call_count, 2)
+
+    def test_killed_invocation_keeps_the_flight_until_its_command_finishes(self):
+        ready = self.results / "ready"
+        release = self.results / "release"
+        for fifo in (ready, release):
+            os.mkfifo(fifo)
+        dotnet = self.results / "dotnet"
+        dotnet.write_text("#!/bin/sh\nprintf R > \"$CHECK_READY\"\nread -r line < \"$CHECK_RELEASE\"\n")
+        with open(ready, "r+b", buffering=0, opener=self.open_fifo) as started:
+            self.assert_active_after_kill(started, release)
+
+    @staticmethod
+    def open_fifo(path, flags):
+        return os.open(path, flags | os.O_NONBLOCK)
+
+    def assert_active_after_kill(self, started, release):
+        env = {
+            **os.environ, "JOB_RESULTS_DIR": str(self.results), "TMPDIR": str(self.results),
+            "PATH": f"{self.results}{os.pathsep}{os.environ['PATH']}",
+            "CHECK_READY": started.name, "CHECK_RELEASE": str(release),
+        }
+        with open(release, "r+b", buffering=0, opener=self.open_fifo) as finish:
+            with subprocess.Popen([SCRIPT, "build"], env=env, stdout=subprocess.PIPE) as owner:
+                try:
+                    self.assertTrue(select.select([started], [], [], 10)[0], "check did not start")
+                    self.assertEqual(started.read(1), b"R")
+                    owner.kill()
+                    owner.wait(timeout=5)
+                    state = self.results / f"agent-check-{os.getuid()}"
+                    active, = (path for path in state.iterdir() if path.name != "gate")
+                    with (state / "gate").open("a+b") as gate:
+                        agent_check.fcntl.flock(gate, agent_check.fcntl.LOCK_EX)
+                        flight = agent_check.join_flight(active)
+                    self.assertIsNotNone(flight, "a surviving command lost its flight")
+                    with flight:
+                        finish.write(b"done\n")
+                        owner.communicate(timeout=10)
+                        agent_check.fcntl.flock(flight, agent_check.fcntl.LOCK_SH | agent_check.fcntl.LOCK_NB)
+                        code, summary = json.load(flight)
+                        self.assertEqual(code, 0)
+                        self.assertIn(" | PASS | ", summary)
+                finally:
+                    finish.write(b"done\n")
+                    if owner.poll() is None:
+                        owner.kill()
+                    owner.communicate(timeout=10)
 
     def test_guards_cover_each_review_plan_dotnet_project(self):
         project_config = (SCRIPT.parent.parent / ".agent-studio/project.yml").read_text()

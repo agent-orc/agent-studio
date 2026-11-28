@@ -37,7 +37,10 @@ CHECKS = {
 }
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 BUILD_ERROR = re.compile(r":\s*error\b|\b(?:ERROR|Error TS\d+)\b")
-VSTEST_FAILURE = re.compile(r"Failed (.+?)\s+\[(?:< ?)?[\d.]+\s*(?:ms|s|m|min|h)\]$")
+VSTEST_FAILURE = re.compile(
+    r"Failed (.+?)\s+\[(?:<\s*)?\d+(?:\.\d+)?\s*(?:ms|s|min|m|h)"
+    r"(?:\s+\d+(?:\.\d+)?\s*(?:ms|s|min|m|h))*\]$"
+)
 TEST_FAILURE = re.compile(r"(?:FAIL\s+|(?:FAIL|ERROR):\s+|\d+\)\s+\[.+?\]\s+›\s+)(.+)")
 TEST_ERROR = re.compile(r"(?:\w*Error|expect)\b")
 MAX_SUMMARY_LINES = 20
@@ -134,8 +137,8 @@ def join_flight(active):
         fcntl.flock(flight, fcntl.LOCK_SH | fcntl.LOCK_NB)
     except BlockingIOError:
         return flight
-    # A killed owner may have left this name behind. Followers already
-    # attached to its descriptor can still read the interrupted result.
+    # The owner and its worker are gone. Existing followers can still read
+    # their result through the descriptor they already opened.
     flight.close()
     active.unlink()
     return None
@@ -251,13 +254,37 @@ def interrupted(signum, _frame):
     raise SystemExit(128 + signum)
 
 
+def run_worker(flight, commands, seconds, results, label, check):
+    # Share the locked descriptor with the worker. If this invocation is
+    # killed, the worker still enforces the deadline and publishes the result.
+    # The commands it launches do not inherit the descriptor.
+    fd = flight.fileno()
+    request = json.dumps([commands, seconds, str(results), label, check])
+    worker = subprocess.Popen(
+        [sys.executable, "-B", __file__, "--worker", str(fd), request],
+        pass_fds=(fd,), start_new_session=True,
+    )
+    try:
+        worker.wait()
+    finally:
+        if worker.returncode is None:
+            worker.terminate()
+            worker.wait()
+
+
+def worker_main(fd, request):
+    commands, seconds, results, label, check = json.loads(request)
+    signal.signal(signal.SIGTERM, interrupted)
+    with os.fdopen(int(fd), "wb") as flight:
+        code, summary = run_check(commands, seconds, Path(results), label, check)
+        flight.write(json.dumps([code, summary]).encode())
+
+
 def shared_result(key, commands, seconds, results, label, check):
     with check_flight(key) as (owner, flight):
         if owner:
-            code, summary = run_check(commands, seconds, results, label, check)
-            flight.write(json.dumps([code, summary]).encode())
-            flight.flush()
-            return code, summary
+            run_worker(flight, commands, seconds, results, label, check)
+            flight.seek(0)
         try:
             return json.load(flight)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -284,4 +311,7 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:2] == ["--worker"]:
+        worker_main(*sys.argv[2:])
+    else:
+        raise SystemExit(main())
