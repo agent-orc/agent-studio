@@ -139,7 +139,7 @@ public static class OperatorDecisionFacts
                 Key(OperatorDecisionTypes.BatchRed, manifest.BatchId, Stamp(state.RecordedAtUtc.UtcDateTime)),
                 project, cards.Length == 1 ? cards[0] : null,
                 $"Batch {manifest.BatchId} is red: {FirstText(state.Reason) ?? "gate verdict red"}.",
-                state.RecordedAtUtc.UtcDateTime, evidence, cards));
+                state.RecordedAtUtc.UtcDateTime, evidence, cards) { BatchId = manifest.BatchId });
             var running = children[manifest.BatchId]
                 .Where(child => child.State is null || RunningPhases.Contains(child.State.Phase)).ToArray();
             if (running.Length == 0) continue;

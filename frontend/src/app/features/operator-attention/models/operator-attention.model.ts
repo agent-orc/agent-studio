@@ -6,6 +6,8 @@ export interface OperatorAttentionItem {
   /** Occurrence key: stable until the fact clears. */
   id: string;
   type: string;
+  isDecision?: boolean;
+  canDismiss?: boolean;
   project: string | null;
   cardKey: string | null;
   title?: string | null;
@@ -21,6 +23,16 @@ export interface OperatorAttentionItem {
 export interface OperatorAttentionResponse {
   items: OperatorAttentionItem[];
   count: number;
+  decisionCount?: number;
+  noticeCount?: number;
+}
+
+/** Older servers return items without the section flag. Dossiers are read separately. */
+export function isAttentionDecision(item: OperatorAttentionItem): boolean {
+  return item.isDecision ?? (Boolean(item.ownerOptions?.length) || [
+    'human-review.ready', 'escalation.opened', 'decision-card.opened', 'dossier.decision-open',
+    'elevation.rate-ended', 'audit.alert', 'push.blocked', 'batch.record-unreadable',
+  ].includes(item.type));
 }
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
@@ -104,6 +116,7 @@ export function attentionClassOf(type: string): AttentionClass {
 
 export interface AttentionGroup {
   readonly spec: AttentionClassSpec;
+  readonly dismissible: readonly OperatorAttentionItem[];
   readonly items: readonly OperatorAttentionItem[];
 }
 
@@ -119,7 +132,8 @@ export function groupAttention(items: readonly OperatorAttentionItem[]): Attenti
     if (bucket) bucket.push(item);
     else byClass.set(key, [item]);
   }
-  return CLASSES.filter(spec => byClass.has(spec.key)).map(spec => ({ spec, items: byClass.get(spec.key)! }));
+  return CLASSES.filter(spec => byClass.has(spec.key)).map(spec => ({ spec, items: byClass.get(spec.key)!,
+    dismissible: byClass.get(spec.key)!.filter(item => item.canDismiss) }));
 }
 
 /** The card a card action opens, when the row names one. */

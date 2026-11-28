@@ -4,6 +4,8 @@
   <app-studio-icon name="bell" [size]="14" />
   <span class="attention-control__label">Needs you </span>
   <strong class="attention-control__count" data-testid="studio-attention-count">{{ count() }}</strong>
+  <span class="attention-list__group-count">Notices <sui-count-badge variant="pane-tab" [value]="attention.noticeCount()"
+        data-testid="studio-attention-notice-count" /></span>
   @if (!attention.complete()) {
     <app-status-indicator [tone]="attention.coverageLabel() === 'Partial coverage' ? 'warning' : 'running'"
                           [label]="attention.coverageLabel() === 'Partial coverage' ? 'Partial' : 'Checking'"
@@ -16,6 +18,9 @@
   <app-dialog eyebrow="Operator" title="Needs you" widthTier="lg" testid="studio-attention-list"
               (closeRequest)="close()" (backdropClick)="close()">
     <div class="attention-list" data-testid="attention-list-body">
+      @if (dismissalError()) {
+        <p role="alert">Dismissal failed. Check access and retry with the current group.</p>
+      }
       @if (overlapError()) {
         <p class="attention-list__reason" role="alert" data-testid="attention-overlap-error">{{ overlapError() }}</p>
       }
@@ -24,75 +29,86 @@
           <strong>{{ attention.coverageLabel() }}.</strong> {{ attention.coverageDetail() }}.
           Last successful facts are kept; missing sources may have more items. Reads retry automatically.
         </p>
-      } @else if (count() === 0) {
+      } @else if (count() === 0 && attention.noticeCount() === 0) {
         <p class="attention-list__empty" data-testid="attention-list-empty">Nothing needs you right now.</p>
       }
-      @for (group of groups(); track group.spec.key) {
-        <section class="attention-list__group" [attr.data-testid]="'attention-group-' + group.spec.key">
-          <h3 class="attention-list__head">
-            <span>{{ group.spec.label }}</span>
-            <span class="attention-list__group-count" data-testid="attention-count-in-group">{{ group.items.length }}</span>
-          </h3>
-          @if (group.spec.key === 'human-review') {
-            <p class="attention-list__review-count" data-testid="attention-review-ready-count">
-              @if (attention.readinessChecked()) {
-                {{ attention.readyCount() }} of {{ group.items.length }} ready to accept
-              } @else if (attention.readinessError()) {
-                Acceptance readiness unavailable. Try reopening the list.
-              } @else {
-                Checking acceptance readiness…
-              }
-            </p>
-          }
-          <ul class="attention-list__rows">
-            @for (item of group.items; track item.id) {
-              <li class="attention-list__row" data-testid="attention-row" [attr.data-attention-type]="item.type">
-                <div class="attention-list__text">
-                  <div class="attention-list__meta">
-                    @if (card(item); as key) { <span class="attention-list__key" data-testid="attention-row-card">{{ key }}</span> }
-                    @if (item.title) { <span class="attention-list__title" data-testid="attention-row-title">{{ item.title }}</span> }
-                    @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
-                    <span class="attention-list__age" data-testid="attention-row-age">{{ age(item) }}</span>
-                  </div>
-                  @if (item.type === 'environment.incident-open') {
-                    <app-status-indicator tone="danger" label="Incident open" [compact]="true" testId="attention-incident-status" />
+      @for (section of sections(); track section.label) {
+        @if (section.groups.length) {
+          <section class="attention-list" [attr.aria-label]="section.label">
+            <h2 class="attention-list__head">{{ section.label }}</h2>
+            @for (group of section.groups; track group.spec.key) {
+              <section class="attention-list__group" [attr.data-testid]="'attention-group-' + group.spec.key">
+                <h3 class="attention-list__head">
+                  <span>{{ group.spec.label }}</span>
+                  <span class="attention-list__group-count" data-testid="attention-count-in-group">{{ group.items.length }}</span>
+                  @if (group.dismissible.length) {
+                    <button type="button" class="attention-list__link" data-testid="attention-dismiss-group"
+                            [disabled]="dismissing()" (click)="dismiss(group.dismissible, group.spec.label)">Dismiss {{ group.dismissible.length }}</button>
                   }
-                  @if (item.type === 'human-review.ready') {
-                    @if (attention.readinessFor(item); as readiness) {
-                      <app-status-indicator [tone]="readinessPresentation(readiness.readiness).tone"
-                                            [label]="readiness.headline" [compact]="true" [wrap]="true"
-                                            testId="attention-review-status" />
-                      <p class="attention-list__reason" data-testid="attention-row-reason">{{ readiness.reason }}</p>
+                </h3>
+                @if (group.spec.key === 'human-review') {
+                  <p class="attention-list__review-count" data-testid="attention-review-ready-count">
+                    @if (attention.readinessChecked()) {
+                      {{ attention.readyCount() }} of {{ group.items.length }} ready to accept
+                    } @else if (attention.readinessError()) {
+                      Acceptance readiness unavailable. Try reopening the list.
                     } @else {
-                      <app-status-indicator [tone]="attention.readinessError() || attention.readinessChecked() ? 'warning' : 'running'"
-                                            [label]="attention.readinessError() || attention.readinessChecked() ? 'Readiness unavailable' : 'Checking acceptance readiness'"
-                                            [compact]="true" [wrap]="true" testId="attention-review-status" />
+                      Checking acceptance readiness…
                     }
-                  } @else {
-                    <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
-                  }
-                  @if (item.ownerOptions?.length) {
-                    <ul class="attention-list__options" data-testid="attention-owner-options">
-                      @for (option of item.ownerOptions; track option.id) {
-                        <li>{{ option.label }} @if (option.recommended) { <strong>Recommended</strong> }</li>
+                  </p>
+                }
+                <ul class="attention-list__rows">
+                  @for (item of group.items; track item.id) {
+                    <li class="attention-list__row" data-testid="attention-row" [attr.data-attention-type]="item.type">
+                      <div class="attention-list__text">
+                        <div class="attention-list__meta">
+                          @if (card(item); as key) { <span class="attention-list__key" data-testid="attention-row-card">{{ key }}</span> }
+                          @if (item.title) { <span class="attention-list__title" data-testid="attention-row-title">{{ item.title }}</span> }
+                          @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
+                          <span class="attention-list__age" data-testid="attention-row-age">{{ age(item) }}</span>
+                        </div>
+                        @if (item.type === 'environment.incident-open') {
+                          <app-status-indicator tone="danger" label="Incident open" [compact]="true" testId="attention-incident-status" />
+                        }
+                        @if (item.type === 'human-review.ready') {
+                          @if (attention.readinessFor(item); as readiness) {
+                            <app-status-indicator [tone]="readinessPresentation(readiness.readiness).tone"
+                                                  [label]="readiness.headline" [compact]="true" [wrap]="true"
+                                                  testId="attention-review-status" />
+                            <p class="attention-list__reason" data-testid="attention-row-reason">{{ readiness.reason }}</p>
+                          } @else {
+                            <app-status-indicator [tone]="attention.readinessError() || attention.readinessChecked() ? 'warning' : 'running'"
+                                                  [label]="attention.readinessError() || attention.readinessChecked() ? 'Readiness unavailable' : 'Checking acceptance readiness'"
+                                                  [compact]="true" [wrap]="true" testId="attention-review-status" />
+                          }
+                        } @else {
+                          <p class="attention-list__reason" data-testid="attention-row-reason" [attr.title]="item.reason">{{ item.reason }}</p>
+                        }
+                        @if (item.ownerOptions?.length) {
+                          <ul class="attention-list__options" data-testid="attention-owner-options">
+                            @for (option of item.ownerOptions; track option.id) {
+                              <li>{{ option.label }} @if (option.recommended) { <strong>Recommended</strong> }</li>
+                            }
+                          </ul>
+                        }
+                      </div>
+                      <button type="button" class="attention-list__action" data-testid="attention-row-action"
+                              (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
+                      @if (item.type === 'dispatch.overlap-starved' && item.project && item.suggestedOperations.includes('dispatch.run-anyway')) {
+                        <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-run-anyway"
+                                [disabled]="overlapPending() !== null" (click)="runAnyway(item)">Run anyway</button>
                       }
-                    </ul>
+                      @if (item.type === 'environment.incident-open') {
+                        <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-open-operations"
+                                (click)="openOperations(item)">Open Operations</button>
+                      }
+                    </li>
                   }
-                </div>
-                <button type="button" class="attention-list__action" data-testid="attention-row-action"
-                        (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
-                @if (item.type === 'dispatch.overlap-starved' && item.project && item.suggestedOperations.includes('dispatch.run-anyway')) {
-                  <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-run-anyway"
-                          [disabled]="overlapPending() !== null" (click)="runAnyway(item)">Run anyway</button>
-                }
-                @if (item.type === 'environment.incident-open') {
-                  <button type="button" class="attention-list__action attention-list__action--secondary" data-testid="attention-open-operations"
-                          (click)="openOperations(item)">Open Operations</button>
-                }
-              </li>
+                </ul>
+              </section>
             }
-          </ul>
-        </section>
+          </section>
+        }
       }
     </div>
     <div footer class="attention-list__footer">

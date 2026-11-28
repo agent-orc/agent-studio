@@ -108,6 +108,23 @@ capacity, loss of the published board, or loss of fresh host capacity resets
 the observation; after a process restart the 20-minute observation starts anew.
 The board header renders the selected project or fleet count as one quiet line.
 
+## Attention
+
+`GET /api/operator/attention` returns the current visible occurrences in
+`items`, their total in `count`, and the subtotals in `decisionCount` and
+`noticeCount`. Each item has an occurrence `id`, an `isDecision` flag and a
+`canDismiss` flag. The Studio header also reads Dossier gates, backup state
+and credential inventory.
+
+Send `POST /api/operator/attention/dismiss` with a group of current IDs and
+a written reason, for example `{"ids":["<occurrence-id>"],"reason":"Tracked in the handover"}`.
+The handler checks run-operation permission for every affected project.
+Installation notices require workspace-wide permission. An operator agent
+session also needs the routine `attention.dismiss` grant. A successful write
+returns 204 and records the actor, reason and occurrences in the control-plane
+audit. A changed or invisible group returns 409. A new occurrence appears
+again, including a recurring host condition after an observed recovery.
+
 ## Operator log and card attention
 
 `POST /api/operator/log` appends an entry with `project`, `kind` (`observed`,

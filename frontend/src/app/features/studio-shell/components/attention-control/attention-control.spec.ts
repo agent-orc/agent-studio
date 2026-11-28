@@ -220,11 +220,11 @@ describe('AttentionControlComponent', () => {
   it('counts exactly the rows the list shows, grouped in class order', async () => {
     const { fixture, http } = await setup();
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('3');
-    // AGT-3835: the name starts with the visible text, "Needs you 3".
+    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('2');
+    // The accessible name includes both visible counts.
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="studio-attention-trigger"]')!;
-    expect(trigger.textContent!.replace(/\s+/g, ' ').trim()).toBe('Needs you 3');
-    expect(trigger.getAttribute('aria-label')).toBe('Needs you 3, 3 items need you');
+    expect(host.querySelector('[data-testid="studio-attention-notice-count"]')?.textContent?.trim()).toBe('1');
+    expect(trigger.getAttribute('aria-label')).toBe('Needs you 2 Notices 1, 2 decisions need you');
 
     (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
     http.expectOne('/api/operator/attention').flush({ items, count: items.length });
@@ -251,7 +251,7 @@ describe('AttentionControlComponent', () => {
 
     expect(attention.items().map(item => item.id)).toEqual(['s1']);
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim())
-      .toBe('1');
+      .toBe('0');
   });
 
   it('adds backup and credential warnings to the visible installation group', async () => {
@@ -263,7 +263,7 @@ describe('AttentionControlComponent', () => {
     });
     await fixture.whenStable();
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('5');
+    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('2');
     (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
     http.expectOne('/api/operator/backups').flush({ state: 'disabled', stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
@@ -284,7 +284,7 @@ describe('AttentionControlComponent', () => {
   it('adds open Dossier gates with their decision count and opens the Dossier', async () => {
     const { fixture, http, openTab } = await setup('ok', 2);
     const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('4');
+    expect(host.querySelector('[data-testid="studio-attention-count"]')?.textContent?.trim()).toBe('3');
     (host.querySelector('[data-testid="studio-attention-trigger"]') as HTMLButtonElement).click();
     http.expectOne('/api/operator/backups').flush({ state: 'ok', stale: false,
       generatedAt: '2026-11-09T09:00:00Z', warnings: [], backups: [], offHost: {} });
@@ -328,7 +328,7 @@ describe('AttentionControlComponent', () => {
     http.expectOne('/api/operator/backups').flush({}, { status: 503, statusText: 'Unavailable' });
     await fixture.whenStable();
     expect(rows()).toHaveLength(retained.length + 1);
-    expect(fixture.componentInstance.count()).toBe(rows().length);
+    expect(fixture.componentInstance.count() + fixture.componentInstance.attention.noticeCount()).toBe(rows().length);
     expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('stale');
     expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('Backups');
     expect(fixture.componentInstance.triggerLabel()).toContain('Partial coverage');
@@ -364,7 +364,7 @@ describe('AttentionControlComponent', () => {
     await fixture.whenStable();
     expect(document.querySelector('[data-testid="attention-list-coverage"]')?.textContent).toContain('Attention: unavailable');
     expect(rows()).toHaveLength(auxiliary ? 2 : 0);
-    expect(fixture.componentInstance.count()).toBe(rows().length);
+    expect(fixture.componentInstance.count() + fixture.componentInstance.attention.noticeCount()).toBe(rows().length);
     expect(document.querySelector('[data-testid="attention-list-empty"]')).toBeNull();
   });
 
@@ -385,7 +385,7 @@ describe('AttentionControlComponent', () => {
     http.expectOne('/api/operator/backups').flush({});
     await fixture.whenStable();
     expect(rows()).toHaveLength(2);
-    expect(fixture.componentInstance.count()).toBe(2);
+    expect(fixture.componentInstance.count()).toBe(1);
     const coverage = document.querySelector('[data-testid="attention-list-coverage"]')?.textContent;
     expect(coverage).toContain('Dossiers: stale');
     expect(coverage).toContain('Credentials: stale');
