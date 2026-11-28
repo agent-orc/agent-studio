@@ -110,8 +110,9 @@ async function expectViewportKeys(page: Page, owner: Locator): Promise<void> {
   const afterDown = await offset();
   await page.keyboard.press('ArrowUp');
   await expect.poll(offset).toBeLessThan(afterDown);
+  const beforePageDown = await offset();
   await page.keyboard.press('PageDown');
-  await expect.poll(offset).toBeGreaterThan(0);
+  await expect.poll(offset).toBeGreaterThan(beforePageDown);
   const afterPageDown = await offset();
   await page.keyboard.press('PageUp');
   await expect.poll(offset).toBeLessThan(afterPageDown);
