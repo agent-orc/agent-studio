@@ -104,6 +104,34 @@ public sealed class RunnerCleanContextsTests(ITestOutputHelper output) : IDispos
     }
 
     [Fact]
+    public async Task Finished_auth_probe_releases_the_stripe_for_an_expired_task_home()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        const string provider = "codex";
+        var probes = new ProviderAuthProbeContexts(
+            cli => TaskCleanContextStore.Acquire(cli, ProviderAuthProbe.CleanContextIdentity, User, Root,
+                nowUtc: Now.AddDays(-3), runnerManaged: true), _ => { });
+        var sweeper = new RunnerCleanContexts(Root, () => [], (_, _) => Task.FromResult(Array.Empty<string>()), _ => { });
+        using var probe = probes.Acquire(provider);
+        Assert.NotNull(probe);
+        var stripe = Path.GetFileName(probe.HomePath)[..2];
+        var key = Enumerable.Range(1, 4096).Select(index => $"probe-stripe-task-{index}").First(task =>
+            Path.GetFileName(TaskCleanContextStore.ResolveTaskHome(Root, provider, task))
+                .StartsWith(stripe, StringComparison.Ordinal));
+        using var expired = Seed(key, provider, 16, Now.AddDays(-3));
+        using var overlappingProbe = probes.Acquire(provider);
+        Assert.NotNull(overlappingProbe);
+        probe.Dispose();
+        await sweeper.SweepAsync(Now, default);
+        Assert.True(Directory.Exists(expired.HomePath));
+
+        overlappingProbe.Dispose();
+        await sweeper.SweepAsync(Now, default);
+        Assert.False(Directory.Exists(expired.HomePath));
+        Assert.True(Directory.Exists(probe.HomePath));
+    }
+
+    [Fact]
     public async Task Sweep_skips_linked_roots_and_homes_and_unlinks_nested_links()
     {
         if (!OperatingSystem.IsLinux()) return;

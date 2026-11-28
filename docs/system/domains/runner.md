@@ -46,6 +46,9 @@ a fresh session from the durable worktree with the full card prompt and normal
 run limits, and the runner records the fresh session in the continuation ledger.
 The host storage report
 shows the number of homes and their logical file size even on healthy disks.
+Provider auth and model probes reuse their provider's dedicated home. Each
+invocation releases its lease when it finishes, allowing later sweeps to reclaim
+expired task homes that share its lock stripe.
 
 The same sweep checks the M1 pilot preparation cache in the user data directory.
 It reclaims unbound per-run copies after the existing 24-hour orphan window and
