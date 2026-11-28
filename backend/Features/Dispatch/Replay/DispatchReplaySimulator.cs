@@ -22,32 +22,28 @@ public static class DispatchReplaySimulator
         var report = new DispatchReplayReport(wave.Project, wave.Id, wave.IndexRevision, options, bound, rows)
         { WaveStart = wave.Start };
         report = report with { Limitations = report.Limitations.Concat(wave.Assumptions).ToArray() };
+        var keys = wave.Cards.Select(card => card.Ready.Key).ToArray();
+        var raw = rows.Select(row => new DispatchReviewRaw(DispatchStrategies.Find(row.Strategy)!.Persona,
+            row.Strategy, "replay", keys.Length, keys, new Dictionary<string, double?>
+            {
+                ["conflicts"] = row.ConflictsPer100, ["tokens"] = row.RoundsPerCard,
+                ["rework"] = row.ReworkShare, ["forecast"] = row.ForecastF1,
+                ["parallelism"] = row.Parallelism, ["lead"] = row.MedianLeadTime,
+            }, null, true, [])).ToArray();
+        var projection = DispatchReviewScoring.Score(new(wave.Project, wave.Start,
+            wave.Start.AddHours(bound.Makespan), raw), DispatchWeightRevision.Default, []);
         foreach (var row in rows)
         {
-            double Lower(Func<DispatchReplayResult, double> measure)
-            {
-                var low = rows.Min(measure);
-                var high = rows.Max(measure);
-                return high == low ? 100 : 100 * (high - measure(row)) / (high - low);
-            }
-            row.Scores = new Dictionary<string, double>
-            {
-                ["conflicts"] = Lower(r => r.ConflictsPer100),
-                ["tokens"] = Lower(r => r.RoundsPerCard),
-                ["rework"] = Lower(r => r.ReworkShare),
-                ["forecast"] = 100 * row.ForecastF1,
-                ["parallelism"] = 100 * row.Parallelism,
-                ["lead"] = Lower(r => r.MedianLeadTime),
-            };
-            if (wave.Cards.Count < 40) continue;
-            row.ValuePlain = row.Scores.Sum(score => report.Weights[score.Key] * score.Value)
-                / row.Scores.Sum(score => report.Weights[score.Key]);
-            row.Value = row.ValuePlain * Math.Min(1, row.Parallelism / report.Gate);
+            var scored = projection.Personas.Single(persona => persona.Raw.Strategy == row.Strategy);
+            row.Scores = scored.Scores.Where(pair => pair.Value.HasValue)
+                .ToDictionary(pair => pair.Key, pair => pair.Value!.Value);
+            row.ValuePlain = scored.PlainValue;
+            row.Value = scored.Value;
         }
         return report;
     }
 
-    private static DispatchReplayResult Simulate(DispatchReplayWave wave, DispatchReplayOptions options, DispatchStrategy? strategy)
+    internal static DispatchReplayResult Simulate(DispatchReplayWave wave, DispatchReplayOptions options, DispatchStrategy? strategy)
     {
         var cards = wave.Cards.ToDictionary(card => card.Ready.Key, StringComparer.OrdinalIgnoreCase);
         var queue = wave.Cards.Select(card => card.Ready).ToList();
@@ -77,7 +73,7 @@ public static class DispatchReplaySimulator
             }).ToArray();
             var flight = active.Select(run => new DispatchInFlightCard(run.Card, run.CodingEnd > now,
                 cards[run.Card].Ready.Forecast, cards[run.Card].Ready.DeclaredScope,
-                cards[run.Card].Ready.Exclusive || exclusive.Contains(run.Card), cards[run.Card].Ready.ReadOnly)).ToArray();
+                run.CodingEnd > now && (cards[run.Card].Ready.Exclusive || exclusive.Contains(run.Card)), cards[run.Card].Ready.ReadOnly)).ToArray();
             var facts = new DispatchFacts(wave.Project, wave.Start.AddHours(now), ready, flight,
                 options.Slots - running, ledger, wave.HubFiles, options.Check, holds, exclusive.Where(key => active.Any(run => run.Card == key) || queue.Any(card => card.Key == key)).ToArray(), requested.ToArray());
             IReadOnlyList<string> admitted;

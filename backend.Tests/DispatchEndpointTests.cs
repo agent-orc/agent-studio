@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Dispatch;
+using AgentStudio.Personas;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -149,15 +151,19 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    [Fact]
-    public async Task Batch_creation_assigns_a_wave_and_retains_cause_paths_in_backlog()
+    [Theory]
+    [InlineData("shadow", TaskStates.Backlog)]
+    [InlineData("live", TaskStates.Backlog)]
+    [InlineData("off", TaskStates.Ready)]
+    public async Task Batch_creation_assigns_one_wave_to_57_cards_in_the_selected_mode(string mode, string lane)
     {
         await using var factory = Factory();
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        factory.Services.GetRequiredService<ProjectSettingsService>().SetDispatchMode("Forecast Project", mode);
         var response = await client.PostAsJsonAsync("/api/tasks/batch", new
         {
-            cards = Enumerable.Range(0, 6).Select(i => new
+            cards = Enumerable.Range(0, 57).Select(i => new
             {
                 title = "Source finding " + i, watchPath = Watch, creationSource = "playthrough",
                 citedPaths = new[] { "backend/Features/Tasks/A.cs" }, targetState = TaskStates.Ready,
@@ -167,7 +173,8 @@ public sealed class DispatchEndpointTests : IDisposable
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         var created = json.GetProperty("created").EnumerateArray().ToArray();
-        Assert.Equal(6, created.Length);
+        Assert.Equal(57, created.Length);
+        Assert.Equal(57, created.Select(item => item.GetProperty("card").GetProperty("id").GetString()).Distinct().Count());
         var wave = created[0].GetProperty("waveId").GetString();
         Assert.StartsWith("wave-", wave);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
@@ -175,7 +182,7 @@ public sealed class DispatchEndpointTests : IDisposable
         {
             Assert.Equal(wave, item.GetProperty("waveId").GetString());
             var card = scanner.FindJob(item.GetProperty("card").GetProperty("id").GetString()!, Watch)!;
-            Assert.Equal(TaskStates.Backlog, card.State);
+            Assert.Equal(lane, card.State);
             Assert.Equal(wave, card.WaveId);
             Assert.Equal(new[] { "backend/Features/Tasks/A.cs" }, card.CitedPaths);
         }
@@ -211,20 +218,7 @@ public sealed class DispatchEndpointTests : IDisposable
         index.GetSnapshot();
         var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
         var project = projects.FindByIdOrDisplayName("Forecast Project")!;
-        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-            { ["Security:Profile"] = "networked", ["TaskRepository"] = Path.Combine(_root, "wave-security"), ["Secrets:KeyFile"] = Path.Combine(_root, "wave.kek") }).Build();
-        var security = new AgentStudio.Security.AccessSecurityStore(config,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Security.AccessSecurityStore>.Instance, clock);
-        var bootstrap = security.Bootstrap(new("wave.owner", "correct horse battery staple!", null));
-        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
-        var secret = security.BeginTotpEnrollment(owner);
-        security.ConfirmTotpEnrollment(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
-        clock.Advance(TimeSpan.FromSeconds(30));
-        security.VerifyStepUp(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
-        var activations = new AgentStudio.Personas.PersonaActivationStore(null, new(), security, _ => project.WorkspaceId, clock);
-        var activation = activations.Activate(project.WorkspaceId, "area-warden", new(), owner);
-        clock.SetUtcNow(new DateTimeOffset(activation.ShadowUntil, TimeSpan.Zero).AddMinutes(1));
+        var (clock, activations, _) = ActivateWarden(project.WorkspaceId);
         var store = services.GetRequiredService<DispatchStore>();
         var lease = store.AcquireLease(project.DisplayName, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true)!;
         foreach (var card in cards)
@@ -256,6 +250,213 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.All(cards, c => Assert.Equal(999, c.Order));
     }
 
+    private (FakeTimeProvider Clock, PersonaActivationStore Activations, HumanPrincipal Owner) ActivateWarden(string workspace)
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Security:Profile"] = "networked", ["TaskRepository"] = Path.Combine(_root, "isolated-security"), ["Secrets:KeyFile"] = Path.Combine(_root, "test.kek") }).Build();
+        var security = new AccessSecurityStore(config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AccessSecurityStore>.Instance, clock);
+        var bootstrap = security.Bootstrap(new("dispatch.owner", "correct horse battery staple!", null));
+        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = security.BeginTotpEnrollment(owner);
+        security.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        security.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        var activations = new PersonaActivationStore(null, new(), security, _ => workspace, clock);
+        var activation = activations.Activate(workspace, "area-warden", new(), owner);
+        clock.SetUtcNow(new DateTimeOffset(activation.ShadowUntil, TimeSpan.Zero).AddMinutes(1));
+        return (clock, activations, owner);
+    }
+
+    [Fact]
+    public async Task Pause_and_resume_transfer_the_live_lease_even_with_a_warm_scheduler_cache()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        const string project = "Forecast Project";
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName(project)!.WorkspaceId;
+        var (clock, activations, owner) = ActivateWarden(workspace);
+        var store = services.GetRequiredService<DispatchStore>();
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, clock, activations);
+        var first = scheduler.Refresh(project, "wave")!;
+        Assert.Equal("area-warden", first.Persona);
+        activations.Pause(workspace, first.Persona, new(), owner);
+        var handoffs = await Task.WhenAll(Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(() => scheduler.Refresh(project, "wave")!)));
+        var fallback = handoffs[0];
+        Assert.All(handoffs, lease => Assert.Equal((fallback.Fence, "queue-keeper"), (lease.Fence, lease.Persona)));
+        Assert.Null(store.AcquireLease(project, "area-warden", fallback.Fence, clock.GetUtcNow(),
+            TimeSpan.FromHours(1), true, true, true));
+        Assert.Equal(first.Fence + 1, fallback.Fence);
+        Assert.False(store.ReleaseLease(project, first.Persona, first.Fence, clock.GetUtcNow()));
+        Assert.Equal(fallback.Fence, scheduler.Refresh(project, "wave")!.Fence);
+        activations.Resume(workspace, first.Persona, new(), owner);
+        var restored = scheduler.Refresh(project, "wave")!;
+        Assert.Equal(first.Persona, restored.Persona);
+        Assert.Equal(fallback.Fence + 1, restored.Fence);
+        Assert.False(store.ReleaseLease(project, fallback.Persona, fallback.Fence, clock.GetUtcNow()));
+        Assert.Equal(restored.Fence, store.ReadLease(project)!.Fence);
+    }
+
+    // Suspend one scheduler operation on a worker while the Owner completes a real resume.
+    private sealed class HandoffClock(TimeProvider inner) : TimeProvider
+    {
+        private Action? _onRead;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Exchange(ref _onRead, null)?.Invoke();
+            return inner.GetUtcNow();
+        }
+
+        public async Task InterleaveResume(Func<Task> handoff, Action resume)
+        {
+            var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            _onRead = () =>
+            {
+                reached.SetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Owner resume did not finish.");
+            };
+            var worker = Task.Run(handoff);
+            try
+            {
+                await reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                resume();
+            }
+            finally
+            {
+                release.Set();
+                await worker;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resume_during_monolith_evidence_collection_preserves_holder_and_fence()
+    {
+        await using var factory = Factory();
+        const string project = "Forecast Project";
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName(project)!.WorkspaceId;
+        var (clock, activations, owner) = ActivateWarden(workspace);
+        var store = services.GetRequiredService<DispatchStore>();
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        var reviewClock = new HandoffClock(clock);
+        var review = ActivatorUtilities.CreateInstance<DispatchReviewService>(services, reviewClock);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, clock, activations, review);
+        store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
+        var holder = scheduler.Refresh(project, "wave")!;
+        activations.Pause(workspace, holder.Persona, new(), owner);
+
+        await reviewClock.InterleaveResume(() =>
+        {
+            Assert.Null(scheduler.Refresh(project, "wave"));
+            return Task.CompletedTask;
+        }, () => activations.Resume(workspace, holder.Persona, new(), owner));
+        Assert.Equal(holder.Persona, store.ReadLease(project)!.Persona);
+        Assert.Equal(holder.Fence, scheduler.Refresh(project, "wave")!.Fence);
+    }
+
+    [Theory]
+    [InlineData("paused")]
+    [InlineData("resumed-before-receipt")]
+    [InlineData("resumed-during-receipt")]
+    public async Task Engine_pause_receipt_only_transfers_a_still_paused_assignment(string state)
+    {
+        await using var factory = Factory();
+        const string project = "Forecast Project";
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName(project)!.WorkspaceId;
+        var (clock, activations, owner) = ActivateWarden(workspace);
+        var store = services.GetRequiredService<DispatchStore>();
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        var runs = services.GetRequiredService<MonolithOrchestrationStore>();
+        var mode = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        var gateway = new AiOperatorDecisionGateway(mode, runs);
+        var receiptClock = new HandoffClock(clock);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, receiptClock, activations, gateway);
+        store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
+        var holder = scheduler.Refresh(project, "wave")!;
+        Assert.Equal("area-warden", holder.Persona);
+        activations.Pause(workspace, holder.Persona, new(), owner);
+
+        mode["Orchestration:Transitions:OperatorDecision"] = "Engine";
+        Assert.Null(scheduler.Refresh(project, "wave"));
+        var run = Assert.Single(runs.List(project, "pending"));
+        var occurrence = runs.GetOccurrence(run.RunId)!;
+        var payload = AiOperatorDecisionGateway.ReadPayload(run.PayloadJson);
+        var output = AgentStudio.OrchestrationDecisions.AiOperatorDecisionPolicy.Decide(payload);
+        Assert.Equal("assigned-persona-unavailable", output.DispatchLease!.Reason);
+        var receipt = AiOperatorDecisionGateway.ReadDecision(
+            JsonSerializer.Serialize(new { operatorDecision = output }, JsonSerializerOptions.Web));
+        var application = new AiOperatorApplication(run.RunId, run.ProjectId, run.TaskId, occurrence.ExpectedSourceState,
+            "apply", payload, receipt, occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch);
+
+        void Resume() => activations.Resume(workspace, holder.Persona, new(), owner);
+        if (state == "resumed-before-receipt")
+        {
+            Resume();
+            Assert.Equal(holder.Fence, scheduler.Refresh(project, "wave")!.Fence);
+        }
+        if (state == "resumed-during-receipt")
+            await receiptClock.InterleaveResume(() => scheduler.ApplyAsync(application, default), Resume);
+        else
+            await scheduler.ApplyAsync(application, default);
+        await scheduler.ApplyAsync(application, default);
+        var lease = store.ReadLease(project)!;
+        Assert.Equal(state == "paused" ? "queue-keeper" : holder.Persona, lease.Persona);
+        Assert.Equal(state == "paused" ? holder.Fence + 1 : holder.Fence, lease.Fence);
+    }
+
+    [Theory]
+    [InlineData("local")]
+    [InlineData("remote-claim")]
+    public async Task Two_ready_cards_sharing_a_module_use_only_one_of_two_slots(string path)
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var secondId = services.GetRequiredService<TaskMutationService>().CreateJob(new()
+            { Title = "Second finding", WatchPath = Watch, Agent = "codex", TargetState = TaskStates.Ready });
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var cards = new[] { scanner.FindJob("sample", Watch)!, scanner.FindJob(secondId!, Watch)! };
+        var project = cards[0].ProjectName;
+        var projects = services.GetRequiredService<ProjectRegistry>();
+        var (clock, activations, _) = ActivateWarden(projects.FindByIdOrDisplayName(project)!.WorkspaceId);
+        var settings = services.GetRequiredService<ProjectSettingsService>();
+        settings.SetDispatchMode(project, "live");
+        settings.SetMaxParallelism(project, 2);
+        var store = services.GetRequiredService<DispatchStore>();
+        Assert.NotNull(store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true));
+        foreach (var card in cards)
+        {
+            var file = $"backend/Features/Tasks/{card.Id}.cs";
+            store.Write(project, card.TaskKey, new([file], [file], [TouchForecast.Module(file)], [], "cited", "index"));
+        }
+        var index = services.GetRequiredService<TaskIndexCache>();
+        index.GetCleanSnapshotPartitions();
+        var dispatcher = new DispatcherShadowService(store, activations, projects, index, settings, clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DispatcherShadowService>.Instance);
+        var guard = new OverlapDispatchGuard(clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OverlapDispatchGuard>.Instance,
+            new OverlapPredictionLedger(Path.Combine(_root, "predictions")), dispatcher);
+        var ordered = guard.Order(cards, settings.Get, path: path);
+        var plan = store.ReadLive(project)!.Record.Plan;
+        Assert.Equal(2, plan.Slots.Count);
+        Assert.Equal(ordered[0].Key ?? ordered[0].TaskKey, Assert.Single(plan.Admitted));
+        Assert.True(guard.Decide(ordered[0], [], [], 2, "in-flight", path, "develop").Admitted);
+        var running = new RunningTask(ordered[0].TaskKey, guard.Predict(ordered[0])) { CardKey = plan.Admitted[0] };
+        var held = guard.Decide(ordered[1], [running], [], 2, "in-flight", path, "develop");
+        Assert.False(held.Admitted);
+        Assert.Equal(running.CardKey, held.ConflictTaskId);
+        Assert.True(guard.Decide(ordered[1], [], [], 2, "in-flight", path, "develop").Admitted);
+    }
+
     [Theory]
     [InlineData("local")]
     [InlineData("remote-claim")]
@@ -268,20 +469,7 @@ public sealed class DispatchEndpointTests : IDisposable
         var card = factory.Services.GetRequiredService<TaskScannerService>().FindJob("sample", Watch)!;
         var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
         var project = projects.FindByIdOrDisplayName(card.ProjectName)!;
-        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-            { ["Security:Profile"] = "networked", ["TaskRepository"] = Path.Combine(_root, "isolated-security"), ["Secrets:KeyFile"] = Path.Combine(_root, "test.kek") }).Build();
-        var security = new AgentStudio.Security.AccessSecurityStore(config,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Security.AccessSecurityStore>.Instance, clock);
-        var bootstrap = security.Bootstrap(new("dispatch.owner", "correct horse battery staple!", null));
-        var owner = security.AuthenticateSession(bootstrap.SessionToken)!;
-        var secret = security.BeginTotpEnrollment(owner);
-        security.ConfirmTotpEnrollment(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
-        clock.Advance(TimeSpan.FromSeconds(30));
-        security.VerifyStepUp(owner, AgentStudio.Security.SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
-        var activations = new AgentStudio.Personas.PersonaActivationStore(null, new(), security, _ => project.WorkspaceId, clock);
-        var activation = activations.Activate(project.WorkspaceId, "area-warden", new(), owner);
-        clock.SetUtcNow(new DateTimeOffset(activation.ShadowUntil, TimeSpan.Zero).AddMinutes(1));
+        var (clock, activations, _) = ActivateWarden(project.WorkspaceId);
         var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
         settings.SetDispatchMode(card.ProjectName, "live");
         var store = factory.Services.GetRequiredService<DispatchStore>();

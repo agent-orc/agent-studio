@@ -109,7 +109,8 @@ public sealed class DispatchReplayTests(ITestOutputHelper output)
         // The recorded sets omit some valid citations and expand ambiguous basenames.
         // Keep those historical sets intact and report exact equality independently.
         output.WriteLine($"Recovered all recorded citations: {recovered}/55; exact historical sets: {exact}/55.");
-        Assert.InRange(recovered, 50, 55);
+        Assert.Equal(53, recovered);
+        Assert.Equal(23, exact);
     }
 
     [Fact]

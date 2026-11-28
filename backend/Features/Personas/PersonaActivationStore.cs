@@ -195,7 +195,10 @@ public sealed partial class PersonaActivationStore
                 "Active persona allowances exceed the workspace persona pool.");
     }
 
-    public PersonaListResponse List(string workspaceId)
+    public PersonaListResponse List(string workspaceId) => WithSnapshot(workspaceId, snapshot => snapshot);
+
+    /// <summary>Keep activation mutations excluded until a short, synchronous dependent write completes.</summary>
+    internal T WithSnapshot<T>(string workspaceId, Func<PersonaListResponse, T> use)
     {
         lock (_gate)
         {
@@ -217,7 +220,7 @@ public sealed partial class PersonaActivationStore
                 entries.Add(Entry(latest.Descriptor, latest.Digest, PersonaSources.Fork, fork.ForkOf, adoptable,
                     ActivationOf(state, fork.Id), now));
             }
-            return new PersonaListResponse(state.WorkspaceId, entries);
+            return use(new PersonaListResponse(state.WorkspaceId, entries));
         }
     }
 
