@@ -3061,11 +3061,14 @@ public static class V1ReviewPlaneEndpoints
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath ?? string.Empty,
             declared, changedFiles, "remote-review", TestExecutionLevels.WorkPackage);
-        var verify = shared is null
+        var fixedChecks = verifyOverride?.Commands.Any(command => command.TestScope
+            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope) == true;
+        var verify = fixedChecks || shared is null
             ? VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
                 verifyOverride ?? declared, changedFiles)
             : declared with { Commands = shared.Commands };
-        if (shared is null && changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
+        if (shared is null && !fixedChecks
+            && changedFiles?.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.OrdinalIgnoreCase)) == true)
         {
             // Class selection can omit every inventory test, or all test commands.
             // Review always runs the declared .NET guards for a backend change.
@@ -3145,6 +3148,16 @@ public static class V1ReviewPlaneEndpoints
                 BaselineMode: Contract.ReviewBaselineModes.ExitStatus)));
         if (commands.Count == 0)
             commands.Add(CompletionOnlyCommand());
+        var suiteAudit = shared?.Audit;
+        if (suiteAudit is not null && fixedChecks)
+            suiteAudit = suiteAudit with
+            {
+                SelectedSuites = suiteAudit.SuiteCommands.Where(suite => commands.Any(command => command.Arguments.Contains(suite.Value)))
+                    .Select(suite => suite.Key).ToArray(),
+                OmittedSuites = suiteAudit.SuiteCommands.Where(suite => !commands.Any(command => command.Arguments.Contains(suite.Value)))
+                    .Select(suite => suite.Key).ToArray(),
+                Reasons = [.. suiteAudit.Reasons, "Fast review runs fixed checks; narrowed checks do not complete routine suites."],
+            };
         return new Contract.ReviewPlanDto(
             commands,
             commands.Select(command => command.Aspect)
@@ -3159,11 +3172,11 @@ public static class V1ReviewPlaneEndpoints
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
             LibraryVersion: Contract.ReviewLibraryStepPolicy.Version) with
         {
-            SuiteSelection = shared is null ? null : new Contract.ReviewSuiteSelectionDto(
-                shared.Audit.SelectedSuites, shared.Audit.OmittedSuites, shared.Audit.Reasons)
+            SuiteSelection = suiteAudit is null ? null : new Contract.ReviewSuiteSelectionDto(
+                suiteAudit.SelectedSuites, suiteAudit.OmittedSuites, suiteAudit.Reasons)
                 {
-                    SuiteCommands = shared.Audit.SuiteCommands,
-                    SuiteSteps = shared.Audit.SuiteCommands.Where(suite => commands.Any(command =>
+                    SuiteCommands = suiteAudit.SuiteCommands,
+                    SuiteSteps = suiteAudit.SuiteCommands.Where(suite => commands.Any(command =>
                         command.Arguments.Contains(suite.Value)))
                         .ToDictionary(suite => suite.Key, suite => commands.First(command =>
                             command.Arguments.Contains(suite.Value)).StepId, StringComparer.Ordinal),

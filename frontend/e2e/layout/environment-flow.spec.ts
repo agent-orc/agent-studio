@@ -55,7 +55,14 @@ test('environment view refreshes and fits light and dark desktop widths', async 
     capabilities: [capability('executor:review', 'executor'),
       capability('zone-policy', 'zone', { version: '2026-10-20.1', identity: 'work', ...zone })],
   });
-  await page.route('**/api/clients', route => route.fulfill({ json: [] }));
+  const diskReason = 'disk pressure on the run host, 23 GB free, of which 71 GB preparation copies';
+  await page.route('**/api/clients', route => route.fulfill({ json: [{
+    id: 'coding-runner', displayName: 'Coding runner', kind: 'service', lastSeenAt: seenAt, runnerGitStatus: 'ready',
+  }] }));
+  await page.route('**/api/clients/coding-runner/telemetry?window=*', route => route.fulfill({ json: {
+    clientId: 'coding-runner', window: '1h', points: [{ timestamp: seenAt, cpuCores: 4, activeSlots: 18 }],
+    findings: [{ kind: 'disk-pressure', isActive: true, detail: diskReason, since: seenAt, until: seenAt }],
+  } }));
   await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({ json: [
     host('kori-review-1', { detail: 'verifiedAt=2026-10-20T09:30:00Z; networks=agent-work; rules=sha256:0123456789ab' }),
     host('kori-gate', { advertisedStatus: 'unavailable', detail: 'verification failed at 2026-10-20T10:30:00Z: 1 of 9 checks; '
@@ -100,6 +107,10 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(failed).toContainText('observed connected');
   const output = process.env.JOB_RESULTS_DIR ?? join(process.cwd(), 'test-results');
   mkdirSync(output, { recursive: true });
+  const pressure = view.locator('[data-host-id="coding-runner"]').getByText(diskReason);
+  await expect(pressure).toBeVisible();
+  await pressure.scrollIntoViewIfNeeded();
+  await pressure.locator('..').screenshot({ path: join(output, 'host-preparation-pressure.png') });
   await view.getByRole('heading', { name: 'Waiting reasons now' }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(output, 'environment-waits-1280-light--mocked.png') });
   await view.locator('[data-host-id="kori-review-1"]').scrollIntoViewIfNeeded();

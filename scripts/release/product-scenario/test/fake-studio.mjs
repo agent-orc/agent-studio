@@ -252,6 +252,8 @@ export async function startFakeStudio({
       }
     }
     if (method === 'POST' && parts[1] === 'runner' && parts[3] === 'orchestrator-chat') {
+      if (parts[2] !== 'project:' + project.displayName)
+        return json(404, { error: 'Unknown project' });
       const product = body.navigationContext?.observedSurface === 'URL preview';
       return json(200, { project: project.displayName, reply: { role: 'orchestrator', text: product
         ? 'Happy to help. Where should the confirmation appear, and is there an example you like? Expect roughly 20,000 to 60,000 tokens. Use "Create this change" when you are ready.'

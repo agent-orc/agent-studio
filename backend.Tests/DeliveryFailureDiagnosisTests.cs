@@ -600,6 +600,140 @@ public sealed class DeliveryFailureDiagnosisTests
         return EmptyReport("ReviewInfra") with { FailureClassification = classification, Commands = commands };
     }
 
+    [Theory]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, false, "none")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, false, false, "none")]
+    [InlineData("IntegrationBranchDefect", true, false, "none")]
+    [InlineData(DeliveryFailureDiagnosis.Product, false, false, "none")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, true, "none")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, false, "initial")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, false, false, "new")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, false, "repeat")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, false, "empty-repeat")]
+    [InlineData(DeliveryFailureDiagnosis.Product, true, false, "clean")]
+    [InlineData(DeliveryFailureDiagnosis.Product, true, false, "disjoint")]
+    public void Mixed_assertion_proof_loss_stays_incomplete_through_grading(
+        string classification, bool differentSets, bool retainedIncomplete, string gap)
+    {
+        var candidate = FailedCommand("verify-mixed", classification, false) with
+        {
+            FileName = "dotnet", Arguments = ["test", "runner.Tests/Synthetic.csproj"],
+            BaselineSha = "base", BaselineExitCode = 1,
+            Diagnosis = new(classification, 0.9, [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "failure sets vary"]),
+            InitialFailures = gap == "initial" ? null : ["Product.Tests.A", "Product.Tests.B"],
+            NewFailures = gap == "new" ? [] : ["Product.Tests.A"], PreExistingFailures = ["Product.Tests.B"],
+            AssertionEvidence = retainedIncomplete
+                ? [new("Product.Tests.A", "FullyQualifiedName=Product.Tests.A", "first", "other", null, null, "different fingerprint")]
+                : [],
+        };
+        var clean = candidate with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null, AssertionEvidence = [],
+            InitialFailures = gap == "repeat" ? null : gap == "empty-repeat" ? [] : gap == "disjoint" ? ["Product.Tests.C"]
+                : differentSets ? ["Product.Tests.A", "Product.Tests.C"] : candidate.InitialFailures,
+        };
+        var diagnosis = candidate.Diagnosis!;
+        var report = EmptyReport("Pass") with
+        {
+            Commands = gap == "clean" ? [candidate] : [candidate, clean],
+            Verdicts = [new("build-tests", classification == DeliveryFailureDiagnosis.Product ? "block" : "concerns",
+                classification, "mixed assertion evidence", "command:verify-mixed", Diagnosis: diagnosis)],
+        };
+        var plan = new ReviewPlanDto([new("verify-mixed", "build-tests", "dotnet", candidate.Arguments,
+            CompareToBaseline: true)], []);
+        var settled = AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, plan);
+        Assert.Equal("ReviewInfra", settled.Outcome);
+        Assert.Equal("DiagnosisEvidenceInvalid", settled.FailureClassification);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, Assert.Single(settled.Verdicts).Diagnosis?.Classification);
+        Assert.Contains("Product.Tests.A", Assert.Single(settled.Commands, item => item.WorkspaceRole == "candidate").InitialFailures
+            ?? candidate.NewFailures!);
+        Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(settled, plan).Outcome);
+    }
+
+    [Theory]
+    [InlineData(DeliveryFailureDiagnosis.Environment, false, "Pass")]
+    [InlineData("IntegrationBranchDefect", false, "IntegrationBranchDefect")]
+    [InlineData(DeliveryFailureDiagnosis.Environment, true, "Pass")]
+    public void Shared_base_failures_and_unreproduced_sets_keep_their_disposition(
+        string classification, bool disjoint, string expected)
+    {
+        var candidate = FailedCommand("verify-shared", classification, false) with
+        {
+            FileName = "dotnet", Arguments = ["test", "runner.Tests/Synthetic.csproj"],
+            BaselineSha = "base", BaselineExitCode = 1,
+            InitialFailures = disjoint ? ["Product.Tests.A", "Product.Tests.B"] : ["Product.Tests.B"],
+            NewFailures = disjoint ? ["Product.Tests.A"] : [], PreExistingFailures = ["Product.Tests.B"],
+            Diagnosis = new(classification, 0.9, [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "shared base or varying tests"]),
+        };
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands = [candidate, candidate with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
+                InitialFailures = disjoint ? ["Product.Tests.C"] : candidate.InitialFailures,
+            }],
+            Verdicts = [new("build-tests", "concerns", classification, "shared base or varying tests",
+                "command:verify-shared", Diagnosis: candidate.Diagnosis)],
+        };
+        var plan = new ReviewPlanDto([new("verify-shared", "build-tests", "dotnet", candidate.Arguments,
+            CompareToBaseline: true)], []);
+        Assert.Equal(expected, AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, plan).Outcome);
+    }
+
+    [Theory]
+    [InlineData(ReviewBaselineModes.ExitStatus, false, "IntegrationBranchDefect")]
+    [InlineData(ReviewBaselineModes.TestFailures, false, "Pass")]
+    [InlineData(ReviewBaselineModes.TestFailures, true, "ReviewInfra")]
+    public void Assertion_proof_inference_respects_the_frozen_comparison_and_backend_diff(
+        string mode, bool backendChanged, string expected)
+    {
+        var candidate = FailedCommand("verify-scope", DeliveryFailureDiagnosis.Environment, false) with
+        {
+            FileName = "dotnet", Arguments = ["test", "backend.Tests/Synthetic.csproj"],
+            BaselineSha = "base", BaselineExitCode = 1,
+            InitialFailures = ["Product.Tests.A", "Product.Tests.B"],
+            NewFailures = [], PreExistingFailures = ["Product.Tests.B"],
+            Diagnosis = new(DeliveryFailureDiagnosis.Environment, 0.9,
+                [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "backend unchanged or red exit-status baseline"]),
+        };
+        var report = EmptyReport("Pass") with
+        {
+            Workspace = EmptyReport("Pass").Workspace with { ChangedPaths = backendChanged ? ["backend/Product.cs"] : ["frontend/product.ts"] },
+            Commands = [candidate, candidate with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
+                InitialFailures = ["Product.Tests.A", "Product.Tests.C"],
+            }],
+            Verdicts = [new("build-tests", "concerns", DeliveryFailureDiagnosis.Environment, "measured limitation",
+                "command:verify-scope", Diagnosis: candidate.Diagnosis)],
+        };
+        var plan = new ReviewPlanDto([new("verify-scope", "build-tests", "dotnet", candidate.Arguments,
+            CompareToBaseline: true, BaselineMode: mode)], []);
+        Assert.Equal(expected, AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, plan).Outcome);
+    }
+
+    [Fact]
+    public void A_failed_baseline_prerequisite_keeps_branch_debt_when_no_test_repeat_completed()
+    {
+        var candidate = FailedCommand("verify-dependent", "IntegrationBranchDefect", false) with
+        {
+            FileName = "dotnet", Arguments = ["test", "backend.Tests/Synthetic.csproj", "--no-build"],
+            BaselineSha = "base", BaselineExitCode = 1,
+            InitialFailures = ["Product.Tests.A"], NewFailures = ["Product.Tests.A"],
+        };
+        var baselineBuild = candidate with
+        {
+            StepId = "build", Arguments = ["build"], WorkspaceRole = "baseline-control",
+            HeadBefore = "base", InitialFailures = [], NewFailures = [], Diagnosis = null,
+        };
+        var report = EmptyReport("IntegrationBranchDefect") with { Commands = [candidate, baselineBuild] };
+        var plan = new ReviewPlanDto([
+            new("build", "build-tests", "dotnet", ["build"], CompareToBaseline: true, BaselineMode: ReviewBaselineModes.ExitStatus),
+            new("verify-dependent", "build-tests", "dotnet", candidate.Arguments, CompareToBaseline: true),
+        ], []);
+        Assert.Equal("IntegrationBranchDefect", ReviewReportDiagnosisPolicy.Normalize(report, plan).Outcome);
+    }
+
     private static ReviewReportRequest EmptyReport(string outcome)
         => new("executor", "instance", "lease", 1, "report-1", outcome,
             "legacy-classification", null,

@@ -31,6 +31,66 @@ public sealed class LocalCredentialInventoryTests
         => Assert.Single(inventory.Items, item => item.Kind == kind);
 
     [Fact]
+    public void Inventory_marks_lifetimes_and_records_a_plan_even_without_expiry()
+    {
+        var inventory = Project(App(hosts: [new("runner-lifetime", RepositoryAccess.Read, 1, Now)]));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(inventory, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        var app = items.Single(item => item.GetProperty("kind").GetString() == "github_app");
+        Assert.True(app.TryGetProperty("lifetimeClass", out var lifetime), "Inventory has no lifetime class.");
+        Assert.Equal("long-lived", lifetime.GetString());
+        Assert.False(string.IsNullOrWhiteSpace(app.GetProperty("holder").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(app.GetProperty("target").GetString()));
+        Assert.Equal("none", app.GetProperty("expiry").GetString());
+        Assert.Equal(90, app.GetProperty("rotationIntervalDays").GetInt32());
+        Assert.NotEqual(JsonValueKind.Null, app.GetProperty("rotationDueAt").ValueKind);
+        Assert.Equal("short-lived", items.Single(item => item.GetProperty("kind").GetString() == "github_app_token")
+            .GetProperty("lifetimeClass").GetString());
+    }
+
+    [Theory]
+    [InlineData(14)]
+    [InlineData(3)]
+    public void Inventory_exposes_expiry_and_rotation_warnings_at_workload_thresholds(int days)
+    {
+        var due = Now.AddDays(days);
+        var inventory = Project(runners: [new RunnerServiceIdentity
+        {
+            Id = "warning-host", Name = "Warning host", CreatedAt = Now.AddDays(-30),
+            Credentials = [new RunnerCredential
+            {
+                Id = "warning-credential", SecretHash = Guid.NewGuid().ToString("N"),
+                CreatedAt = Now.AddDays(-30), ExpiresAt = due, Scopes = [],
+            }],
+        }]);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(inventory));
+        Assert.True(json.RootElement.TryGetProperty("Warnings", out var warnings), "Inventory has no lifecycle warnings.");
+        Assert.Contains(warnings.EnumerateArray(), warning => warning.GetProperty("Subject").GetString() == "expiry"
+            && warning.GetProperty("ThresholdDays").GetInt32() == days);
+    }
+
+    [Fact]
+    public void Deploy_secrets_keep_holder_creation_and_real_last_use_without_a_value()
+    {
+        var record = new SecretRecord
+        {
+            Id = "deploy-secret", Scope = "sample/prod", Name = "DEPLOY_ACCESS",
+            CreatedAt = Now.AddDays(-20), CreatedBy = "owner-a", UpdatedAt = Now, UpdatedBy = "owner-a",
+            RotatedAt = Now.AddDays(-2), LastUsedAt = Now.AddHours(-2),
+            LastUsedPurpose = Guid.NewGuid().ToString("N"),
+            Versions = [new() { Version = 1, CreatedAt = Now, CreatedBy = "owner-a", Origin = "put" }],
+        };
+        var item = Only(Project(secrets: new SecretListing([record], [])), "secret");
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(item));
+        Assert.True(json.RootElement.TryGetProperty("Holder", out var holder), "Secret has no holder.");
+        Assert.Equal("owner-a", holder.GetString());
+        Assert.Equal("sample/prod", json.RootElement.GetProperty("Target").GetString());
+        Assert.Equal(record.CreatedAt, json.RootElement.GetProperty("CreatedAt").GetDateTime());
+        Assert.Equal(record.LastUsedAt, item.LastUseAt);
+        Assert.DoesNotContain(record.LastUsedPurpose, json.RootElement.GetRawText());
+    }
+
+    [Fact]
     public void Without_an_App_the_page_says_so_and_repositories_count_as_missing()
     {
         var inventory = Project(App(connected: false, repositories:

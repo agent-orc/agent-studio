@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Diagnostics;
+using Xunit.Abstractions;
 using AgentStudio.Dispatch;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Tests.Architecture;
@@ -7,7 +9,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 // clock-independent: historical wave timestamps and simulated event time are fixed inputs.
-public sealed class DispatchReplayHarnessTests
+public sealed class DispatchReplayHarnessTests(ITestOutputHelper output)
 {
     private static readonly DateTimeOffset Start = new(2026, 11, 17, 0, 0, 0, TimeSpan.Zero);
     private static readonly string Fixture = Path.Combine(CSharpSourceScanner.RepoRoot(),
@@ -37,11 +39,85 @@ public sealed class DispatchReplayHarnessTests
             Assert.InRange(row.Parallelism, 0, 1);
             Assert.Equal(row.ValuePlain * Math.Min(1, row.Parallelism / 0.8), row.Value);
         });
+        foreach (var row in report.Strategies)
+            output.WriteLine($"{row.Strategy}: {row.CardsNeedingSync} sync cards, {row.Runs} runs, projected value {row.Value:F2}.");
         var baseline = report.Strategies.Single(row => row.Strategy == DispatchStrategies.LaneEntry);
         Assert.Equal(20, baseline.CardsNeedingSync);
         Assert.Equal(31, baseline.ExposedPairs);
         Assert.Equal(15, baseline.Makespan);
         Assert.InRange(report.Strategies.Single(row => row.Strategy == DispatchStrategies.FileOverlap).ForecastF1, 0.53, 0.59);
+    }
+
+    [Fact]
+    public void Lag_one_tracks_module_exposure_after_coding_but_releases_exclusive_slots()
+    {
+        var wave = DispatchReplayCommand.ReadFixture(Fixture, "project");
+        var report = DispatchReplaySimulator.Run(wave, new(4, IntegrationLag: 1));
+        var queue = report.Strategies.Single(r => r.Strategy == DispatchStrategies.LaneEntry);
+        var warden = report.Strategies.Single(r => r.Strategy == DispatchStrategies.OnePerArea);
+        Assert.Equal(35, queue.CardsNeedingSync);
+        Assert.Equal(107, queue.ExposedPairs);
+        Assert.Equal(8, warden.CardsNeedingSync);
+        Assert.Equal(11, warden.ExposedPairs);
+        Assert.Equal(0, report.ConflictFreeBound.CardsNeedingSync);
+        var exclusive = wave.Cards[0] with { Ready = wave.Cards[0].Ready with { Exclusive = true, Order = 1 } };
+        var disjoint = Card("other", "other.cs");
+        var small = DispatchReplaySimulator.Run(Wave(exclusive, disjoint), new(1, IntegrationLag: 1));
+        Assert.All(small.Strategies, row => Assert.Equal(1, row.Schedule.Single(run => run.Card == "other").Start));
+        output.WriteLine($"Lag 1: Queue keeper {queue.CardsNeedingSync}, Area warden {warden.CardsNeedingSync}, bound {report.ConflictFreeBound.CardsNeedingSync}.");
+    }
+
+    [Fact]
+    public void Isolating_the_reference_module_map_unknown_bucket_and_exclusive_rule_explains_the_lag_gap()
+    {
+        var wave = DispatchReplayCommand.ReadFixture(Fixture, "project");
+        var strategy = DispatchStrategies.Starter(DispatchStrategies.OnePerArea);
+        var withoutMarks = strategy with { Parameters = new Dictionary<string, string> { [DispatchStrategies.MaxExclusiveMarks] = "0" } };
+        var options = new DispatchReplayOptions(4, IntegrationLag: 1);
+        // replay.py uses three segments for all backend paths and two for other top-level folders.
+        string ReferenceModule(string path)
+        {
+            var depth = path.StartsWith("frontend/src/app/features/") ? 5 : path.StartsWith("frontend/src/app/") ? 4
+                : path.StartsWith("frontend/e2e/") || path.StartsWith("backend/") ? 3 : 2;
+            return string.Join('/', path.Split('/').Take(depth));
+        }
+        DispatchReplayWave WithIndividualUnknowns(bool referenceMap) => wave with
+        {
+            Cards = wave.Cards.Select(card =>
+            {
+                var forecast = card.Ready.Forecast;
+                var modules = referenceMap ? forecast.Files.Except(wave.HubFiles).Select(ReferenceModule).Distinct().ToArray()
+                    : forecast.Modules.ToArray();
+                return card with { Ready = card.Ready with { Forecast = forecast with
+                    { Modules = modules.Length == 0 ? ["unknown:" + card.Ready.Key] : modules } } };
+            }).ToArray(),
+        };
+        var reference = WithIndividualUnknowns(true);
+        Assert.Equal(7, DispatchReplaySimulator.Simulate(reference, new(4), withoutMarks).CardsNeedingSync);
+        Assert.Equal(12, DispatchReplaySimulator.Simulate(reference, options, withoutMarks).CardsNeedingSync);
+        Assert.Equal(9, DispatchReplaySimulator.Simulate(WithIndividualUnknowns(false), options, withoutMarks).CardsNeedingSync);
+        Assert.Equal(6, DispatchReplaySimulator.Simulate(wave, options, withoutMarks).CardsNeedingSync);
+        Assert.Equal(8, DispatchReplaySimulator.Simulate(wave, options, strategy).CardsNeedingSync);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void One_hundred_cards_complete_all_five_strategies_in_under_thirty_seconds()
+    {
+        var fixture = DispatchReplayCommand.ReadFixture(Fixture, "project");
+        var cards = Enumerable.Range(0, 100).Select(i =>
+        {
+            var card = fixture.Cards[i % fixture.Cards.Count];
+            return card with { Ready = card.Ready with { Key = $"perf-{i}" } };
+        }).ToArray();
+        var timer = Stopwatch.StartNew();
+        var report = DispatchReplaySimulator.Run(fixture with { Cards = cards }, new(4, IntegrationLag: 1));
+        timer.Stop();
+        Assert.Equal(100, report.ConflictFreeBound.Runs);
+        Assert.Equal(5, report.Strategies.Count);
+        Assert.All(report.Strategies, r => Assert.Equal(100, r.Runs));
+        output.WriteLine($"100 cards, five strategies and bound: {timer.Elapsed.TotalSeconds:F3} seconds.");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(30), timer.Elapsed.ToString());
     }
 
     [Fact]

@@ -119,7 +119,10 @@ public static class PostMergeRunEndpoints
                 || run.StartOccupiedSlots < 0
                 || run.StartLoadPerCore is { } load && (!double.IsFinite(load) || load < 0)
                 || run.Commands.Count > 64 || run.Verdicts.Count > 64
-                || run.Verdicts.Any(verdict => verdict.SuiteId is { } suiteId && (string.IsNullOrWhiteSpace(suiteId) || suiteId.Length > 128)
+                || run.Commands.Any(string.IsNullOrWhiteSpace)
+                || run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count
+                || run.Verdicts.Any(verdict => verdict is null || string.IsNullOrWhiteSpace(verdict.Command)
+                    || verdict.SuiteId is { } suiteId && (string.IsNullOrWhiteSpace(suiteId) || suiteId.Length > 128)
                     || verdict.FailureMessages?.Count > 64
                     || verdict.FailureMessages?.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 256
                         || pair.Value is null || pair.Value.Length > 2000) == true

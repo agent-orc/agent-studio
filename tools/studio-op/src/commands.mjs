@@ -1,3 +1,4 @@
+import { submitBatch } from './batches.mjs';
 import fs from 'node:fs';
 import { evaluateAcceptance } from './accept-policy.mjs';
 import { positiveInteger, required, usage } from './args.mjs';
@@ -276,10 +277,20 @@ export const COMMANDS = {
     },
   },
 
-  accept: {
-    summary: 'Accept a card in Human Review; refused unless the evidence is green and no decision is open.',
-    spec: { project: 'string', reason: 'string' },
+  archive: {
+    summary: 'Submit archive overrides for Owner confirmation in Studio and wait for results.',
+    spec: { batch: 'string', project: 'string', source: 'string' },
     async run(ctx, positionals, options) {
+      if (!options.batch || positionals.length) throw usage('batch-required', 'Use studio-op archive --batch <items.json>.');
+      return submitBatch(ctx, options, 'archive');
+    },
+  },
+
+  accept: {
+    summary: 'Accept a green card, or submit override items with --batch for Owner confirmation.',
+    spec: { project: 'string', reason: 'string', batch: 'string', source: 'string' },
+    async run(ctx, positionals, options) {
+      if (options.batch) return submitBatch(ctx, options, 'accept');
       const card = card1(positionals);
       const subject = await readCard(ctx, card, options.project);
       // The dedicated route reads the review artifacts fresh, not the board's cached projection.

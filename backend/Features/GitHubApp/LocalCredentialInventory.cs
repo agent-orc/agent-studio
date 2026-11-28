@@ -54,7 +54,7 @@ public static class LocalCredentialInventory
         AddServiceIdentities(items, sources.Runners, now);
         AddProviderLogins(items, sources.Hosts);
         AddHostGit(items, sources.HostGit);
-        return new CredentialInventoryDto(now, items);
+        return new CredentialInventoryDto(now, items.Select(item => CredentialLifecyclePolicy.Complete(item, now)).ToArray());
     }
 
     private static void AddApp(List<CredentialInventoryItemDto> items, GitHubAppStatus app)
@@ -67,7 +67,10 @@ public static class LocalCredentialInventory
             app.Connected && app.Problem is null ? "ok" : "missing", repositories.Length > 0,
             app.Problem ?? (app.Connected
                 ? $"Owned by {app.OwnerLogin}, {app.Installations.Count} confirmed installation(s). Its private key and client secret are in the secret store."
-                : "No GitHub App is connected, so hosts use what is configured on them. Connect it under Settings > GitHub.")));
+                : "No GitHub App is connected, so hosts use what is configured on them. Connect it under Settings > GitHub.")) with
+        {
+            Holder = StudioHost, Target = "GitHub", CreatedAt = app.ConnectedAtUtc, Active = app.Connected,
+        });
         foreach (var repository in repositories)
         {
             var name = GitHubRepositoryName.TryParse(repository.RepositoryUrl);
@@ -96,6 +99,9 @@ public static class LocalCredentialInventory
                     : "This host stopped fetching tokens, and the ones it had are expired.") with
             {
                 Permission = host.Access,
+                CreatedAt = host.LastSyncUtc,
+                ExpiresAt = host.LastSyncUtc.Add(TokenLifetime),
+                Target = "GitHub",
                 LastUseAt = host.LastSyncUtc,
             });
         }
@@ -126,6 +132,11 @@ public static class LocalCredentialInventory
                 active ? $"{record.Reference} in the secret store." : $"{record.Reference} is revoked and has no active version.") with
             {
                 Scopes = [record.Scope],
+                Holder = record.CreatedBy,
+                Target = record.Scope,
+                CreatedAt = record.CreatedAt,
+                RotationBasisAt = record.RotatedAt ?? record.CreatedAt,
+                Active = active,
                 LastUseAt = record.LastUsedAt,
             });
         }
@@ -150,6 +161,8 @@ public static class LocalCredentialInventory
                 "Service credential of an enrolled identity. This machine keeps only its hash.") with
             {
                 Scopes = credential.Scopes,
+                CreatedAt = credential.CreatedAt,
+                Target = "Studio",
                 ExpiresAt = credential.ExpiresAt,
                 LastUseAt = credential.LastUsedAt,
             });
@@ -158,21 +171,7 @@ public static class LocalCredentialInventory
 
     private static void AddProviderLogins(List<CredentialInventoryItemDto> items, IReadOnlyList<RunnerCapabilitySnapshotDto> hosts)
     {
-        const string prefix = "provider-auth:";
-        foreach (var host in hosts)
-        foreach (var capability in host.Capabilities.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)))
-        {
-            var provider = capability.Key[prefix.Length..];
-            var healthy = capability.IsFresh && capability.HealthState == "healthy";
-            items.Add(Item($"provider-login:{host.RunnerId}:{provider}", "provider", host.HostId,
-                provider == "codex" ? "codex_chatgpt_login" : provider + "_login",
-                $"{provider} login on {host.Name}", healthy ? "ok" : "missing", false,
-                capability.Reason ?? capability.Detail ?? (healthy ? "The host reports a working login." : "The host reports no working login.")) with
-            {
-                ExpiresAt = capability.ExpiresAt,
-                LastUseAt = capability.AdvertisedAt,
-            });
-        }
+        items.AddRange(CredentialLifecyclePolicy.ProviderLogins(hosts));
     }
 
     private static void AddHostGit(List<CredentialInventoryItemDto> items, IReadOnlyList<HostGitAccess> hosts)
@@ -181,12 +180,46 @@ public static class LocalCredentialInventory
         {
             items.Add(Item($"host-git:{host.HostId}", "repository", host.HostId, "host_git_access", "Git access of this host",
                 host.Status == "ready" ? "ok" : host.Status == "ready-no-workflow-scope" ? "expiring" : "missing", false,
-                host.Detail ?? "The host's own probe of what it can push.") with
+                "The host reports repository fallback access; deploy keys and PATs remain long-lived.") with
             {
                 Permission = host.Status == "read-only" ? RepositoryAccess.Read : RepositoryAccess.Write,
-                LastUseAt = host.CheckedAt,
+                LastUseAt = null,
             });
         }
+    }
+
+    public static IReadOnlyList<CredentialInventoryItemDto> Supplemental(SecretListing secrets, IamSnapshot iam,
+        IReadOnlyList<SecretBackendBinding> backends, DateTime now)
+    {
+        var items = new List<CredentialInventoryItemDto>();
+        AddSecrets(items, secrets);
+        foreach (var backend in backends)
+            items.Add(Item($"external-store:{backend.Scope}", "service", StudioHost, "external_store_token",
+                $"{backend.Kind} store credential", "unused", false,
+                "Configured external store authentication. The inventory does not read or verify the credential.") with
+            {
+                Holder = StudioHost, Target = $"{backend.Kind}:{backend.Scope}", Scopes = [backend.Scope],
+            });
+        foreach (var account in iam.ServiceAccounts.Where(account => account.DisabledAt is null))
+        {
+            foreach (var token in account.Tokens.Where(token => token.RevokedAt is null))
+                items.Add(Item($"iam-token:{account.Id}:{token.Id}", "service", StudioHost, "service_account_token",
+                    $"{account.Name} token", token.ExpiresAt <= now ? "expiring" : "ok", false,
+                    "Studio service account credential. Values and verifiers stay in the access store.") with
+                {
+                    Holder = account.Id, Target = "Studio", CreatedAt = token.CreatedAt,
+                    ExpiresAt = token.ExpiresAt, LastUseAt = token.LastUsedAt,
+                });
+            foreach (var session in (account.Sessions ?? []).Where(session => session.RevokedAt is null))
+                items.Add(Item($"iam-session:{account.Id}:{session.Id}", "service", StudioHost, "operator_session",
+                    $"{account.Name} session", session.ExpiresAt <= now ? "unused" : "ok", false,
+                    "Owner-started operator session.") with
+                {
+                    Holder = account.Id, Target = "Studio", CreatedAt = session.CreatedAt,
+                    ExpiresAt = session.ExpiresAt, LastUseAt = session.LastUsedAt, Active = session.ExpiresAt > now,
+                });
+        }
+        return items.Select(item => CredentialLifecyclePolicy.Complete(item, now)).ToArray();
     }
 
     private static CredentialInventoryItemDto Item(

@@ -40,12 +40,8 @@ public sealed record DispatchReplayReport(string Project, string WaveId, string 
     public DateTimeOffset WaveStart { get; init; }
     public string Schema { get; init; } = "dispatch-replay.v1";
     public string Mode { get; init; } = "replay";
-    public double Gate { get; init; } = 0.8;
-    public IReadOnlyDictionary<string, int> Weights { get; init; } = new Dictionary<string, int>
-    {
-        ["conflicts"] = 30, ["tokens"] = 25, ["rework"] = 10, ["forecast"] = 10,
-        ["parallelism"] = 10, ["lead"] = 5, ["ownCost"] = 5, ["explanation"] = 5,
-    };
+    public double Gate { get; init; } = DispatchWeightRevision.Default.Gate;
+    public IReadOnlyDictionary<string, int> Weights { get; init; } = DispatchWeightRevision.Default.Weights;
     public string ValueStatus => Strategies.First().Runs >= 40 ? "scored" : "too few cards";
     public IReadOnlyList<string> Limitations { get; init; } =
     [

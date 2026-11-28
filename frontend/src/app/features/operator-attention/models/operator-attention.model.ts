@@ -26,7 +26,7 @@ export interface OperatorAttentionResponse {
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
   | 'incident' | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'gate-host' | 'post-merge'
-  | 'red-develop' | 'overlap' | 'elevation'
+  | 'approval' | 'red-develop' | 'overlap' | 'elevation'
   | 'batch' | 'batch-record' | 'push'
   | 'capacity' | 'quota'
   | 'host' | 'disk' | 'review-host' | 'installation' | 'other';
@@ -42,6 +42,7 @@ export interface AttentionClassSpec {
 }
 
 const CLASSES: readonly AttentionClassSpec[] = [
+  { key: 'approval', label: 'Operator approvals', action: 'Review approval', target: 'access' },
   { key: 'elevation', label: 'Elevated access', action: 'Review elevated sessions', target: 'access' },
   { key: 'incident', label: 'Environment incidents', action: 'Open incident card', target: 'card' },
   { key: 'decision', label: 'Decision cards', action: 'Decide', target: 'card' },
@@ -69,6 +70,7 @@ const CLASSES: readonly AttentionClassSpec[] = [
 ];
 
 const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
+  'operator-approval.pending': 'approval',
   'elevation.rate-ended': 'elevation',
   'dispatch.overlap-starved': 'overlap',
   'environment.incident-open': 'incident',

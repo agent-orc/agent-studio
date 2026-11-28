@@ -80,6 +80,12 @@ testSuites:
     category: machine-bound
     expectedDurationSeconds: 900
     command: bash scripts/npm-frontend.sh run e2e
+  # Run only on a quiet measurement host. Real host-start medians are sensitive
+  # to fleet load; routine and review commands above exclude MachineBound.
+  - id: backend-instance-startup-cost
+    category: machine-bound
+    expectedDurationSeconds: 300
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "Category=MachineBound&(FullyQualifiedName~BatchGateHostStartupCostTests|FullyQualifiedName~BatchGateStartupCostTests)"
   - id: task-switch-workstation-budget
     category: machine-bound
     expectedDurationSeconds: 5400

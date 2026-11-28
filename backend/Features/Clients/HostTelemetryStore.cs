@@ -29,7 +29,7 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly object _gate = new();
-    private readonly Dictionary<string, bool> _diskPaused = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HostDiskPressureDecision> _diskPaused = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HostDiskPressureLevel> _diskLevels = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     private string Root => Path.Combine(config["TaskRepository"] ?? Path.Combine(AppContext.BaseDirectory, "workspace"), "telemetry");
@@ -70,13 +70,14 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
                 config.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
                 config.GetValue("DiskPressure:CriticalFreePercent", 5d));
             var previous = _diskPaused.GetValueOrDefault(clientId);
-            if (filesystems is null && previous)
-                return new(HostDiskPressureLevel.Critical,
-                    "Disk readings are unavailable after a critical report; claims remain paused.", null);
+            if (filesystems is null && previous is not null) return previous;
             var decision = AgentStudio.TaskServer.Contracts.HostDiskPressurePolicy.Decide(
-                filesystems, thresholds, previous);
-            if (filesystems is { Count: > 0 }) _diskPaused[clientId] =
-                decision.Level == AgentStudio.TaskServer.Contracts.HostDiskPressureLevel.Critical;
+                filesystems, thresholds, previous is not null);
+            if (filesystems is { Count: > 0 })
+            {
+                if (decision.Level == HostDiskPressureLevel.Critical) _diskPaused[clientId] = decision;
+                else _diskPaused.Remove(clientId);
+            }
             return decision;
         }
     }

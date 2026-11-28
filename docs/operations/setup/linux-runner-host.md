@@ -15,6 +15,36 @@ and the binding lease contract in
 the Runner API surface added by RM-3 (fenced lease) and RM-4 (log + artifact
 upload).
 
+## Credential inventory and rotation plans (WI-1)
+
+After updating Studio and Task Server, open Settings > Credentials. Check the
+holder and target of each host's provider login, repository deploy key, PAT
+fallback and service principal. Host registry observations supply custody
+metadata only; never paste credentials or token prefixes into metadata fields.
+The Studio inventory also includes deploy secrets and external-store tokens.
+
+Every entry is marked `short-lived` or `long-lived`. A refreshable CLI login is
+long-lived even if its current access token expires in minutes. A principal
+bootstrapped from a file without expiry remains allowed and shows `none`.
+Unknown creation and real-use dates stay unknown; a probe is not a real use.
+
+Record `rotationDueAt` and the known renewal date through the existing
+Owner-only credential registry metadata API. The inventory retains their
+whole-day interval. When an interval cannot be established, Studio supplies a
+labelled 90-day manual reminder plan. Dates without issuance metadata are anchored to the first
+persisted inventory observation, rather than sliding forward on refresh.
+Task Server's direct inventory uses installation creation as its conservative
+fallback for unknown source dates. Studio retains its own first observations.
+
+When the Owner feed raises a 14-day or 3-day expiry or rotation warning, rotate
+at the target using its existing runbook, replace the host credential, verify
+access and let the host report its new generation and dates. For a bootstrap
+principal, replace its configured secret file through the established bootstrap
+procedure. Updating inventory metadata alone does not rotate a credential.
+Stored fallbacks remain allowed for targets without federation and always
+retain their long-lived mark (WI-D6 option A). Federation and automatic target
+rotation are outside WI-1.
+
 ## Subscription quota reporting
 
 Deploy the updated Task Server and Studio before updating coding and review
@@ -899,19 +929,58 @@ or runner service. An `unknown` badge never produces sign-in guidance.
 
 ## 2. Build agent-host
 
+Run this procedure from an independently trusted, operator-controlled checkout
+and build environment. The checkout, publish output, and approval source must
+not be writable by the `agent` service account. On an existing host, complete
+[Release approval migration](#release-approval-migration) before the hardening
+step, which installs and enables the privileged work launcher.
+
 ```bash
 git clone <origin> agent-taskboard && cd agent-taskboard
-# Run this from the trusted operator checkout before every promotion.
-sudo ./scripts/harden-agent-runner-host.sh --apply
-release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
-staging_root="$(mktemp -d)"
-dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
-incoming_root=/var/lib/agent-runner/deploy/incoming
-test -z "$(find "$incoming_root" -mindepth 1 -print -quit)"
-cp -a "$staging_root/." "$incoming_root/"
-printf '%s\n' "$release_id" >"$incoming_root/release-id"
-sudo /usr/local/sbin/agent-runner-deploy
+(
+  set -euo pipefail
+  # Run this from the trusted operator checkout before every promotion.
+  sudo ./scripts/harden-agent-runner-host.sh --apply
+  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
+  staging_root="$(mktemp -d)"
+  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
+  printf '%s\n' "$release_id" >"$staging_root/release-id"
+
+  # Approve the complete trusted publisher output, before copying to incoming.
+  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")"
+  approval_file="$(mktemp)"
+  printf '%s\n' "$release_digest" >"$approval_file"
+  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals
+  sudo install -o root -g root -m 0644 "$approval_file" \
+    "/etc/agent-host/release-approvals/$release_id.sha256"
+
+  incoming_root=/var/lib/agent-runner/deploy/incoming
+  sudo test -z "$(sudo find "$incoming_root" -mindepth 1 -print -quit)"
+  # Read trusted output as the operator; write the upload as the service user.
+  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf -
+  sudo /usr/local/sbin/agent-runner-deploy
+)
 ```
+
+Run this block together. The subshell stops if publishing or digest generation
+fails, before an approval can be installed or a release promoted.
+
+The approval is one lowercase SHA-256 digest line, in
+`/etc/agent-host/release-approvals/<release-id>.sha256`, owned by `root:root`
+with mode `0644` and one hard link. All approval-directory ancestors must be
+root-owned, free of symlinks, and not writable by group or others. The canonical
+digest covers every relative file name, file content, and directory, including
+`release-id`. Write that file before computing the digest; adding, deleting, or
+changing any release entry invalidates approval. A dependency closure check,
+`--version` success, or copying bytes into root ownership is not publisher
+authentication.
+
+Obtain the approval from independently trusted publisher output or a digest
+transported through an authenticated publisher channel. Never generate an
+approval from `incoming`, the installed release, or an agent-provided checksum.
+`--release-digest` only computes a digest; it does not authenticate its input.
+The digest and verification commands are root-only and are not in the service
+account's sudo allowlist. Run them from the operator session.
 
 The hardening step is a required, separate control-plane promotion. It installs
 the checked-out `deploy/agent-host/agent-runner-deploy` at
@@ -944,13 +1013,16 @@ must be accepted, otherwise it prints the rollback command and exits nonzero.
 See [Post-restart completion check](#post-restart-completion-check).
 
 The root-owned deploy helper rejects an invalid or incomplete publish before
-changing `current`. It resolves the selected target in `agent-host.deps.json`
+changing `current`. It authenticates the private root-owned snapshot against
+the publisher approval, then resolves the selected target in `agent-host.deps.json`
 and requires every managed runtime assembly by its flattened publish name. It
-then runs `agent-host --version` from the root-owned staging directory as the
+then runs `agent-host --version` from the staging directory as the
 `agent` service user with a 10-second timeout. The sanitized smoke-check
 environment receives the root-resolved .NET installation path so it matches the
 host runtime even when .NET is installed outside `/usr/share/dotnet`. Only a
-candidate that passes both checks becomes an immutable release.
+candidate that passes provenance, dependency, smoke, and Review restart checks
+becomes an immutable release. Missing or mismatched approval refuses promotion
+before any candidate executable runs and leaves `current` unchanged.
 
 The validator uses the host's `/usr/bin/python3` standard library. The hardening
 migration refuses to install the helper when that interpreter is absent.
@@ -964,6 +1036,86 @@ planned Review replacement may advance `NRestarts` once; any further
 counter change, replacement failure, or inactive unit makes the command fail
 and prints the previous release id plus an operator rollback one-liner. The
 failed release remains immutable for investigation.
+
+### Release approval migration
+
+Existing hosts need approvals for the active release and each retained rollback
+release before installing the new helper and work launcher. Hardening does not
+create these approvals. The launcher verifies the complete resolved release on
+every request, including `--stdio`, cleanup, and `--probe`; an unapproved active
+release therefore blocks container operations even when no new release is
+being promoted.
+
+1. Arrange a maintenance window. Pause claim admission for Coding and Review
+   through the existing operator controls and drain active work while the old
+   launcher is still available. Preserve the normal Review drain and handoff
+   checks; `--force` does not bypass release provenance.
+2. For each active or rollback release, recover the exact original publish tree
+   from the independently trusted publisher, including all directories and any
+   archived `release-id`. Confirm the release identity against the publisher's
+   authenticated records and the existing release directory name. Match the
+   layout produced by the helper that originally promoted that release:
+
+   **Legacy promotion removed `release-id` from the installed tree.** Hash a
+   disposable copy of the trusted publisher artifact with only that marker
+   removed if present. An original `dotnet publish` artifact may already lack
+   the marker because the old procedure added it only to incoming. Keep the
+   original artifact intact. From the trusted operator checkout, before
+   upgrading the installed helper:
+
+   ```bash
+   trusted_publish=/absolute/trusted/publish
+   (
+     set -euo pipefail
+     approval_tree="$(mktemp -d)"
+     trap 'rm -rf -- "$approval_tree"' EXIT
+     cp -R --no-preserve=all "$trusted_publish/." "$approval_tree/"
+     rm -f -- "$approval_tree/release-id"
+     sudo bash ./deploy/agent-host/agent-runner-deploy --release-digest "$approval_tree"
+   )
+   ```
+
+   **New promotion retains `release-id`.** For a release promoted by the new
+   helper, hash the complete trusted publisher tree, including the unchanged
+   marker, with `sudo bash ./deploy/agent-host/agent-runner-deploy --release-digest
+   /absolute/trusted/publish`. Do not apply the legacy conversion to this layout.
+
+   Install the resulting digest as above under that release's existing
+   directory name. The verifier hashes the complete installed tree in both
+   cases; it does not ignore `release-id` or modify installed releases. Do not
+   hash the host's current tree and bless it. A publisher digest for the original
+   tree including `release-id` cannot approve a legacy tree without the marker;
+   obtain the trusted artifact or an authenticated digest for the legacy layout.
+   If neither is available, leave admission paused and restore or promote a new
+   independently approved release before resuming container work.
+3. Verify the active release and each intended rollback target with the new
+   checked-out verifier before enabling the new launcher:
+
+   ```bash
+   (
+     set -euo pipefail
+     active_release="$(readlink -f /opt/agent-host/current)"
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "$active_release"
+     # Repeat for each real, retained rollback release directory.
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "/opt/agent-host/releases/<rollback-id>"
+     sudo ./scripts/harden-agent-runner-host.sh --apply
+     sudo /usr/local/sbin/agent-runner-deploy --verify-release "$active_release"
+   )
+   ```
+
+   Run this block together. The subshell stops at the first failed command,
+   including release-path resolution or verification, before launcher
+   installation can proceed. Verification is silent on success and exits
+   nonzero on refusal. A refused tree needs investigation or restoration from
+   trusted publisher output; do not edit its approval to match unexplained host
+   changes. If installation or the final installed-verifier check fails, keep
+   admission paused and resolve that failure before continuing.
+4. Resume admission only after the installed verifier succeeds and the existing
+   work-container canary verifies launcher admission. Keep approval files for
+   every active, detached-worker, or rollback release as long as that release is
+   retained. Before using a printed rollback command, verify its target with
+   `--verify-release`; switching `current` alone does not admit an unapproved
+   release.
 
 ## 3. Configure
 
@@ -992,6 +1144,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly, with a combined size budget across this root and its `-stale` sibling. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
+| `RUNNER_PREPARATION_COPIES_MAX_GB` | env only | `20` | Combined coding preparation copy budget in decimal GB across projects under the work directory. The lower of this budget and 15 percent of disk capacity applies. The oldest unreferenced copies are evicted first. |
 | `RUNNER_REVIEW_RETENTION_GIB` | none | `20` | Combined budget in GiB for inactive review attempts and their temp directories, including the review work root's `-stale` sibling. Oldest attempts are removed first. Active attempts and current-root reusable caches are preserved; abandoned caches in the stale sibling count toward the budget. Divide the host budget across containers with separate work roots. |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Legacy review credential allowlist. It does not admit credentials into RT-6 project commands; semantic review and Git fetch use separate authentication paths. |
 | `TEST_ENVELOPE_CORES` | env only | `3` | Shared CPU token for review, build-test gate and post-merge commands. Integer `1..64`; invalid values use `3`. Sets `DOTNET_PROCESSOR_COUNT` and Linux worker `cpu.max`. Configure consistently on every execution service; see [Shared test command envelope](#shared-test-command-envelope-rt-6). |
@@ -2985,11 +3138,10 @@ sudo /usr/local/sbin/agent-runner-deploy --force
 ```
 
 The first upgrade from a daemon that predates the host-local control protocol
-is deliberately fail closed: the staged candidate understands
-`--restart-guard`, but the still-running old daemon cannot acknowledge its
-admission barrier, so an ordinary promotion is refused without signaling the
-daemon or flipping `current`. For that one-time migration, retire or otherwise
-pause the Review identity at the Task Server, wait until Execution Hosts reports
+is deliberately fail closed: the installed control binary or the still-running
+old daemon cannot complete the `--restart-guard` admission barrier, so an
+ordinary promotion is refused without signaling the daemon or flipping
+`current`. For that one-time migration, retire or otherwise pause the Review identity at the Task Server, wait until Execution Hosts reports
 zero active Review slots, run the root-only forced promotion, then revive the
 identity. Do not use `--force` while the old identity can still claim work.
 
@@ -2999,11 +3151,14 @@ For an active unit, the helper reads the effective `RUNNER_STATE_DIR` from that
 MainPID's `/proc/<pid>/environ`. Because `Type=simple` can expose the MainPID
 before `ExecStart` has replaced the forked child, it waits up to five seconds
 for the value, rechecking the MainPID, and fails closed if it remains absent.
-Release promotion runs the already validated staged `agent-host` for the guard,
-so upgrading from a current binary that predates the guard flag cannot bypass or deadlock the
-check. Onboarding and the native installer apply the same admission barrier
-before signaling an existing Review daemon; only a genuinely inactive first
-install skips it.
+Release promotion runs the already installed `agent-host` control binary as
+`agent`, with a cleared environment, for the guard. The staged candidate is used
+only for the service-user `--version` smoke check after provenance verification.
+An installed control binary that predates the guard protocol fails closed; use
+the one-time migration above rather than running staged code as root.
+Onboarding and the native installer apply the same admission barrier before
+signaling an existing Review daemon; only a genuinely inactive first install
+skips it.
 The service account's
 sudoers policy deliberately does **not** allow `--force`: automation drains, and
 only a human operator overrides.
@@ -3045,9 +3200,9 @@ A planned Runner deploy uses the bounded Review drain rather than replacing a
 busy role. On a hardened host, stage the complete application and invoke the
 no-argument deploy helper as described in section 2. Drain the Review Executor
 first, or the helper refuses. The helper records the previous release,
-validates the dependency closure, runs the
-service-user boot smoke check, atomically switches `/opt/agent-host/current`,
-starts the already-drained Review role, restarts Coding, waits for both
+authenticates the staged snapshot against its independently installed publisher
+approval, validates the dependency closure, runs the service-user boot smoke
+check, atomically switches `/opt/agent-host/current`, starts the already-drained Review role, restarts Coding, waits for both
 replacement processes, and watches for an immediate restart loop. It then runs
 the [post-restart completion check](#post-restart-completion-check), which can
 take up to ten minutes.

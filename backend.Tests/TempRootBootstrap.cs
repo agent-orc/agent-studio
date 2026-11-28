@@ -6,7 +6,7 @@ using AgentStudio.TestSupport;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Points this test host's temp root at a per-process suite directory before
+/// Points this test host's temporary and local state roots at a per-process suite directory before
 /// any test type is touched (AGT-2858), and drops the launcher's listener
 /// configuration once for the whole process (AGT-3106).
 ///
