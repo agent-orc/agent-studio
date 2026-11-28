@@ -936,34 +936,37 @@ not be writable by the `agent` service account. On an existing host, complete
 step, which installs and enables the privileged work launcher.
 
 ```bash
-git clone <origin> agent-taskboard && cd agent-taskboard
-(
-  set -euo pipefail
+git clone <origin> agent-taskboard && cd agent-taskboard && (
+  set -uo pipefail
   # Run this from the trusted operator checkout before every promotion.
-  sudo ./scripts/harden-agent-runner-host.sh --apply
-  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
-  staging_root="$(mktemp -d)"
-  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
-  printf '%s\n' "$release_id" >"$staging_root/release-id"
+  sudo ./scripts/harden-agent-runner-host.sh --apply || exit
+  release_time="$(date -u +%Y%m%dT%H%M%SZ)" || exit
+  release_revision="$(git rev-parse --short=12 HEAD)" || exit
+  release_id="$release_time-$release_revision"
+  staging_root="$(mktemp -d)" || exit
+  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root" || exit
+  printf '%s\n' "$release_id" >"$staging_root/release-id" || exit
 
   # Approve the complete trusted publisher output, before copying to incoming.
-  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")"
-  approval_file="$(mktemp)"
-  printf '%s\n' "$release_digest" >"$approval_file"
-  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals
+  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")" || exit
+  approval_file="$(mktemp)" || exit
+  printf '%s\n' "$release_digest" >"$approval_file" || exit
+  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals || exit
   sudo install -o root -g root -m 0644 "$approval_file" \
-    "/etc/agent-host/release-approvals/$release_id.sha256"
+    "/etc/agent-host/release-approvals/$release_id.sha256" || exit
 
   incoming_root=/var/lib/agent-runner/deploy/incoming
-  sudo test -z "$(sudo find "$incoming_root" -mindepth 1 -print -quit)"
+  incoming_entry="$(sudo find "$incoming_root" -mindepth 1 -print -quit)" || exit
+  [[ -z "$incoming_entry" ]] || exit
   # Read trusted output as the operator; write the upload as the service user.
-  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf -
+  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf - || exit
   sudo /usr/local/sbin/agent-runner-deploy
 )
 ```
 
-Run this block together. The subshell stops if publishing or digest generation
-fails, before an approval can be installed or a release promoted.
+Run this block together. Each step checks its exit status explicitly, so the
+block also stops on failure when used in a shell conditional. If publishing or
+digest generation fails, the block stops before installing an approval.
 
 The approval is one lowercase SHA-256 digest line, in
 `/etc/agent-host/release-approvals/<release-id>.sha256`, owned by `root:root`

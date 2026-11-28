@@ -7,6 +7,7 @@ import tempfile
 import textwrap
 import unittest
 import uuid
+from itertools import product
 from pathlib import Path
 
 
@@ -120,9 +121,12 @@ class ControlPlanePromotionTests(unittest.TestCase):
         runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
         commands = runbook.split("## 2. Build agent-host", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
         commands = commands.replace("<origin>", "fixture-origin")
-        steps = ["harden", "publish", "digest", "install-directory", "install-approval", "promote"]
-        for failure in ("harden", "publish", "digest", "none"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+        steps = [
+            "clone", "harden", "publish", "digest", "install-directory",
+            "install-approval", "inspect-incoming", "upload", "promote",
+        ]
+        for conditional, failure in product((False, True), (*steps, "none")):
+            with self.subTest(conditional=conditional, failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 (root / "agent-taskboard").mkdir()
                 log = root / "calls"
@@ -132,7 +136,11 @@ class ControlPlanePromotionTests(unittest.TestCase):
                       [[ "$1" != "$FAIL_STEP" ]] || return 19
                     }
                     git() {
-                      [[ "$1" != rev-parse ]] || printf '%s\\n' fixture-revision
+                      case "$1" in
+                        clone) record clone ;;
+                        rev-parse) printf '%s\\n' fixture-revision ;;
+                        *) return 90 ;;
+                      esac
                     }
                     dotnet() {
                       # A failed publish may leave an executable in its output.
@@ -144,23 +152,28 @@ class ControlPlanePromotionTests(unittest.TestCase):
                         ./scripts/harden-agent-runner-host.sh) record harden ;;
                         /usr/local/sbin/agent-runner-deploy)
                           if [[ "${2:-}" == --release-digest ]]; then
-                            record digest || return $?
                             printf '%s\\n' fixture-digest
+                            record digest
                           else
                             record promote
                           fi ;;
                         install)
                           if [[ "$2" == -d ]]; then record install-directory
                           else record install-approval; fi ;;
-                        find|test) return 0 ;;
+                        find) record inspect-incoming ;;
                         -u) cat >/dev/null ;;
                         *) return 90 ;;
                       esac
                     }
-                    tar() { printf '%s\\n' fixture-archive; }
+                    tar() {
+                      printf '%s\\n' fixture-archive
+                      record upload
+                    }
                 '''
+                # Bash suppresses errexit inside commands tested by a conditional.
+                script = f'if (\n{commands}\n); then exit 0; else exit "$?"; fi\n' if conditional else commands
                 result = subprocess.run(
-                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + commands],
+                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + script],
                     cwd=root,
                     env={**os.environ, "CALL_LOG": str(log), "FAIL_STEP": failure,
                          "TMPDIR": temporary, "SHELLOPTS": ""},
