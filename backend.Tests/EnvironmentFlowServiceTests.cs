@@ -1,4 +1,6 @@
 using AgentStudio.Shared;
+using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using AgentStudio.Projects;
 using Xunit;
 
@@ -81,10 +83,157 @@ public sealed class EnvironmentFlowServiceTests
     }
 
 
+    [Fact]
+    public void Aggregate_IntegrationUsesPublishedQueueAndSuccessEvents_AcceptanceIsSeparate()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var board = new DeliveryIntegrationQueueBoard();
+        board.Publish("project", [
+            new("compile", DeliveryIntegrationQueueBoard.CompilingTrain(3), new DateTimeOffset(now.AddMinutes(-55))),
+            new("one", DeliveryIntegrationQueueBoard.Waiting, new DateTimeOffset(now.AddMinutes(-40))),
+            new("two", DeliveryIntegrationQueueBoard.Waiting, new DateTimeOffset(now.AddMinutes(-20))),
+        ]);
+        var tasks = new[] {
+            Task("compile", TaskStates.AutoReview, now.AddHours(-5)),
+            Task("one", TaskStates.AutoReview, now.AddHours(-4)),
+            Task("two", TaskStates.AutoReview, now.AddHours(-3)),
+            Task("integrated", TaskStates.HumanReview, now.AddHours(-2)),
+            Task("accepted", TaskStates.Completed, now.AddHours(-1)),
+            Task("auto-completed", TaskStates.Completed, now.AddHours(-1)),
+        }.Select(t => t with { ProjectName = "project" }).ToArray();
+        IReadOnlyList<TimelineEvent> Events(TaskInfo task) => task.Id switch
+        {
+            "integrated" => [RemoteSuccess(now.AddHours(-2))],
+            "auto-completed" => [Move(now.AddHours(-1), TaskStates.AutoReview, TaskStates.Completed)],
+            "accepted" => [
+                RemoteSuccess(now.AddHours(-23)),
+                Move(now.AddHours(-1), TaskStates.HumanReview, TaskStates.Completed),
+            ],
+            _ => [],
+        };
+
+        var result = EnvironmentFlowService.Aggregate(tasks, Events, now, integrationQueues: board.Read());
+        var integration = result.Queues.Single(q => q.Queue == "Integration");
+        Assert.Equal(3, integration.Waiting);
+        Assert.Equal(55, integration.OldestWaitMinutes);
+        Assert.Equal(2d / 24, integration.ThroughputPerHour);
+        var acceptance = result.Queues.Single(q => q.Queue == "Acceptance");
+        Assert.Equal(1, acceptance.Waiting);
+        Assert.Equal(120, acceptance.OldestWaitMinutes);
+        Assert.Equal(1d / 24, acceptance.ThroughputPerHour);
+        Assert.Contains(result.WaitingReasons, r => r.Reason == "Waiting for integration" && r.Count == 2);
+        Assert.Contains(result.WaitingReasons, r => r.Reason == "Integration: compiling the combined tree of 3 cards");
+        Assert.Contains(result.WaitingReasons, r => r.Reason == "Waiting for acceptance" && r.Count == 1);
+
+        // Accepting another card cannot change integration output or queue occupancy.
+        var accepted = tasks.Select(t => t.Id == "integrated" ? t with { State = TaskStates.Completed } : t).ToArray();
+        var afterAcceptance = EnvironmentFlowService.Aggregate(accepted, t => t.Id == "integrated"
+            ? [.. Events(t), Move(now, TaskStates.HumanReview, TaskStates.Completed)] : Events(t),
+            now, integrationQueues: board.Read());
+        Assert.Equal(integration, afterAcceptance.Queues.Single(q => q.Queue == "Integration"));
+    }
+
+    [Fact]
+    public void Aggregate_PlacementChangesDoNotReclassifyHistoricalIntegrationSuccesses()
+    {
+        var now = new DateTime(2026, 11, 28, 12, 0, 0, DateTimeKind.Utc);
+        var task = Task("moved", TaskStates.HumanReview, now.AddHours(-1))
+            with { ProjectName = "project" };
+        var board = new DeliveryIntegrationQueueBoard();
+        board.Publish("project", []);
+        IReadOnlyList<TimelineEvent> events = [
+            new() { Ts = now.AddHours(-3), Kind = TimelineEventKinds.IntegrationSucceeded,
+                Details = new() { ["stage"] = RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage } },
+            new() { Ts = now.AddHours(-2), Kind = TimelineEventKinds.IntegrationSucceeded },
+            new() { Ts = now.AddHours(-25), Kind = TimelineEventKinds.IntegrationSucceeded },
+            new() { Ts = now.AddHours(1), Kind = TimelineEventKinds.IntegrationSucceeded },
+            Move(now.AddMinutes(-5), TaskStates.HumanReview, TaskStates.Completed),
+        ];
+
+        var remote = EnvironmentFlowService.Aggregate([task], _ => events, now,
+            integrationQueues: board.Read(), localIntegrationProjects: new HashSet<string>());
+        var local = EnvironmentFlowService.Aggregate([task], _ => events, now,
+            integrationQueues: board.Read(), localIntegrationProjects: new HashSet<string> { "project" });
+
+        foreach (var result in new[] { remote, local })
+        {
+            Assert.Equal(1d / 24, result.Queues.Single(q => q.Queue == "Integration").ThroughputPerHour);
+            Assert.Equal(1d / 24, result.Queues.Single(q => q.Queue == "Integration (local lane fallback)")
+                .ThroughputPerHour);
+            Assert.Equal(1, result.Today.Integrated); // Daily integration counts cards, not attempts.
+        }
+        Assert.Equal(remote.Today, local.Today);
+    }
+
+    [Fact]
+    public void Aggregate_EmptyPublishedQueueIsAuthoritative_AndSnapshotIsDetached()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var board = new DeliveryIntegrationQueueBoard();
+        var rows = new List<DeliveryIntegrationQueueRow> { new("one", "waiting", null) };
+        board.Publish("project", rows);
+        rows.Clear();
+        var snapshot = board.Read();
+        board.Clear("project");
+        Assert.Single(snapshot["project"]);
+        var result = EnvironmentFlowService.Aggregate([Task("human", TaskStates.HumanReview, now.AddHours(-1))],
+            _ => [], now, integrationQueues: board.Read());
+        Assert.Equal(new EnvironmentQueueFlow("Integration", 0, null, 0),
+            result.Queues.Single(q => q.Queue == "Integration"));
+        Assert.Equal(1, result.Queues.Single(q => q.Queue == "Acceptance").Waiting);
+    }
+
+    [Fact]
+    public void Aggregate_LocalFallbackIsLabelled_AndNeverUsesAcceptanceAsIntegrationOutput()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var result = EnvironmentFlowService.Aggregate([Task("human", TaskStates.HumanReview, now.AddHours(-1))],
+            _ => [Move(now.AddMinutes(-5), TaskStates.HumanReview, TaskStates.Completed)], now);
+        Assert.Equal(new EnvironmentQueueFlow("Integration (local lane fallback)", 1, 60, 0),
+            result.Queues.Single(q => q.Queue.StartsWith("Integration", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Aggregate_MixedFleetKeepsLocalLaneFallbackSeparateFromRemoteQueue()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var tasks = new[] {
+            Task("local", TaskStates.HumanReview, now.AddHours(-2)) with { ProjectName = "local" },
+            Task("remote", TaskStates.AutoReview, now.AddHours(-3)) with { ProjectName = "remote" },
+        };
+        var board = new DeliveryIntegrationQueueBoard();
+        board.Publish("remote", [new("remote", DeliveryIntegrationQueueBoard.Waiting, new DateTimeOffset(now.AddMinutes(-10)))]);
+        var result = EnvironmentFlowService.Aggregate(tasks, _ => [], now, integrationQueues: board.Read(),
+            localIntegrationProjects: new HashSet<string> { "local" });
+        Assert.Equal(new EnvironmentQueueFlow("Integration", 1, 10, 0), result.Queues.Single(q => q.Queue == "Integration"));
+        Assert.Equal(new EnvironmentQueueFlow("Integration (local lane fallback)", 1, 120, 0),
+            result.Queues.Single(q => q.Queue == "Integration (local lane fallback)"));
+    }
+
+    [Fact]
+    public void Aggregate_CurrentGateActivityWinsOverReviewFallback_ButPreservesHolds()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var gate = Task("gate", TaskStates.AutoReview, now.AddHours(-1));
+        var held = gate with { Id = "held", PickupHold = new() { Mechanism = PickupHoldMechanisms.DependencyGate } };
+        var activities = new[] { new AutoReviewActivityView("", "gate", "gate:1/2", now),
+            new AutoReviewActivityView("", "held", AutoReviewActivitySteps.Gate, now) };
+        var result = EnvironmentFlowService.Aggregate([gate, held], _ => [], now, reviewActivities: activities);
+        Assert.Contains(result.WaitingReasons, r => r.Reason == "Build/test gate" && r.Count == 1);
+        Assert.Contains(result.WaitingReasons, r => r.Reason == "Dependency gate" && r.Count == 1);
+        Assert.DoesNotContain(result.WaitingReasons, r => r.Reason == "Waiting for review");
+    }
+
     private static TaskInfo Task(string id, string lane, DateTime at) => new()
     {
         Id = id, Kind = TaskKinds.Task, State = lane, CreatedAt = at,
         EnteredLaneAt = at, LastActivity = at,
+    };
+
+    private static TimelineEvent RemoteSuccess(DateTime at) => new()
+    {
+        Ts = at, Kind = TimelineEventKinds.IntegrationSucceeded,
+        Details = new() { ["stage"] = RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage },
     };
 
     private static TimelineEvent Move(DateTime at, string from, string to) => new()
