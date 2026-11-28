@@ -387,6 +387,13 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-post-merge-lint-signer-socket">
+          <td>2026-11-28</td>
+          <td><code>AGT-4336</code><br><span class="small">post-merge-lint-signer-socket</span></td>
+          <td>The operator signer failed to start during post-merge lint. The red receipt gave the repair cards no test names.</td>
+          <td>The signer put its socket under a temp path longer than the Unix address buffer. Lint ran outside the test suites that record per-test attempts.</td>
+          <td>The signer uses a short private directory. A failed TAP test in lint gets a named initial attempt and a measured same-tip repeat. A repeat records new failures by name. A skipped or missing test stays unresolved. Same-named tests carry their suite or source location where available. Ambiguous matches retain separate attempt evidence.</td>
+        </tr>
         <tr id="case-conflict-receipt-preparation-retry">
           <td>2026-11-27</td>
           <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
