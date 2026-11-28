@@ -588,7 +588,10 @@ and uses the original command without its `--filter`, followed by
 All shards for that command share a directory and have distinct indices in
 `0..count-1`. Green requires every index; partial red or inconclusive evidence
 must still use indices within the declared count. Malformed settings arguments
-are refused as receipt conflicts. The route returns HTTP 409 for plan or
+are refused as receipt conflicts. The settings path is one shell-quoted argument;
+apostrophes use the runner's `'\''` escape. Extra arguments after the path do
+not prove coverage, even if the command ends with a valid shard filename.
+The route returns HTTP 409 for plan or
 coverage conflicts and HTTP 400 for malformed or oversized receipt fields.
 Neither refusal advances green state or consumes the active claim.
 

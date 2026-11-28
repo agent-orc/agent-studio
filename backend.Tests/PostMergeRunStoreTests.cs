@@ -154,6 +154,11 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("truncated-settings")]
     [InlineData("empty-settings")]
     [InlineData("empty-index")]
+    [InlineData("extra-filter")]
+    [InlineData("extra-settings")]
+    [InlineData("extra-argument")]
+    [InlineData("extra-positional")]
+    [InlineData("valid-quoted-path")]
     public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
     {
         const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
@@ -163,8 +168,9 @@ public sealed class PostMergeRunStoreTests : IDisposable
         if (evidence.StartsWith("fixed-", StringComparison.Ordinal)) run = run with { Envelope = envelope with { ShardPlan = "tests=2" } };
         var store = new PostMergeRunStore(_root);
         store.Record(Project, run);
+        var settingsRoot = evidence == "valid-quoted-path" ? Path.Combine(_root, "runner's files") : _root;
         var shardCommands = Runner::AgentRunner.PostMergeShards.Commands(command, ["Tests.One", "Tests.Two"], 2,
-            Path.Combine(_root, "post-merge-shards"));
+            Path.Combine(settingsRoot, "post-merge-shards"));
         Assert.Equal(2, shardCommands.Count);
         var shard = new PostMergeCommandVerdict(shardCommands[0], 0, false) { SuiteId = "tests" };
         var second = shard with { Command = shardCommands[1] };
@@ -206,7 +212,20 @@ public sealed class PostMergeRunStoreTests : IDisposable
             },
             _ => receipt,
         };
-        if (evidence is not ("valid" or "fixed-valid"))
+        if (evidence.StartsWith("extra-", StringComparison.Ordinal))
+        {
+            var extra = evidence switch
+            {
+                "extra-filter" => " --filter 'FullyQualifiedName~Only.One'",
+                "extra-settings" => " --settings '/tmp/other.runsettings'",
+                "extra-argument" => " --list-tests",
+                _ => "",
+            };
+            receipt = receipt with { Verdicts = receipt.Verdicts.Select(verdict => verdict.Command == "build"
+                ? verdict : verdict with { Command = verdict.Command.Replace(" --settings '",
+                    " --settings '/tmp/ignored'" + extra + " '", StringComparison.Ordinal) }).ToArray() };
+        }
+        if (evidence is not ("valid" or "fixed-valid" or "valid-quoted-path"))
         {
             Assert.Null(store.Record(Project, receipt));
             Assert.Null(store.Read(Project).LastGreenSha);

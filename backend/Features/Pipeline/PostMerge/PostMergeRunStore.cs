@@ -208,7 +208,13 @@ public sealed class PostMergeRunStore
             if (verdict.Command.Length <= prefix.Length
                 || !verdict.Command.StartsWith(prefix, StringComparison.Ordinal)
                 || !verdict.Command.EndsWith("'", StringComparison.Ordinal)) return false;
-            var settings = verdict.Command[prefix.Length..^1].Replace('\\', '/');
+            var settingsArgument = verdict.Command[prefix.Length..^1];
+            // The runner shell-quotes one path, escaping apostrophes as '\''.
+            // An unescaped quote ends that argument and permits extra arguments.
+            const string escapedQuote = "'\\''";
+            if (settingsArgument.Replace(escapedQuote, "", StringComparison.Ordinal).Contains('\''))
+                return false;
+            var settings = settingsArgument.Replace(escapedQuote, "'", StringComparison.Ordinal).Replace('\\', '/');
             var marker = "/post-merge-" + active.Id + "/shard-";
             var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
             if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
