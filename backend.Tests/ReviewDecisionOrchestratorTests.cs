@@ -1684,6 +1684,27 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TaskDone_CleanPassWithoutLocalAdmission_PromotesAndRecordsAcceptDecision()
+    {
+        const string slug = "clean-pass-without-admission";
+        SeedReviewJobWithDone(slug, withLocalDelivery: false);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        var orchestrator = BuildOrchestratorWithAspects(
+            _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]", pipelineLog: pipeline);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var promoted = Path.Combine(_watchPath, TaskStates.HumanReview, slug);
+        Assert.True(Directory.Exists(promoted));
+        Assert.False(File.Exists(Path.Combine(promoted, CompletionContentEvidence.LocalAdmissionFile)));
+        var execution = pipeline.Read(promoted);
+        Assert.NotNull(execution);
+        var decision = Assert.Single(execution.Steps, step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId);
+        Assert.Equal(PipelineStepStatus.Passed, decision.Status);
+        Assert.Equal("accept", decision.Verdict);
+    }
+
+    [Fact]
     public async Task ResearchDone_WithPrimaryHtml_ReviewsOnlyRequirementFit_AndCompletesOnPass()
     {
         const string slug = "research-report";
@@ -2696,7 +2717,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         bool includeRunnerActiveClearedMarker = false,
         IReadOnlyList<string>? initialTags = null,
         string agent = CliTypes.Claude,
-        string? mode = null)
+        string? mode = null,
+        bool withLocalDelivery = true)
     {
         var dir = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
         Directory.CreateDirectory(Path.Combine(dir, "logs"));
@@ -2709,7 +2731,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{TaskStates.AutoReview}\",\"order\":1,\"agent\":\"{agent}\",\"cliType\":\"{agent}\"{modeJson}{tagsJson}}}");
         File.WriteAllText(Path.Combine(dir, "prompt.md"), $"# {slug}\n\nDo the thing.\n");
-        SeedLocalReviewDelivery(dir);
+        if (withLocalDelivery) SeedLocalReviewDelivery(dir);
         var suffix = includeRunnerActiveClearedMarker
             ? $"[12:00:02.000] [orchestrator] [decision] Runner active state cleared: job moved out of 3-progress externally (3-progress -> 4-auto-review){Environment.NewLine}"
             : string.Empty;

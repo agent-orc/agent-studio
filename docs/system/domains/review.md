@@ -514,10 +514,13 @@ retains its existing lineage checks. Stale briefs, a wrong content aspect,
 unsettled or mismatched reviews, and missing required research reports remain
 refused. Report-only local review retains its existing run-bound contract.
 
-For the local coding route, the final budget decision is stored in the task
-folder's `local-content-admission.json` before promotion to Human Review
-(AGT-4195). The receipt records the review attempt, delivery SHA, local run
-identity, brief version, content dispositions and hashes of
+For a local coding delivery with a known SHA, review stores its content
+dispositions in `local-content-admission.json` before promotion to Human Review
+(AGT-4195). A literal pass without a local delivery SHA can promote without
+this receipt. An accepted content concern or a required follow-up still needs
+the receipt, including when the content aspect itself passed. The receipt
+records the review attempt, delivery SHA, local run identity, brief version,
+content dispositions and hashes of
 `content-review-context.json` plus each original `aspect-<aspect>.json`.
 The context's `admissionReviewAttemptId` anchors the receipt independently;
 a missing receipt cannot bypass a required follow-up even for a literal pass.
