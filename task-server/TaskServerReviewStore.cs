@@ -1411,19 +1411,25 @@ public sealed partial class TaskServerStore
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
             && request.FailureClassification is "PreparationFailed")
             return ClassifyPreparationFailure(subject, request);
+        var candidateSteps = request.Commands
+            .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
+            .Select(command => command.StepId)
+            .ToHashSet(StringComparer.Ordinal);
+        // The runner records the failed read, then stops the aspect run with an empty verdict list.
+        var stoppedForMaterial = request.Outcome == "ReviewInfra"
+            && request.FailureClassification == ConceptRemoteReviewPolicy.MaterialUnavailable
+            && subject.Plan.Commands.Any(command => command.Aspect == "concept-fit"
+                && ReviewCommandKinds.IsAgent(command.ExecutionKind) && candidateSteps.Contains(command.StepId));
         var verdictAspects = request.Verdicts.Select(verdict => verdict.Aspect).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (subject.Plan.RequiredAspects.Any(aspect => !verdictAspects.Contains(aspect)))
+        if (!stoppedForMaterial && subject.Plan.RequiredAspects.Any(aspect => !verdictAspects.Contains(aspect)))
             return ("ReviewInfra", "IncompleteReviewReport");
         var commandKeys = request.Commands
             .Select(command => $"{command.Phase}\0{command.WorkspaceRole}\0{command.StepId}")
             .ToHashSet(StringComparer.Ordinal);
         if (commandKeys.Count != request.Commands.Count)
             return ("ReviewInfra", "DuplicateCommandEvidence");
-        var candidateSteps = request.Commands
-            .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
-            .Select(command => command.StepId)
-            .ToHashSet(StringComparer.Ordinal);
-        if (subject.Plan.Commands.Where(command => command.Required).Any(command => !candidateSteps.Contains(command.StepId)))
+        if (subject.Plan.Commands.Any(command => command.Required && !candidateSteps.Contains(command.StepId)
+                && !(stoppedForMaterial && ReviewCommandKinds.IsAgent(command.ExecutionKind))))
             return ("ReviewInfra", "IncompleteCommandEvidence");
         var candidatePreparation = request.Commands
             .Where(command => command.Phase == "preparation" && command.WorkspaceRole == "candidate")

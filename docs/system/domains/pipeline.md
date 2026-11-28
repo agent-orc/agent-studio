@@ -352,10 +352,21 @@ The run host is the fallback. Once the oldest pending integration reaches the
 project's `windowMinutes`, occupied coding slots and host load no longer veto
 that window. It runs sequentially inside the existing worker test envelope;
 its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering puts merge
-checks first. Fixed-slot gate admission preserves the separate integration
+fallback still waits for free coding capacity. Gate queue ordering uses attempt
+creation time first, with merge precedence only at the same instant. Both
+authorities scan bounded pages of 32 in that order until eligible work is found,
+so later arrivals cannot indefinitely overtake either queue. The daemon keeps
+two durable flights and continues claiming while ordinary execution is active.
+A claimed successor in the same lane waits for its predecessor to finish and
+for claim recovery before materializing, including when the predecessor faults
+or is independently cancelled. Shutdown cancellation still stops the wait.
+Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
@@ -572,7 +583,33 @@ The Runner service posts start, terminal, and skip receipts to
 `/api/runner/post-merge/projects/{project}/runs`. `PostMergeRunStore` persists
 the exact tip, window range, command verdicts, timestamps, last green SHA,
 last completed window tip, and `developState` per project outside card folders.
-Only a matching active run can complete. Green advances last green; red keeps
+Terminal receipts must retain the active run's project, ID, kind, exact tip,
+start timestamp, and ordered command list. Green requires one verdict for each
+planned command, with no omitted, substituted, extra, or duplicate coverage.
+Red and inconclusive receipts may contain partial evidence, but every supplied
+verdict must belong to the original plan.
+
+Sharded verdicts may replace a planned `dotnet test ... --no-build` command when
+the start envelope's `shardPlan` declares that suite as `auto` or a fixed count.
+The terminal envelope supplies a count from 1 to 16, preserving a fixed start
+count, and `suiteSelection.suiteCommands` maps the suite ID to its original
+command. A mapping present at start must agree. Each verdict names the suite
+and uses the original command without its `--filter`, followed by
+`--settings '<directory>/post-merge-<run-id>/shard-<index>.runsettings'`.
+All shards for that command share a directory and have distinct indices in
+`0..count-1`. Green requires every index; partial red or inconclusive evidence
+must still use indices within the declared count. Malformed settings arguments
+are refused as receipt conflicts. The settings path is one shell-quoted argument;
+apostrophes use the runner's `'\''` escape. Extra arguments after the path do
+not prove coverage, even if the command ends with a valid shard filename.
+The route returns HTTP 409 for plan or
+coverage conflicts and HTTP 400 for malformed or oversized receipt fields.
+Neither refusal advances green state or consumes the active claim.
+
+Exact terminal replay remains idempotent; changed replay conflicts. Legacy
+receipts without optional suite or envelope fields remain supported for exact
+command coverage, within the existing 64-command and 64-verdict bounds.
+Green advances last green; red keeps
 the previous green; an unchanged tip records a skip. The gate-economics row
 projects the state, last green SHA, nightly verdict, and red duration. The board
 header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red
@@ -857,7 +894,19 @@ first red time, repair key and current lane, and disappears when the repair
 starts or the incident resolves. The RT owner-decision ladder remains in place.
 Repair briefs list each failing test's first diagnostic; new runners preserve
 these before compacting console output. Older receipts explicitly say when a
-diagnostic was not recorded. Suspect lists use the RT static test-file and
+diagnostic was not recorded. When a declared lint command outside a test suite
+fails with Node TAP output, its receipt retains the failed test names and first
+error lines. The runner repeats that lint command once at the same tip. Only
+tests reported failing again receive a confirmed failure. A failure first seen
+on the repeat carries its own name and diagnostic. An explicit TAP pass clears
+an initial failure when the point can be matched across attempts. Nested tests
+include their parent names. For duplicate names, the receipt uses source
+locations where they identify individual tests. Where TAP leaves the match
+ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
+A skipped, TODO or absent test stays unresolved even when the repeat exits
+successfully. A later passing
+execution of the same lint command supplies covering evidence for its base
+check. Suspect lists use the RT static test-file and
 covering-folder map, retaining build inputs and project-graph fallback when
 reach is unknown. Measured control and bisect attribution remains authoritative.
 

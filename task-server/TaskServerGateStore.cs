@@ -345,12 +345,18 @@ public sealed partial class TaskServerStore
             var allocationVersion = gateAdmission.ReservesGrant ? allocation!.AllocationVersion : 0L;
             string? quotaReason = null;
             var activeKinds = new List<string>();
+            var executorKinds = new List<string>();
             await using (var command = Command(connection, """
-                SELECT s.subject_kind FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
+                SELECT s.subject_kind, a.executor_id FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
                  WHERE a.host_id = $host AND a.state IN ('claimed','materializing','running','reporting','cleaning');
                 """, transaction, ("$host", hostId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
-                while (await reader.ReadAsync(ct)) activeKinds.Add(reader.GetString(0));
+                while (await reader.ReadAsync(ct))
+                {
+                    activeKinds.Add(reader.GetString(0));
+                    if (!reader.IsDBNull(1) && reader.GetString(1) == request.ExecutorId)
+                        executorKinds.Add(reader.GetString(0));
+                }
             const int pageSize = 32;
             (int Priority, string CreatedAt, long Order)? after = null;
             while (true)
@@ -359,7 +365,8 @@ public sealed partial class TaskServerStore
                 var candidates = new List<(string AttemptId, GateSubject Subject, int Number,
                     string? ProjectName, int Priority, string CreatedAt, long Order)>(pageSize);
                 // The transaction keeps the queue stable until a claim returns.
-                // Insertion order breaks timestamp ties without reordering arrivals.
+                // Match PostMergeQueueOrder: age first, then kind and insertion order.
+                // Apply that ordering before LIMIT, including across page cursors.
                 await using (var command = Command(connection, """
                     WITH queued AS (
                         SELECT a.id, s.subject_json, a.attempt_number, p.name, a.created_at, a.rowid AS queue_order,
@@ -378,14 +385,16 @@ public sealed partial class TaskServerStore
                           LEFT JOIN projects p ON p.id = CASE WHEN s.subject_kind = 'run' THEN t.project_id
                               ELSE COALESCE(json_extract(s.subject_json, '$.projectId'), r.project_id) END
                          WHERE a.state = 'queued'
+                           AND ($excludePostMerge = 0 OR s.subject_kind != 'post-merge')
                     )
                     SELECT id, subject_json, attempt_number, name, priority, created_at, queue_order, project_id FROM queued
                      WHERE ($trusted = 1 OR project_id IS NOT NULL AND ($allProjects = 1
                          OR project_id IN (SELECT value FROM json_each($projects))))
                        AND ($afterOrder IS NULL
-                        OR (priority, created_at, queue_order) > ($afterPriority, $afterCreated, $afterOrder))
-                     ORDER BY priority, created_at, queue_order LIMIT $pageSize;
+                        OR (created_at, priority, queue_order) > ($afterCreated, $afterPriority, $afterOrder))
+                     ORDER BY created_at, priority, queue_order LIMIT $pageSize;
                     """, transaction,
+                    ("$excludePostMerge", request.ExcludePostMerge ? 1 : 0),
                     ("$trusted", runnerProjects is null ? 1 : 0),
                     ("$allProjects", runnerProjects?.AllProjects == true ? 1 : 0),
                     ("$projects", JsonSerializer.Serialize(runnerProjects?.ProjectIds.ToArray() ?? [], GateJson)),
@@ -403,7 +412,10 @@ public sealed partial class TaskServerStore
                 foreach (var candidate in candidates)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (request.ExcludePostMerge && candidate.Subject.Kind == GateSubjectKinds.PostMerge) continue;
+                    // One daemon owns one ordinary flight and one post-merge flight,
+                    // including on hosts whose allocation admits several executors.
+                    if (executorKinds.Any(kind => !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(kind, candidate.Subject.Kind)))
+                    { quotaReason = "Gate host slot is occupied."; continue; }
                     if (!usesGrant)
                     {
                         if (activeKinds.Any(kind => !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayShareGateLane(kind, candidate.Subject.Kind)))
@@ -411,8 +423,9 @@ public sealed partial class TaskServerStore
                         gateAdmission = GateGrantAdmission.Slot();
                     }
                     else if (candidate.Subject.Kind == GateSubjectKinds.PostMerge
-                        && allocation is { MaxParallelism: > 1 } && occupiedGrants >= allocation.MaxParallelism - 1)
-                        continue; // A post-merge run never takes the last integration grant.
+                        && !AgentStudio.OrchestrationDecisions.PostMergeSchedulingPolicy.MayReservePostMergeGrant(
+                            allocation!.MaxParallelism, occupiedGrants, activeKinds))
+                        continue; // Protect an integration grant, including one already held by a merge.
                     var projectName = candidate.ProjectName;
                     // Verification gates belong to the operator lane of a monolith
                     // project, not a Task Server card; card quota does not apply.

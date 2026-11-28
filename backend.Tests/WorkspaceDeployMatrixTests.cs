@@ -37,6 +37,7 @@ public sealed class WorkspaceDeployMatrixTests : IDisposable
     private readonly IConfiguration _config;
     private readonly InstanceDeployService _instance;
     private readonly DeployService _deploy;
+    private readonly ProjectRegistry _registry;
 
     public WorkspaceDeployMatrixTests()
     {
@@ -69,9 +70,10 @@ public sealed class WorkspaceDeployMatrixTests : IDisposable
         _instance = new InstanceDeployService(new InstanceDeployStore(_config), git, scanner,
             new ReleaseCardAttributionSource(scanner), _config, _clock, NullLogger<InstanceDeployService>.Instance,
             settings);
+        _registry = new ProjectRegistry(_config, NullLogger<ProjectRegistry>.Instance);
         _deploy = new DeployService(new ProjectEnvironmentService(_config, scanner, git, settings, _clock),
             new DeployStore(_config), git, scanner, _clock, NullLogger<DeployService>.Instance, null,
-            instance: _instance);
+            instance: _instance, registry: _registry);
     }
 
     public void Dispose()
@@ -241,6 +243,30 @@ public sealed class WorkspaceDeployMatrixTests : IDisposable
         Assert.All(shop.Statuses, item => Assert.Null(item.Instance));
         // Listing an undeclared project must not start persisting deploy state for it.
         Assert.False(File.Exists(Path.Combine(_root, "workspace", "deployments", Plain + ".json")));
+    }
+
+    [Fact]
+    public void Declared_production_wins_over_the_source_installation_cell()
+    {
+        GoLive("run", Head(Studio), "1.0");
+        var path = Path.Combine("docs", "deployments", "environments", "production.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(Repo(Studio), path))!);
+        File.Copy(Path.Combine(Repo(Shop), path), Path.Combine(Repo(Studio), path));
+        var row = Assert.Single(_deploy.Matrix().Projects, item => item.ProjectId == Studio);
+        Assert.Null(Assert.Single(row.Statuses).Instance);
+        Assert.True(row.EnvironmentsDeclared);
+    }
+
+    [Fact]
+    public void Matrix_includes_each_registered_url_unless_its_name_is_declared()
+    {
+        var site = _registry.EnsureProjectForStorage(Watch(Shop), Shop, "WS-001");
+        _registry.AddUrl(site.Id, "PRODUCTION", "https://production.example");
+        _registry.AddUrl(site.Id, "Public site", "https://site.example");
+        _registry.AddUrl(site.Id, "Documentation", "https://docs.example");
+        var row = Assert.Single(_deploy.Matrix().Projects, item => item.ProjectId == Shop);
+        Assert.Equal(["Public site", "Documentation"], row.Urls.Select(url => url.Name));
+        Assert.All(row.Urls, url => Assert.Equal(site.Id, url.ProjectId));
     }
 
     [Fact]

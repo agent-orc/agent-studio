@@ -202,13 +202,14 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
 
     it('moves focus to the reason when a refused click asks for it', async () => {
       const { fixture, host } = await mount(CONTENT);
-      document.body.appendChild(host);
+      // A refused Accept click removes the focused button from the detail.
+      const accept = host.appendChild(document.createElement('button'));
+      accept.focus();
+      accept.remove();
       TestBed.inject(AcceptanceRefusalStore).requestFocus(JOB.taskKey);
       fixture.detectChanges();
       await fixture.whenStable();
-      await new Promise(resolve => setTimeout(resolve, 0));
-      expect(document.activeElement).toBe(host.querySelector('[data-testid="acceptance-refusal-focus"]'));
-      host.remove();
+      await expect.poll(() => host.querySelector('[data-testid="acceptance-refusal-focus"]:focus')).not.toBeNull();
     });
   });
 });

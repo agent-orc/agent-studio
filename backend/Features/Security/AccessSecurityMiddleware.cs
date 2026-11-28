@@ -868,6 +868,11 @@ public sealed class AccessSecurityMiddleware
             && operation?.Id == OperatorOperationIds.ProjectTestingSet
             && required.Permission == IamPermissions.ProjectSettingsWrite
                 ? IamPermissions.ProjectRead : required.Permission;
+        // A workspace operator API token may report observations on the two deploy-record
+        // writes. It gains no permission to change reserve settings or perform a deploy.
+        var tokenReport = required.OperatorTokenReport && account.Origin == ServiceAccountOrigins.ApiToken
+            && target.Scope == ProjectRouteScope.WorkspaceWide;
+        if (tokenReport) bindingPermission = IamPermissions.WorkspaceOperate;
         var decision = PermissionEvaluator.Evaluate(bindingPermission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(bindingPermission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -883,7 +888,7 @@ public sealed class AccessSecurityMiddleware
         }
         // The operator agent role keeps installation operation read-only: its
         // writes address projects, whatever principal holds it (OP-1).
-        if (!safeMethod && projected.Role == IamRoles.OperatorAgent && account.Origin != ServiceAccountOrigins.Persona
+        if (!safeMethod && !tokenReport && projected.Role == IamRoles.OperatorAgent && account.Origin != ServiceAccountOrigins.Persona
             && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
         {
             await Reject(context, 403, "project-scope-denied", "The operator agent role cannot make installation-wide changes.");
@@ -892,7 +897,7 @@ public sealed class AccessSecurityMiddleware
         // An API token (AGT-3186) writes only project-addressed routes, even
         // with a workspace binding; an Access-area service account may hold
         // installation-wide writes through its own bindings.
-        if (!safeMethod && account.Origin == ServiceAccountOrigins.ApiToken
+        if (!safeMethod && !tokenReport && account.Origin == ServiceAccountOrigins.ApiToken
             && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
         {
             await Reject(context, 403, "project-scope-denied", "An API token cannot mutate installation-wide settings.");
@@ -1589,6 +1594,8 @@ public sealed class AccessSecurityMiddleware
     private async ValueTask<ProjectRouteAddress> ResolveRouteAddressAsync(HttpContext context, string path, Endpoint? endpoint = null)
     {
         var request = context.Request;
+        if (context.Request.Path.StartsWithSegments(AgentStudio.Deploy.DeployRecordEndpoints.Path))
+            return ProjectRouteAddress.WorkspaceWide;
         if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)

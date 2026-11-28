@@ -553,6 +553,7 @@ public sealed partial class RemoteReviewPlanBuilder
                 cliType,
                 model,
                 PipelineStepModelDefaults.SupportThinkingLevel);
+            var dossier = isConcept ? ConceptDossierReviewMaterial.Render(task.FolderPath, conceptDossier) : null;
             var prompt = _aspects.BuildAspectPrompt(
                 definition,
                 inputs,
@@ -561,11 +562,10 @@ public sealed partial class RemoteReviewPlanBuilder
                 step.Id,
                 isConcept ? new Dictionary<string, string?>
                 {
-                    ["dossier_material"] = ConceptDossierReviewMaterial.Render(repositoryPath, task.FolderPath),
+                    ["dossier_material"] = dossier,
                 } : null);
-            if (isConcept && !prompt.Contains("## Published Dossier", StringComparison.Ordinal))
-                prompt += "\n\n## Published Dossier\n\n"
-                    + ConceptDossierReviewMaterial.Render(repositoryPath, task.FolderPath);
+            if (dossier is not null && !prompt.Contains(dossier, StringComparison.Ordinal))
+                prompt += "\n\n## Dossier files\n\n" + dossier;
             // Frozen prompt bytes version the stock layout. Explicit overrides
             // and specialised aspects retain their authored evidence and scope.
             if (!isConcept)

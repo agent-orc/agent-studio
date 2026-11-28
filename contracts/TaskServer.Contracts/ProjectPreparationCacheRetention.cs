@@ -164,7 +164,8 @@ public static class ProjectPreparationCacheSweep
         DateTime utcNow,
         IReadOnlyCollection<string>? retained = null,
         Action<string>? log = null,
-        TimeSpan? runRootRetention = null)
+        TimeSpan? runRootRetention = null,
+        bool pruneRunRoots = true)
     {
         RemoveEvictionLeftovers(productCacheRoot);
         RemoveQuarantine(productCacheRoot);
@@ -172,7 +173,9 @@ public static class ProjectPreparationCacheSweep
         // every block this repository uses, and a killed gate or coding run never
         // gets to release its own. On this repository's runner cache 1.3 GB of
         // published entries sat under 16 GB of them (AGT-2858).
-        var runRoots = PruneRunRoots(productCacheRoot, runRootRetention ?? DefaultRunRootRetention, utcNow, log);
+        var runRoots = pruneRunRoots
+            ? PruneRunRoots(productCacheRoot, runRootRetention ?? DefaultRunRootRetention, utcNow, log)
+            : PreparationCacheSweepResult.Empty;
         var entries = Inventory(productCacheRoot);
         if (entries.Count == 0)
             return runRoots == PreparationCacheSweepResult.Empty

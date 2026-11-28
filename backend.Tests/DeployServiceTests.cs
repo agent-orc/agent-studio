@@ -2656,6 +2656,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
@@ -2682,6 +2683,11 @@ public sealed class DeployServiceTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.RemoveAll<AgentStudio.Pipeline.PostMergeRunStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.PostMergeRunStore(Path.Combine(_root, "post-merge")));
+                services.RemoveAll<AgentStudio.Pipeline.TestQuarantineStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.TestQuarantineStore(Path.Combine(_root, "test-quarantines")));
             });
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
@@ -2933,6 +2939,7 @@ public sealed class DeployServiceTests : IDisposable
     [Theory]
     [InlineData("networked")]
     [InlineData("local")]
+    [Trait("Category", "MachineBound")]
     public async Task ArtifactRoute_RequiresDeployCredentialAndReturnsDigest(string profile)
     {
         Build();
@@ -2952,6 +2959,11 @@ public sealed class DeployServiceTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.RemoveAll<AgentStudio.Pipeline.PostMergeRunStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.PostMergeRunStore(Path.Combine(_root, "post-merge")));
+                services.RemoveAll<AgentStudio.Pipeline.TestQuarantineStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.TestQuarantineStore(Path.Combine(_root, "test-quarantines")));
             });
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -2999,6 +3011,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task NetworkedArtifactRoute_RequiresDeployCredentialAndReturnsDigest()
     {
         Build();
@@ -3018,6 +3031,11 @@ public sealed class DeployServiceTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.RemoveAll<AgentStudio.Pipeline.PostMergeRunStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.PostMergeRunStore(Path.Combine(_root, "post-merge")));
+                services.RemoveAll<AgentStudio.Pipeline.TestQuarantineStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.TestQuarantineStore(Path.Combine(_root, "test-quarantines")));
             });
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -3037,7 +3055,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), commit));
         var created = factory.Services.GetRequiredService<DeployService>()
             .CreateRelease("demo", Artifact('a'), commit, "release-gate");
-        Assert.Equal(DeployOutcomeKind.Ok, created.Kind);
+        Assert.True(created.Kind == DeployOutcomeKind.Ok, created.Error);
         var job = environments.Claim(deployCredential.Runner.Id, requireVerifiedRelease: true)!;
         var url = $"/api/deploy/jobs/demo/{job.Id}/artifact";
 
@@ -3066,6 +3084,7 @@ public sealed class DeployServiceTests : IDisposable
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
+    [Trait("Category", "MachineBound")]
     public async Task PromotionRoute_DecidesOnlyThePendingRegistryDigest(string action)
     {
         Build();
@@ -3087,6 +3106,11 @@ public sealed class DeployServiceTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.RemoveAll<AgentStudio.Pipeline.PostMergeRunStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.PostMergeRunStore(Path.Combine(_root, "post-merge")));
+                services.RemoveAll<AgentStudio.Pipeline.TestQuarantineStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.TestQuarantineStore(Path.Combine(_root, "test-quarantines")));
             });
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });

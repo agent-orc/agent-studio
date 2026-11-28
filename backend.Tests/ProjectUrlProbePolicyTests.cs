@@ -109,6 +109,16 @@ public sealed class ProjectUrlProbePolicyTests
     }
 
     [Fact]
+    public async Task Dashboard_probe_reads_the_build_stamp_from_the_registered_page()
+    {
+        var service = new ProjectUrlReadinessService(new CountingClientFactory(),
+            NullLogger<ProjectUrlReadinessService>.Instance, Profile("networked"));
+        var result = await service.ProbeAsync(Project(), Url("https://site.example"), null, CancellationToken.None, true);
+        Assert.Equal("abcdef123", result.Commit);
+        Assert.Equal(200, result.StatusCode);
+    }
+
+    [Fact]
     public async Task Diagnostic_Networked_LoopbackUrl_IsLocalOnlyWithoutARequest()
     {
         var clients = new CountingClientFactory();
@@ -145,7 +155,7 @@ public sealed class ProjectUrlProbePolicyTests
                 Interlocked.Increment(ref owner._requests);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent("<main>ready</main>", System.Text.Encoding.UTF8, "text/html"),
+                    Content = new StringContent("<meta name=build-commit content=abcdef123><main>ready</main>", System.Text.Encoding.UTF8, "text/html"),
                 });
             }
         }

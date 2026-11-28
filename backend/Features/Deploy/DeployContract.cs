@@ -192,8 +192,13 @@ public sealed record DeployPage<T>(IReadOnlyList<T> Items, int Offset, int Limit
 public sealed record DeployAuditEntry(DateTime AtUtc, string Actor, string Action, string? ReleaseId,
     string? DeploymentId, string? EnvironmentId, string Detail);
 
+public sealed record DeploymentUrl(string ProjectId, string Id, string Name, string Url);
+
 public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<EnvironmentStatus> Statuses, string? Error)
 {
+    public string? RegistryId { get; init; }
+    public InstallationOverview? Installation { get; init; }
+    public IReadOnlyList<DeploymentUrl> Urls { get; init; } = [];
     public IReadOnlyList<EnvironmentStatus> TenantStatuses { get; init; } = [];
 
     /// <summary>
@@ -209,7 +214,10 @@ public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<Environment
 /// kinds as columns. A project the workspace registers but this instance does
 /// not watch has no row.
 /// </summary>
-public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects);
+public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects)
+{
+    public bool HasDeployRecords { get; init; }
+}
 
 public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)
 {

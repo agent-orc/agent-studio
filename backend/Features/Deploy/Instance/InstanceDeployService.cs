@@ -250,7 +250,7 @@ public sealed partial class InstanceDeployService
     {
         lock (_refreshGate)
         {
-            if (SourceProject is null && _identity is { Legacy: false } identity
+            if (SourceProject is null && _identity is { } identity
                 && ShortCommitPattern().IsMatch(identity.Commit ?? ""))
                 EnsureSourceProject(identity.Commit.ToLowerInvariant());
             var project = SourceProject;

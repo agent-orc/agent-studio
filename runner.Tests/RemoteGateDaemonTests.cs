@@ -583,11 +583,13 @@ public sealed class RemoteGateDaemonTests
 public sealed class RemoteGateDaemonFlightTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Failed_flight_is_observed_once_then_claim_recovery_resumes_polling(bool unauthorized)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Failed_flight_is_observed_once_then_claim_recovery_resumes_polling(bool unauthorized, bool ordinary)
     {
-        using var scenario = new FlightScenario();
+        using var scenario = new FlightScenario(ordinary);
         var failures = new List<string>();
         var executions = 0;
         var daemon = scenario.Daemon(message =>
@@ -600,37 +602,47 @@ public sealed class RemoteGateDaemonFlightTests
             executions++;
             Assert.True(File.Exists(scenario.ClaimPath));
             return Task.FromException<bool>(unauthorized
-                ? new UnauthorizedAccessException("one-time post-merge fault")
-                : new IOException("one-time post-merge fault"));
+                ? new UnauthorizedAccessException("one-time gate fault")
+                : new IOException("one-time gate fault"));
         });
 
         var failure = await Record.ExceptionAsync(() => daemon.RunAsync(scenario.Shutdown.Token));
 
         Assert.Null(failure);
         Assert.Equal(1, executions);
-        Assert.Equal(1, failures.Count(message => message.Contains("one-time post-merge fault", StringComparison.Ordinal)));
+        Assert.Equal(1, failures.Count(message => message.Contains("one-time gate fault", StringComparison.Ordinal)));
         Assert.Equal(2, scenario.Server.ContainmentRequests);
         Assert.Equal(2, scenario.Server.ClaimRequests);
         Assert.False(File.Exists(scenario.ClaimPath));
     }
 
-    [Fact]
-    public async Task Shutdown_observes_a_pending_flight_fault_and_retains_its_claim()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Shutdown_observes_a_pending_flight_fault_and_retains_its_claim(bool ordinary)
     {
-        using var scenario = new FlightScenario();
+        using var scenario = new FlightScenario(ordinary);
         var flight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var messages = new List<string>();
         scenario.Server.OnOrdinaryPoll = () =>
         {
             scenario.Shutdown.Cancel();
-            flight.SetException(new IOException("shutdown post-merge fault"));
+            flight.SetException(new IOException("shutdown gate fault"));
         };
         var daemon = scenario.Daemon(messages.Add, (_, _) => flight.Task);
 
-        var failure = await Record.ExceptionAsync(() => daemon.RunAsync(scenario.Shutdown.Token));
+        var run = daemon.RunAsync(scenario.Shutdown.Token);
+        Exception? failure;
+        try { failure = await Record.ExceptionAsync(() => run.WaitAsync(TimeSpan.FromSeconds(10))); }
+        finally
+        {
+            scenario.Shutdown.Cancel();
+            flight.TrySetCanceled();
+            await run;
+        }
 
         Assert.Null(failure);
-        Assert.Single(messages, message => message.Contains("shutdown post-merge fault", StringComparison.Ordinal));
+        Assert.Single(messages, message => message.Contains("shutdown gate fault", StringComparison.Ordinal));
         Assert.True(File.Exists(scenario.ClaimPath));
         Assert.Equal(0, scenario.Server.ContainmentRequests);
     }
@@ -641,7 +653,8 @@ public sealed class RemoteGateDaemonFlightTests
         private readonly TaskServerClient _client;
         public CancellationTokenSource Shutdown { get; } = new();
         public FlightServer Server { get; }
-        public string ClaimPath => Path.Combine(_root, "state", "gate-post-merge-claim.json");
+        private readonly bool _ordinary;
+        public string ClaimPath => Path.Combine(_root, "state", _ordinary ? "gate-claim.json" : "gate-post-merge-claim.json");
         private RunnerOptions Options => new()
         {
             ServerUrl = "http://task-server", RunnerId = "gate-a", RunnerName = "gate-a",
@@ -650,9 +663,10 @@ public sealed class RemoteGateDaemonFlightTests
             ReviewWorkDir = Path.Combine(_root, "review"), StateDir = Path.Combine(_root, "state"),
         };
 
-        public FlightScenario()
+        public FlightScenario(bool ordinary = false)
         {
-            Server = new FlightServer(ClaimPath, Shutdown);
+            _ordinary = ordinary;
+            Server = new FlightServer(ClaimPath, Shutdown, ordinary);
             _client = new TaskServerClient(new HttpClient(Server) { BaseAddress = new Uri("http://task-server") },
                 "gate-a", options: Options, runnerInstanceId: "instance-1");
         }
@@ -660,6 +674,7 @@ public sealed class RemoteGateDaemonFlightTests
         public RemoteGateDaemon Daemon(Action<string> log,
             Func<GateClaimResponse, CancellationToken, Task<bool>> execute) => new(Options, _client, log)
         {
+            OrdinaryExecutor = execute,
             PostMergeExecutor = execute,
             PollDelay = _ => Task.CompletedTask,
         };
@@ -672,14 +687,15 @@ public sealed class RemoteGateDaemonFlightTests
         }
     }
 
-    private sealed class FlightServer(string claimPath, CancellationTokenSource shutdown) : HttpMessageHandler
+    private sealed class FlightServer(string claimPath, CancellationTokenSource shutdown, bool ordinary) : HttpMessageHandler
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
         private static readonly DateTime Now = new(2026, 11, 27, 0, 0, 0, DateTimeKind.Utc);
         private static readonly GatePlan Plan = new("post-build-test-gate", 1, [], "", 30, [], 1024, "remove");
-        private static readonly GateSubject Subject = new("subject-1", "AGT-test", "run-1", "repository",
+        private static readonly GateSubject PostMergeSubject = new("subject-1", "AGT-test", "run-1", "repository",
             null, new string('a', 40), null, null, null, GateRules.PlanHash(Plan), "policy", "version", "selection",
             Plan, Now, Now.AddMinutes(5), 2, Kind: GateSubjectKinds.PostMerge);
+        private GateSubject Subject => ordinary ? PostMergeSubject with { Kind = GateSubjectKinds.Merge } : PostMergeSubject;
         private static readonly GateAttempt Attempt = new("attempt-1", "subject-1", 1, GateStates.Claimed,
             "gate-a", "host-a", null, null, Now, Now, null, null, 7, Now.AddMinutes(3));
         private static readonly GateLease Lease = new("lease-1", "attempt-1", "gate-a", "instance-1",
@@ -700,7 +716,7 @@ public sealed class RemoteGateDaemonFlightTests
                 if (ClaimRequests == 1) return Ok(new GateClaimResponse("claimed", Subject, Attempt, Lease));
                 if (OnOrdinaryPoll is not null)
                 {
-                    Assert.True(claim.ExcludePostMerge);
+                    Assert.Equal(!ordinary, claim.ExcludePostMerge);
                     OnOrdinaryPoll();
                 }
                 else

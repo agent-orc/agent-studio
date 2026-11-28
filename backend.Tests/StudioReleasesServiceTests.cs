@@ -33,6 +33,9 @@ public sealed class StudioReleasesServiceTests : IDisposable
         Git("config", "user.email", "fixture@example.invalid");
         Git("config", "commit.gpgsign", "false");
         var baseline = Commit("baseline");
+        Directory.CreateDirectory(Path.Combine(Repo, "frontend"));
+        File.WriteAllText(Path.Combine(Repo, "frontend", "view.html"), "<main></main>");
+        Git("add", "frontend");
         var delivery = Commit("fix");
         var folder = Path.Combine(Watch, "6-completed", "fix");
         Directory.CreateDirectory(folder);
@@ -78,6 +81,9 @@ public sealed class StudioReleasesServiceTests : IDisposable
         var first = Service(baseline);
         first.Refresh();
         var waiting = Assert.Single(first.View!.Pending);
+        Assert.Equal(delivery, first.View.Tip);
+        var dashboardCard = Assert.Single(first.View.Waiting);
+        Assert.Equal(["Interface only"], dashboardCard.Flags);
         Assert.Equal("Original card title", waiting.Title);
         Assert.Equal("bug", waiting.Type);
         Assert.Equal(_clock.GetUtcNow().AddHours(-9).UtcDateTime, waiting.IntegratedAtUtc);

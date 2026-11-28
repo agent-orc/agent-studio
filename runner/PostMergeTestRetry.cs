@@ -10,16 +10,19 @@ namespace AgentRunner;
 internal sealed record PostMergeTestRun(string Phase, string Sha, IReadOnlyList<string> Tests,
     int ExitCode, bool TimedOut, string Output, long DurationMs)
 {
+    public IReadOnlyDictionary<string, string>? ReportedResults { get; init; }
+
     public bool Passed => ExitCode == 0 && !TimedOut;
 
     /// <summary>
-    /// The result of one test in this run. A passing run passes every test. A
+    /// Explicit per-test evidence takes precedence. Otherwise a passing run passes every test. A
     /// failing run fails the tests its output names, and passes the others when
     /// it names at least one; a failing run of one test fails it; otherwise the
     /// result is unknown.
     /// </summary>
     public string ResultOf(string test)
     {
+        if (ReportedResults is not null) return ReportedResults.GetValueOrDefault(test, PostMergeTestResults.Unknown);
         if (Passed) return PostMergeTestResults.Pass;
         var failed = PostMergeAttributor.FailedTests(Output);
         if (failed.Count > 0)

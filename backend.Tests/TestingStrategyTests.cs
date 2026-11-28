@@ -147,10 +147,12 @@ public sealed class TestingStrategyTests : IDisposable
 
         // A window run on the current tip covers develop and clears both.
         var now = _clock.GetUtcNow();
-        Assert.NotNull(runs.Record(record.Id, Run("w1", Tip, "running", now, null)));
-        Assert.NotNull(runs.Record(record.Id, Run("w1", Tip, "green", now, now.AddMinutes(9)) with
+        var running = Run("w1", Tip, "running", now, null) with { Commands = ["dotnet test"] };
+        Assert.NotNull(runs.Record(record.Id, running));
+        Assert.NotNull(runs.Record(record.Id, running with
         {
-            Commands = ["dotnet test"], Verdicts = [new PostMergeCommandVerdict("dotnet test", 0, false)],
+            Status = "green", FinishedAtUtc = now.AddMinutes(9),
+            Verdicts = [new PostMergeCommandVerdict("dotnet test", 0, false)],
         }));
         Assert.Equal(PostMergeCoverageStates.Current, service.Evaluate(ProjectName)!.State);
         Assert.Empty(facts.Collect(now.UtcDateTime));

@@ -44,6 +44,10 @@ class Failure(Exception):
         self.code = code
 
 
+class CommandFailure(Failure):
+    pass
+
+
 def command(*args, cwd=None):
     # Compose output contains credentials. Never include stdout, stderr or
     # command arguments in a failure reported to the terminal or the journal.
@@ -51,7 +55,7 @@ def command(*args, cwd=None):
         result = subprocess.run(args, cwd=cwd, capture_output=True, check=True,
                                 timeout=90, text=True, errors="replace")
     except (OSError, subprocess.SubprocessError):
-        raise Failure(f"{args[0]} {args[1]} failed") from None
+        raise CommandFailure(f"{args[0]} {args[1]} failed") from None
     return result.stdout.strip()
 
 
@@ -260,11 +264,13 @@ def health(container):
     try:
         state = command("docker", "inspect", "-f",
                         "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", container)
-    except Failure:
-        return "exited"
+    except CommandFailure:
+        return "unknown"
     running, _, status = state.partition(" ")
-    if running != "true":
+    if running == "false":
         return "exited"
+    if running != "true":
+        return "unknown"
     return status or "running"
 
 
@@ -337,11 +343,19 @@ def disk_admission(path):
         raise Failure("Shadow requires at least 15 percent free on the scratch filesystem", 2)
 
 
+def inspect_shadow(*args):
+    try:
+        return command("docker", "inspect", *args)
+    except CommandFailure:
+        time.sleep(1)
+        return command("docker", "inspect", *args)
+
+
 def shadow_usage(run, session):
     # Allocated blocks in the three upperdirs plus Docker's writable rootfs bytes.
     dirs = [run / f"upper-{role}" for role in DATA]
     kib = command("du", "-skx", *dirs)
-    layers = command("docker", "inspect", "--size", "-f", "{{.SizeRw}}", session["api"], session["web"])
+    layers = inspect_shadow("--size", "-f", "{{.SizeRw}}", session["api"], session["web"])
     size = sum(int(line.split()[0]) * 1024 for line in kib.splitlines())
     size += sum(int(line) for line in layers.splitlines())
     return size, int(time.monotonic() - session["start"])
@@ -360,7 +374,7 @@ def shadow_limit(run, session, report=False):
 
 
 def shadow_address(api):
-    ip = command("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", api)
+    ip = inspect_shadow("-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", api)
     if not ip:
         raise Failure("Shadow API has no internal address")
     print(f"address {ip}:8080")

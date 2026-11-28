@@ -103,6 +103,72 @@ public sealed class TelemetryIngestTokenTests : IDisposable
         Assert.Equal("token [REDACTED_CREDENTIAL] used", CredentialRedactor.Redact($"token {secret} used"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Rename_preserves_new_and_unread_legacy_tokens_without_changing_their_hash(bool legacy)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root }).Build();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var project = registry.EnsureProjectForStorage(Path.Combine(_root, "projects", "shop"), "Shop", "ws-default", _clock);
+        var keys = new AgentStudio.Secrets.SecretProjectKeys(registry);
+        var writer = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock,
+            projectKeys: legacy ? null : keys);
+        var (token, secret) = writer.CreateTelemetryIngestToken("Shop", "stage", null, ["logs"], null, null);
+        Assert.Equal(legacy ? "Shop" : project.Id, token.Project);
+        registry.Rename(project.Id, "Renamed");
+        var path = Path.Combine(writer.SecurityFolder, "access-state.json");
+        var before = File.ReadAllText(path);
+        var reader = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock, projectKeys: keys);
+        Assert.Equal(before, File.ReadAllText(path));
+        var principal = reader.AuthenticateTelemetryIngest(secret)!;
+        Assert.Equal("Renamed", principal.Project);
+        Assert.Equal(["logs"], principal.Signals);
+        var migrated = Assert.Single(reader.ListTelemetryIngestTokens("Renamed", "stage"));
+        Assert.Equal(project.Id, migrated.Project);
+        Assert.Equal(token.SecretHash, migrated.SecretHash);
+        Assert.Equal(token.Id, migrated.Id);
+        Assert.True(reader.RevokeTelemetryIngestToken("Renamed", "stage", token.Id));
+        Assert.Null(reader.AuthenticateTelemetryIngest(secret));
+    }
+
+    [Fact]
+    public void Explicit_token_migration_is_idempotent_and_does_not_rotate_values()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root }).Build();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        registry.EnsureProjectForStorage(Path.Combine(_root, "projects", "shop"), "Shop", "ws-default", _clock);
+        var (_, secret) = Store().CreateTelemetryIngestToken("Shop", "stage", null, null, null, null);
+        var reader = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock,
+            projectKeys: new AgentStudio.Secrets.SecretProjectKeys(registry));
+        Assert.Equal(1, reader.MigrateTelemetryProjectKeys());
+        Assert.Equal(0, reader.MigrateTelemetryProjectKeys());
+        Assert.NotNull(reader.AuthenticateTelemetryIngest(secret));
+    }
+
+    [Fact]
+    public void Reusing_a_prior_name_does_not_assign_its_legacy_token_to_another_project()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root }).Build();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var first = registry.EnsureProjectForStorage(Path.Combine(_root, "first"), "Shop", "ws-default", _clock);
+        var (_, secret) = Store().CreateTelemetryIngestToken("Shop", "stage", null, null, null, null);
+        registry.Rename(first.Id, "Renamed");
+        var second = registry.EnsureProjectForStorage(Path.Combine(_root, "second"), "Shop", "ws-default", _clock);
+        var reader = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock,
+            projectKeys: new AgentStudio.Secrets.SecretProjectKeys(registry));
+        Assert.Null(reader.AuthenticateTelemetryIngest(secret));
+        Assert.Empty(reader.ListTelemetryIngestTokens(first.Id, "stage"));
+        Assert.Empty(reader.ListTelemetryIngestTokens(second.Id, "stage"));
+        Assert.Equal(0, reader.MigrateTelemetryProjectKeys());
+    }
+
     private AccessSecurityStore Store()
     {
         var configuration = new ConfigurationBuilder()

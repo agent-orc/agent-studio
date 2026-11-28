@@ -3079,6 +3079,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (report.HasQuotaDeferred) return;
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
+        var localReviewEvidence = CompletionContentEvidence.CaptureLocalReviewEvidence(
+            current.FolderPath, report.Verdicts, scopedReview.CarriedVerdicts);
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
             var merged = report.Verdicts.Concat(scopedReview.CarriedVerdicts).ToArray();
@@ -3385,6 +3387,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // earlier pass left behind, not leave them stuck. Runs even when the
         // current set is empty. See the "concern tags bleiben kleben" bug.
         ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
+
+        if (!CompletionContentEvidence.TryWriteLocalAdmission(current.FolderPath, localAttemptId,
+                aspectSubject.Sha, roundBudget.ContentAdmissions, localReviewEvidence, _logger)) return;
 
         // Promote to 5-human-review with or without concern tags. ADR-0025:
         // accept-as-done routes to human-review, never directly to completed.
@@ -3991,7 +3996,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         try
         {
             foreach (var verdict in report.Verdicts.Where(verdict =>
-                         budget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)))
+                         budget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+                         // Content dispositions are recorded separately; preserve their original evidence.
+                         && verdict.Aspect is not ("requirement-fit" or "concept-fit")))
             {
                 var jsonPath = Path.Combine(folderPath, $"aspect-{verdict.Aspect}.json");
                 var previous = File.Exists(jsonPath)

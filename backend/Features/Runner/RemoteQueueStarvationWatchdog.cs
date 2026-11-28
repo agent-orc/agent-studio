@@ -121,10 +121,12 @@ public static class RemoteQueueStarvationPolicy
                 EnteredLaneAt = candidate.Task.EnteredLaneAt,
                 LastRejection = candidate.Task.RemoteDispatchRejection,
                 BlockReasonCode = candidate.LocalPlacementBlocked ? RemoteExecutionRequirement.Code
-                    : candidate.Gate.AllowsPickup ? null : "build-profile-gate",
+                    : !candidate.Gate.AllowsPickup ? "build-profile-gate"
+                    : candidate.Task.RemoteDispatchRejection is { Code: "host-disk-pressure" } disk ? disk.Code : null,
                 BlockReason = candidate.LocalPlacementBlocked
                     ? $"Project {candidate.Task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator."
-                    : candidate.Gate.AllowsPickup ? null : candidate.Gate.Reason,
+                    : !candidate.Gate.AllowsPickup ? candidate.Gate.Reason
+                    : candidate.Task.RemoteDispatchRejection is { Code: "host-disk-pressure" } pressure ? pressure.Reason : null,
             })
             .ToList();
         var hasRejections = items.Any(item => item.LastRejection is not null);

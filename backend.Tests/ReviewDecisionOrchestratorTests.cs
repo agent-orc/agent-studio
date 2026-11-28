@@ -1934,6 +1934,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
         File.WriteAllText(Path.Combine(folder, "logs", "cli-output.log"),
             $"[12:00:00.000] [stdout] starting{Environment.NewLine}[12:00:01.000] [stdout] [[TASK_DONE]]{Environment.NewLine}");
+        SeedLocalReviewDelivery(folder);
         File.WriteAllText(Path.Combine(folder, ReviewRoundBudgetStore.FileName),
             System.Text.Json.JsonSerializer.Serialize(new ReviewRoundBudgetLedger(
                     Enumerable.Range(1, 3).Select(round =>
@@ -2064,6 +2065,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
         File.WriteAllText(Path.Combine(folder, "logs", "cli-output.log"),
             $"[12:00:00.000] [stdout] starting{Environment.NewLine}[12:00:01.000] [stdout] [[TASK_DONE]]{Environment.NewLine}");
+        SeedLocalReviewDelivery(folder);
         for (var round = 1; round <= CardRoundBudget.DefaultRoundsPerCard; round++)
             _timeline.Append(folder, TimelineEventKinds.QualityLoopReopened, TimelineActors.QualityLoop,
                 $"Seeded review finding round {round}.",
@@ -2602,6 +2604,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
                 "Host recovered; run the complete assessment again.",
                 TimelineActors.Human("operator@example.com"));
 
+        SeedLocalReviewDelivery(folder);
         var calls = 0;
         var orchestrator = BuildOrchestratorWithAspects(aspectStub: _ =>
         {
@@ -2676,6 +2679,18 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             FollowUp: string.Empty));
     }
 
+    private static void SeedLocalReviewDelivery(string folder)
+    {
+        var startedAt = new DateTime(2026, 11, 26, 10, 0, 0, DateTimeKind.Utc);
+        File.WriteAllText(TaskPaths.SessionEventsLog(folder), System.Text.Json.JsonSerializer.Serialize(new SessionEvent
+        {
+            Ts = startedAt, Kind = "start", Status = "completed", Result = "done",
+            FinishedAt = startedAt.AddMinutes(1), ExitCode = 0, CapturedSessionId = "local-session",
+            HeadShaBefore = new string('0', 40), HeadShaAfter = new string('a', 40),
+        }) + "\n");
+        CompletionContentEvidence.StampLocalRun(folder);
+    }
+
     private void SeedReviewJobWithDone(
         string slug,
         bool includeRunnerActiveClearedMarker = false,
@@ -2694,6 +2709,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{TaskStates.AutoReview}\",\"order\":1,\"agent\":\"{agent}\",\"cliType\":\"{agent}\"{modeJson}{tagsJson}}}");
         File.WriteAllText(Path.Combine(dir, "prompt.md"), $"# {slug}\n\nDo the thing.\n");
+        SeedLocalReviewDelivery(dir);
         var suffix = includeRunnerActiveClearedMarker
             ? $"[12:00:02.000] [orchestrator] [decision] Runner active state cleared: job moved out of 3-progress externally (3-progress -> 4-auto-review){Environment.NewLine}"
             : string.Empty;
@@ -2820,6 +2836,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot ?? new AutoReviewStatusSnapshot(), config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
             timeline: _timeline,
+            sessions: new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance),
             pipelineLog: pipelineLog,
             taskMutations: withTaskMutations ? BuildTaskMutations(scanner, config) : null);
         return orchestrator;
