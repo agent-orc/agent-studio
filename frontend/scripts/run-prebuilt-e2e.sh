@@ -22,7 +22,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *reviewer-role.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
-      *terminal-sign-in.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
+      *terminal-sign-in.networked-https.spec.ts*|*operator-batch.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *owner-second-factor-human-pace.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *owner-bootstrap-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *networked-project-checkout.spec.ts*) PW_E2E_PROFILE=networked-checkout ;;

@@ -700,3 +700,51 @@ production deployment and approval, access and session management, grants,
 break-glass management, catalogue, audit and installation administration
 remain hard refusals for the agent regardless of class or approval.
 <!-- append-only:operator-agent:end -->
+
+## Confirm a batch in Needs you (ES-8)
+
+Request `cards.accept-override` or `cards.archive-override` at terminal sign-in.
+Prepare a JSON array with up to 25 items. Each item has `card`, `project` and
+`reason`; acceptances also have `reservation`, the review's concern in one line.
+For example:
+
+```json
+[
+  { "card": "DEMO-12", "project": "Demo", "reason": "Accept the reviewed naming tradeoff", "reservation": "One helper name remains broad" }
+]
+```
+
+Run `studio-op accept --batch items.json --source owner-chat` or
+`studio-op archive --batch items.json --source owner-chat`. The CLI prints the
+confirmation link and waits for Studio's per-item results. It never replays
+moves. The low-level routes are `POST /api/auth/operator-session/batches` and
+`GET /api/auth/operator-session/batches/{id}`; both require a live operator
+session and, for a bound session, its device proof.
+
+Open Needs you, then the operator approval row. The phone-sized sheet shows the
+card key and title, recorded reservation, agent's reason and card link. Card links open in another tab and preserve the selected set. Items
+that fail qualification are disabled with their reason. Qualifying items start selected. Deselect any others,
+then confirm once with a passkey or authenticator code. Acceptances must still
+be in Human review with an integrated delivery and a review that ran; an archive
+override requires a completed card with no delivery on a protected integration or release branch. Existing
+completion and archive guards also apply. Studio runs selected items in order
+as the operator session, recording the Owner approver and batch id on each
+card's timeline. Operator activity also lists each item under elevated actions
+with its class, batch id, device, reason and result. Changed cards and refused
+items are skipped with a result.
+
+A batch lapses 30 minutes after submission and can be decided only once.
+Rejection and lapse execute nothing. The Needs you approval count includes
+single SM-5 approvals as well as batches, and clears when they stop waiting.
+Feed and optional push notifications link to the same sheet and grant no
+authority. Hourly limits count individual items: 30 acceptances or 10 archives.
+If execution is interrupted, inspect the batch result and card timelines before
+submitting another batch; Studio will not replay the original confirmation.
+A failed batch-item audit append leaves the saved move result intact and
+Studio continues with the remaining items. Do not resubmit an executed item
+because its audit entry is missing; reconcile its timeline with the server
+error log, which records the batch id and item index.
+
+Batch submission accepts at most 64 KiB and 20 pending batches per session.
+Stored batches older than 30 days are pruned when another batch is submitted;
+card timelines and security audit records retain their existing retention policy.
