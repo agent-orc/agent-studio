@@ -209,6 +209,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes", IamPermissions.ProjectRunsOperate)]
     [InlineData("GET", "/api/v1/management/status", IamPermissions.WorkspaceOperate)]
     [InlineData("PUT", "/api/workspaces/{id}/usage-calendar", IamPermissions.WorkspaceAdminister)]
+    [InlineData("GET", "/api/model-selection/policy/pace", IamPermissions.WorkspaceSettingsWrite)]
+    [InlineData("PUT", "/api/model-selection/policy/pace/{cliType}/{windowLabel}", IamPermissions.WorkspaceSettingsWrite)]
     [InlineData("PUT", "/api/workspaces/{id}/autonomy", IamPermissions.WorkspaceSettingsWrite)]
     [InlineData("POST", "/api/auth/invitations", IamPermissions.AccessManage)]
     [InlineData("GET", "/api/auth/users", IamPermissions.AccessRead)]

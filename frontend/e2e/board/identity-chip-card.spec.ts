@@ -81,7 +81,7 @@ function runningCard(id: string, owner: string, key: string) {
 
 function grouped() {
   return {
-    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [runningCard('sa', SA_ID, 'AGT-4034'), runningCard('human', HUMAN_ID, 'AGT-4035')],
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [runningCard('sa', SA_ID, 'AGT-4034'), { ...runningCard('human', HUMAN_ID, 'AGT-4035'), liveStatus: null }],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [], escalated: [],
     completed: [], archive: [],
   };
@@ -206,6 +206,10 @@ test.describe('Identity chip and host alias on the board card (AGT-4034)', () =>
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await page.mouse.move(DESKTOP.width - 10, DESKTOP.height / 2);
+        expect((await card.innerText()).match(/agent-runner-01/g)).toHaveLength(1);
+        const badge = card.getByTestId('execution-location-badge');
+        await expect(badge).toContainText(kind === 'sa' ? 'Host' : 'Host · agent-runner-01');
+        if (kind === 'sa') await expect(badge).not.toContainText('agent-runner-01');
         await shot(page, `${label}-${kind}-normal-${theme}`, card);
       }
       await toPhone(page);
@@ -219,6 +223,7 @@ test.describe('Identity chip and host alias on the board card (AGT-4034)', () =>
       }
       const text = await page.getByTestId('lane-3-progress').innerText();
       if (label === 'after') {
+        expect((await card.innerText()).match(/agent-runner-01/g)).toHaveLength(1);
         expect(text).not.toMatch(/runner_[0-9a-f]{8,}/);
         expect(text).not.toMatch(/sa_[0-9a-f]{8,}/);
         const keyBox = await card.getByTestId('task-card-key').boundingBox();

@@ -2673,7 +2673,7 @@ public static class V1ReviewPlaneEndpoints
                 {
                     RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,
                     RemoteBuildTestGateClass.NotApplicable => ReviewBuildTestGateClasses.NotApplicable,
-                    RemoteBuildTestGateClass.NonBlocking => "non-blocking",
+                    RemoteBuildTestGateClass.NonBlocking => ReviewBuildTestGateClasses.NonBlocking,
                     _ => ReviewBuildTestGateClasses.Failed,
                 },
                 VerifiedAtUtc = new DateTimeOffset(

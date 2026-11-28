@@ -864,12 +864,10 @@ public static class TaskServerEndpoints
         gates.MapPost("/claims", async (
             HttpContext context, GateClaimRequest request, TaskServerStore store, CancellationToken ct) =>
         {
-            var principal = context.TaskServerPrincipal();
-            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
-                && runnerId != request.ExecutorId)
-                return Results.Json(new ApiError("runner-identity-mismatch", "Gate executor identity differs from its principal."),
-                    statusCode: StatusCodes.Status403Forbidden);
-            return await InvokeAsync(() => store.ClaimGateAsync(request, Actor(context), ct));
+            if (!GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.ExecutorId))
+                return GateRunnerPrincipalPolicy.Denied();
+            var binding = await RunnerRouteAuthorization.RunnerBindingAsync(context, store);
+            return await InvokeAsync(() => store.ClaimGateAsync(request, Actor(context), ct, binding?.Projects));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         gates.MapPost("/attempts/{attemptId}/renew", async (

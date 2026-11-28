@@ -16,7 +16,7 @@ import {
 import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { ModalStackService } from '@studio/ui/services/modal-stack.service';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
-import type { UsageDetailFocus } from '../../usage-detail.util';
+import { usageCliKey, type UsageDetailFocus } from '../../usage-detail.util';
 import { UsageDetailPanelComponent } from '../usage-detail-panel/usage-detail-panel';
 
 /** Phone layout of the Dossier responsive table: 320 to 767 CSS px. */
@@ -26,7 +26,7 @@ export const USAGE_PHONE_QUERY = '(max-width: 767px)';
 export const USAGE_TRIGGER_ATTR = 'data-usage-trigger';
 
 export function usageTriggerKey(focus: UsageDetailFocus): string {
-  return focus.kind === 'cli' ? `cli:${focus.cliId.toLowerCase()}` : focus.kind;
+  return focus.kind === 'cli' ? `cli:${usageCliKey(focus)}` : focus.kind;
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -157,6 +157,11 @@ export class UsageDetailSurfaceComponent {
       const key = usageTriggerKey(focus);
       const match = all.find(el => el.getAttribute(USAGE_TRIGGER_ATTR) === key);
       if (match) return match;
+      // Older provider-only callers open the first visible account for that provider.
+      if (focus.kind === 'cli' && focus.subscriptionKey === undefined) {
+        const account = all.find(el => el.getAttribute(USAGE_TRIGGER_ATTR)?.startsWith(`${key}:`));
+        if (account) return account;
+      }
     }
     return all[0] ?? null;
   }

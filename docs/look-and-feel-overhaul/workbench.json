@@ -4,10 +4,10 @@
   "title": "Studio look and feel: one component library, one standard, page by page",
   "summary": "Owner direction of 24 November 2026: rework the confusing Access page, turn its lessons into standards, then rework every page step by step with owner review, using standard components developed as an area of their own. Counted at develop 1b5354e53 (inventory script in the Dossier): 59 shared components, but 1,325 buttons outside them with 548 distinct first classes and 20 radii, 107 locally styled tables, 26 local dialogs, fields in 142 templates with no field component, 139 font-size values, no self-hosted font (the capture host renders a CJK fallback) and an undeclared radius token used 50 times. Recommended: an Angular library project frontend/projects/studio-ui with an import boundary, own checks and a catalogue app showing every state in both themes; the 27 generic shared components moved in unchanged; families in order of need (layout and sections, buttons and menus, grid with Access moved on, self-hosted Inter, forms, overlays, states); twelve U-rules in docs/system/ui-standard/rules.md enforced per reworked page by a guard and Stylelint; the design skill and visual review read the standard; pages reworked one card at a time, daily surfaces first, with owner review between cards. Eleven decisions, sixteen slices.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-24T00:36:51Z",
+  "updatedAt": "2026-11-27T22:55:31Z",
   "sourceTaskKeys": [
     "AGT-4030"
   ],
@@ -467,5 +467,6 @@
       "promptMarkdown": "# LF-16 \u00B7 Page card: Task detail, header and overview\n\nSource: \u0060docs/look-and-feel-overhaul/index.html\u0060 (AGT-4030) and its \u0060workbench.json\u0060. Decisions: LF-D8 (A), LF-D9 (A), LF-D11 (A). Dependencies: LF-15.\n\n**Area:** \u0060frontend/src/app/features/task-detail/components/detail-header/**\u0060, \u0060.../prompt-pane/overview-pane/**\u0060, \u0060ui-standard-baseline.json\u0060, the Stylelint override, \u0060docs/system/ui-standard/rollout.md\u0060\n\n## Why\nDossier sections Pages measured and Rollout: task detail is the most divergent page (102 components, local vocabulary 696, 135 button classes, 62 font sizes) and is split into three cards; this is the first. Start only after the owner reviewed the Board card. The remaining page cards are created from \u0060rollout.md\u0060 one at a time after each review.\n\n## Deliver\n1. Load the visual design skill. Capture before screenshots of the header and Overview pane (1440 and 390 px, light and dark).\n2. Rebuild the detail header (lane select, pager, overflow menu, actions) and the Overview pane from library components; keep the Run-Switcher contract, the lane-control rules and the header-zone rules in \u0060frontend/AGENTS.md\u0060 and \u0060docs/quality/header-zones.md\u0060.\n3. Enforce the two folders, record the rollout row, and list in the result what the next two task-detail cards inherit.\n\n## Acceptance\n- Before and after screenshots, patterns table, enforced folders.\n- \u0060e2e/task-detail/detail-lane-dropdown.spec.ts\u0060, \u0060detail-view-lane-pager.spec.ts\u0060 and the overview specs pass.\n\n## Verification\nPage unit specs, task-detail e2e specs from the coverage map, lint, visual review.\n\nUse each Dossier recommendation as the working decision unless the recorded operator decision selects another option, and record the option you implemented in the result."
     }
   ],
-  "key": "AGT-W3468"
+  "key": "AGT-W3468",
+  "editedBy": "AGT-4030"
 }

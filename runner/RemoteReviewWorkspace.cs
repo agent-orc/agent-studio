@@ -30,6 +30,10 @@ public sealed class RemoteReviewWorkspace
     private readonly Func<DateTime> _utcNow;
     private readonly ISourceFactsClient? _sourceFacts;
     private string? _initialTree;
+    private IReadOnlyDictionary<string, string>? _candidateDeclaration;
+    private readonly Dictionary<string, IReadOnlyDictionary<string, string>> _treeDeclarations = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Sha, string Step), ReviewBaselineCacheKey> _baselineKeys = new();
+
     private string? _baselineSha;
     private string? _integrationHeadSha;
     private string? _reviewedIntegrationTipSha;
@@ -38,6 +42,16 @@ public sealed class RemoteReviewWorkspace
     private bool _verifyCachePruned;
     private bool _dirtyBefore;
     private string _visualScreenshotEvidence = VisualReviewScreenshotBundle.NoScreenshots;
+
+    // Keep the declaration attached to every role's supplied variables through
+    // preparation, prerequisite builds, report retries and clean controls.
+    private sealed class CommandEnvironment(
+        IReadOnlyDictionary<string, string> declared,
+        IReadOnlyDictionary<string, string?> variables)
+        : Dictionary<string, string?>(variables, StringComparer.OrdinalIgnoreCase)
+    {
+        public IReadOnlyDictionary<string, string> Declared { get; } = declared;
+    }
 
     public RemoteReviewWorkspace(
         RunnerOptions options,
@@ -128,10 +142,15 @@ public sealed class RemoteReviewWorkspace
     /// </summary>
     public string NuGetScratchPath { get; }
 
-    public IReadOnlyDictionary<string, string?> ProcessEnvironment()
+    public IReadOnlyDictionary<string, string?> ProcessEnvironment() => CandidateProcessEnvironment();
+
+    private CommandEnvironment CandidateProcessEnvironment()
+        => ProcessEnvironment(_candidateDeclaration
+            ?? ProjectDefinitionReader.ReadWorkspace(RepositoryPath).Definition?.Environment
+            ?? TestEnvelope.EmptyEnvironment);
+
+    private CommandEnvironment ProcessEnvironment(IReadOnlyDictionary<string, string> declared)
     {
-        var declared = ProjectDefinitionReader.ReadWorkspace(RepositoryPath).Definition?.Environment
-            ?? TestEnvelope.EmptyEnvironment;
         var environment = TestEnvelope.BuildEnvironment(declared, HomePath, TempPath);
         environment["NUGET_PACKAGES"] = NuGetPackagesPath;
         environment["NUGET_SCRATCH"] = NuGetScratchPath;
@@ -147,7 +166,36 @@ public sealed class RemoteReviewWorkspace
         // compiler server that keeps the working directory of whichever attempt
         // started it. No later configuration may weaken the fence.
         ReviewBuildServerIsolation.ApplyTo(environment, TempPath);
-        return environment;
+        return new CommandEnvironment(declared, environment);
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> DeclarationAtAsync(
+        string tree, CancellationToken ct, string? repositoryPath = null)
+    {
+        if (_treeDeclarations.TryGetValue(tree, out var cached)) return cached;
+        // Read immutable objects, including for sparse checkouts and relaunched
+        // workers whose preparation has already changed tracked files.
+        var environment = ProcessEnvironment(TestEnvelope.EmptyEnvironment);
+        var listing = await ProcessRunner.RunAsync("git", ["ls-tree", "-r", "--name-only", "-z", tree],
+            repositoryPath ?? RepositoryPath, environment: environment, clearEnvironment: true, ct: ct);
+        // ProcessRunner retains at most 2 MiB. A truncated listing cannot
+        // prove that the pinned tree has no declaration or referenced file.
+        const int captureLimit = 2 * 1024 * 1024;
+        if (!listing.Success || listing.StdOut.Length >= captureLimit)
+            throw new ReviewInfrastructureException("SnapshotUnavailable", $"Cannot completely read environment tree {tree}.");
+        var files = listing.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        IReadOnlyDictionary<string, string> declared = TestEnvelope.EmptyEnvironment;
+        if (files.Contains(ProjectPreparationPaths.Definition))
+        {
+            var blob = await ProcessRunner.RunAsync("git", ["show", $"{tree}:{ProjectPreparationPaths.Definition}"],
+                repositoryPath ?? RepositoryPath, environment: environment, clearEnvironment: true, ct: ct);
+            if (!blob.Success || blob.StdOut.Length >= captureLimit)
+                throw new ReviewInfrastructureException("SnapshotUnavailable", $"Cannot completely read environment declaration at {tree}.");
+            declared = ProjectDefinitionReader.Parse(blob.StdOut, files.Contains).Definition?.Environment
+                ?? TestEnvelope.EmptyEnvironment;
+        }
+        _treeDeclarations[tree] = declared;
+        return declared;
     }
 
     public async Task<ReviewWorkspaceProofDto> PrepareAsync(
@@ -204,6 +252,7 @@ public sealed class RemoteReviewWorkspace
                 "ShaMismatch",
                 $"Materialized HEAD '{head}' does not match expected Result-SHA '{_subject.ExpectedResultSha}'.");
         _initialTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
+        _candidateDeclaration = await DeclarationAtAsync(_subject.ExpectedResultSha, ct);
         _dirtyBefore = (await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct)).Length > 0;
         if (_dirtyBefore)
             throw new ReviewInfrastructureException("DirtyBefore", "Fresh review workspace is dirty before review.");
@@ -238,6 +287,7 @@ public sealed class RemoteReviewWorkspace
                 "ShaMismatch",
                 $"Prepared review HEAD '{head}' does not match expected Result-SHA '{_subject.ExpectedResultSha}'.");
         _initialTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
+        _candidateDeclaration = await DeclarationAtAsync(_subject.ExpectedResultSha, ct);
         _dirtyBefore = (await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct)).Length > 0;
         if (_dirtyBefore && relaunched)
         {
@@ -357,7 +407,7 @@ public sealed class RemoteReviewWorkspace
                 RepositoryPath,
                 "candidate",
                 baselineSha: null,
-                ProcessEnvironment(),
+                CandidateProcessEnvironment(),
                 commands,
                 artifacts,
                 ct);
@@ -437,7 +487,7 @@ public sealed class RemoteReviewWorkspace
             try
             {
                 await ExecutePreparationAsync(RepositoryPath, "candidate", null,
-                    ProcessEnvironment(), commands, artifacts, ct, restoreCache: false);
+                    CandidateProcessEnvironment(), commands, artifacts, ct, restoreCache: false);
             }
             catch (ReviewInfrastructureException exception)
             {
@@ -588,7 +638,7 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct,
                     command,
-                    execution.AgentUsage));
+                    execution.AgentUsage, envelope: execution.Envelope));
                 throw await InfrastructureFailureAsync(
                     "AspectTimeout",
                     $"Review aspect '{command.StepId}' violated review-command budget on " +
@@ -625,7 +675,7 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct,
                     command,
-                    execution.AgentUsage));
+                    execution.AgentUsage, envelope: execution.Envelope));
                 throw await InfrastructureFailureAsync(
                     "CommandStalled",
                     $"Review command '{command.StepId}' produced no output for its whole silence " +
@@ -661,7 +711,7 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct,
                     command,
-                    execution.AgentUsage));
+                    execution.AgentUsage, envelope: execution.Envelope));
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
@@ -699,7 +749,7 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct,
                     command,
-                    execution.AgentUsage));
+                    execution.AgentUsage, envelope: execution.Envelope));
                 var lostScope = MissingCandidateScopes().FirstOrDefault(scope =>
                     scope.Reason is "deps-dir-missing" or "install-root-missing");
                 var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
@@ -757,7 +807,7 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct,
                     command,
-                    execution.AgentUsage));
+                    execution.AgentUsage, envelope: execution.Envelope));
                 throw await InfrastructureFailureAsync(
                     ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                     $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -814,7 +864,7 @@ public sealed class RemoteReviewWorkspace
                     headBefore, treeBefore, execution.Process, execution.StartedAt,
                     execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                     "verification", "candidate-report-first", null, null, false, false, null,
-                    artifacts, ct, command));
+                    artifacts, ct, command, envelope: execution.Envelope));
                 _log($"review candidate step={command.StepId} produced no test report; retrying once");
                 await EnsureRetryDependenciesAsync(
                     RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
@@ -830,7 +880,7 @@ public sealed class RemoteReviewWorkspace
                         headBefore, treeBefore, execution.Process, execution.StartedAt,
                         execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                         "verification", "candidate", null, null, true, false, null,
-                        artifacts, ct, command));
+                        artifacts, ct, command, envelope: execution.Envelope));
                     var reason = setupChangeReason;
                     if (reason is null)
                     {
@@ -876,7 +926,7 @@ public sealed class RemoteReviewWorkspace
                     command.StepId, command.Aspect, command.FileName, command.Arguments,
                     headBefore, treeBefore, execution.Process, execution.StartedAt, execution.FinishedAt,
                     execution.Signal, command.TimeoutSeconds, "verification", "candidate", null, null,
-                    retryPerformed, false, null, artifacts, ct, command));
+                    retryPerformed, false, null, artifacts, ct, command, envelope: execution.Envelope));
                 verdicts.Add(new(command.Aspect, "pass", "TestQuarantine",
                     "Quarantined failures did not block: " + string.Join(", ", declaredQuarantine.Ignored
                         .Select(hit => $"{hit.Test} ({hit.Card}, until {hit.ExpiresOn:yyyy-MM-dd})")),
@@ -907,7 +957,7 @@ public sealed class RemoteReviewWorkspace
                         execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                         "verification", "candidate", comparison.BaselineSha, comparison,
                         retryPerformed: false, dependencyCacheHit: false, dependencyCache: null,
-                        artifacts, ct, command));
+                        artifacts, ct, command, envelope: execution.Envelope));
                     throw await InfrastructureFailureAsync(
                         execution.Signal == "timeout" || execution.Process.ExitCode == 124
                             ? "CommandTimeout" : "CommandInterrupted",
@@ -953,7 +1003,7 @@ public sealed class RemoteReviewWorkspace
                             dependencyCacheHit: false,
                             dependencyCache: null,
                             artifacts,
-                            ct));
+                            ct, envelope: execution.Envelope));
                         throw await InfrastructureFailureAsync(
                             "ToolUnavailable",
                             $"Review retry '{command.StepId}' lost its declared toolchain; " +
@@ -972,7 +1022,7 @@ public sealed class RemoteReviewWorkspace
                             execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                             "verification", "candidate", comparison.BaselineSha, comparison,
                             retryPerformed: true, dependencyCacheHit: false, dependencyCache: null,
-                            artifacts, ct, command));
+                            artifacts, ct, command, envelope: execution.Envelope));
                         throw await InfrastructureFailureAsync(
                             cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
                                 || execution.Signal == "timeout" || execution.Process.ExitCode == 124
@@ -1004,7 +1054,7 @@ public sealed class RemoteReviewWorkspace
                             dependencyCacheHit: false,
                             dependencyCache: null,
                             artifacts,
-                            ct));
+                            ct, envelope: execution.Envelope));
                         throw await InfrastructureFailureAsync(
                             NoCpuProgressClassification,
                             NoProgressSummary(
@@ -1038,7 +1088,7 @@ public sealed class RemoteReviewWorkspace
                             dependencyCacheHit: false,
                             dependencyCache: null,
                             artifacts,
-                            ct));
+                            ct, envelope: execution.Envelope));
                         throw await InfrastructureFailureAsync(
                             ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                             $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -1148,7 +1198,7 @@ public sealed class RemoteReviewWorkspace
                 artifacts,
                 ct,
                 command,
-                execution.AgentUsage));
+                execution.AgentUsage, envelope: execution.Envelope));
             var verdict = comparison is null
                 ? ParseVerdict(command, execution.Process)
                 : BaselineVerdict(command, comparison);
@@ -1545,7 +1595,7 @@ public sealed class RemoteReviewWorkspace
         ReviewCommandDto command,
         string workingDirectory,
         CancellationToken ct,
-        IReadOnlyDictionary<string, string?>? environment = null)
+        CommandEnvironment? environment = null)
         => await RunCommandAsync(
             command.StepId,
             command.FileName,
@@ -1562,11 +1612,10 @@ public sealed class RemoteReviewWorkspace
         int timeoutSeconds,
         string workingDirectory,
         CancellationToken ct,
-        IReadOnlyDictionary<string, string?>? environment = null)
+        CommandEnvironment? environment = null)
     {
-        var declared = ProjectDefinitionReader.ReadWorkspace(RepositoryPath).Definition?.Environment
-            ?? TestEnvelope.EmptyEnvironment;
-        var supplied = environment ?? ProcessEnvironment();
+        var supplied = environment ?? CandidateProcessEnvironment();
+        var declared = supplied.Declared;
         using var envelope = WorkerCgroup.PrepareTestCommand(declared, _log,
             supplied.GetValueOrDefault("HOME") ?? HomePath, supplied.GetValueOrDefault("TMPDIR") ?? TempPath);
         var childEnvironment = new Dictionary<string, string?>(supplied, StringComparer.OrdinalIgnoreCase);
@@ -1704,12 +1753,14 @@ public sealed class RemoteReviewWorkspace
         {
             if (watchdog is not null) await watchdog.DisposeAsync();
         }
-        _lastEnvelope = envelope.Fingerprint(declared, stepId);
+        var fingerprint = envelope.Fingerprint(declared, stepId);
+        _lastEnvelope = fingerprint;
         ThrowIfDiskFull(process);
         if (!process.Success && (TestEnvelope.CanaryFailed(ParsedTestFailures(process))
             || (process.StdOut + process.StdErr).Contains("test envelope attach failed", StringComparison.Ordinal)))
             throw new ReviewInfrastructureException("TestEnvelopeInconclusive", "The test envelope canary failed; the run is inconclusive.");
-        return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics());
+        return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics())
+        { Envelope = fingerprint };
     }
 
     /// <summary>
@@ -1774,7 +1825,7 @@ public sealed class RemoteReviewWorkspace
         string workspacePath,
         string workspaceRole,
         string? baselineSha,
-        IReadOnlyDictionary<string, string?> environment,
+        CommandEnvironment environment,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct,
@@ -1905,7 +1956,7 @@ public sealed class RemoteReviewWorkspace
                 dependencyCacheHit: !installNeeded,
                 dependencyCache: evidence,
                 artifacts,
-                ct));
+                ct, envelope: execution.Envelope));
 
             if (StalledWithoutCpuProgress(execution))
             {
@@ -1994,7 +2045,8 @@ public sealed class RemoteReviewWorkspace
         IReadOnlyList<string>? repeatObservedTests = null,
         string? verifyReusedFromAttemptId = null,
         TimeSpan? verifyReusedAge = null,
-        string? repeatObservation = null)
+        string? repeatObservation = null,
+        PostMergeEnvelopeFingerprint? envelope = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -2086,7 +2138,7 @@ public sealed class RemoteReviewWorkspace
             ModelMismatch = agentUsage?.ModelMismatch ?? false,
             ModelSource = agentUsage?.ModelSource,
             ModelUsage = agentUsage?.ModelUsage,
-            Envelope = _lastEnvelope,
+            Envelope = envelope,
             QuarantinedFailures = QuarantinePartition(ParsedTestFailures(process)).Ignored,
         };
     }
@@ -2403,12 +2455,16 @@ public sealed class RemoteReviewWorkspace
         CancellationToken ct)
     {
         var baselineSha = await ResolveBaselineShaAsync(ct);
-        var commandHash = CommandHash(command);
+        var declared = await DeclarationAtAsync(baselineSha, ct);
+        var commandHash = CommandHash(command, declared);
         var key = new ReviewBaselineCacheKey(
             _subject.RepositoryId,
             baselineSha,
             commandHash,
-            ToolchainFingerprint(command));
+            ToolchainFingerprint(command, ProcessEnvironment(declared)),
+            TestEnvelope.DeclaredDigest(declared),
+            ReviewBaselineResultCache.EnvironmentContractVersion);
+        _baselineKeys[(baselineSha, command.StepId)] = key;
         await PruneBaselineCacheAsync(ct);
         var cachePath = ReviewBaselineResultCache.EntryPath(BaselineCacheRoot, key);
         _measuredBaselineCachePaths.Add(cachePath);
@@ -2439,7 +2495,7 @@ public sealed class RemoteReviewWorkspace
                 baselineSha,
                 command);
 
-        var environment = BaselineProcessEnvironment(commandHash);
+        var environment = BaselineProcessEnvironment(commandHash, declared);
         var workspaceRole = $"baseline-{commandHash[..12]}";
         DependencyCacheSession? baselineCache = null;
         CommandExecution execution;
@@ -2501,7 +2557,7 @@ public sealed class RemoteReviewWorkspace
                 dependencyCacheHit: false,
                 dependencyCache: null,
                 artifacts,
-                ct));
+                ct, envelope: execution.Envelope));
             if (MissingToolchain(execution.Process))
             {
                 var quarantined = QuarantineRestoredCache(baselineCache, command.StepId, execution.Process);
@@ -2552,7 +2608,7 @@ public sealed class RemoteReviewWorkspace
                     baselineHead, baselineTree, execution.Process, execution.StartedAt,
                     execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                     "verification", workspaceRole + "-report-retry", baselineSha, null, true, false, null,
-                    artifacts, ct));
+                    artifacts, ct, envelope: execution.Envelope));
                 await EnsureRetryDependenciesAsync(
                     baselinePath, "baseline", command.StepId, commands, artifacts, ct);
             }
@@ -2598,7 +2654,10 @@ public sealed class RemoteReviewWorkspace
             execution.Process.StdOut,
             execution.Process.StdErr,
             DateTime.UtcNow,
-            command.BaselineMode);
+            command.BaselineMode,
+            key.DeclaredEnvironmentDigest,
+            key.EnvironmentContractVersion,
+            execution.Envelope);
         await ReviewBaselineResultCache.WriteAsync(cachePath, entry, ct);
         _log(
             $"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} " +
@@ -2636,7 +2695,7 @@ public sealed class RemoteReviewWorkspace
             if (!checkedOut.Success)
                 throw new ReviewInfrastructureException(
                     "CleanRepeatUnavailable", $"Clean repeat subject could not be checked out: {checkedOut.StdErr.Trim()}");
-            var environment = BaselineProcessEnvironment("clean-" + hash);
+            var environment = BaselineProcessEnvironment("clean-" + hash, _candidateDeclaration!);
             await ExecutePreparationAsync(
                 path, "clean-repeat", _subject.ExpectedResultSha, environment,
                 commands, artifacts, ct, restoreCache: false);
@@ -2656,7 +2715,7 @@ public sealed class RemoteReviewWorkspace
             var command = selectedCommand;
             // AGT-3650: the repeat must show that the failed tests ran. Vitest
             // and dotnet test name passing tests only when asked to.
-            var repeatEnvironment = new Dictionary<string, string?>(environment, StringComparer.Ordinal)
+            var repeatEnvironment = new CommandEnvironment(environment.Declared, environment)
             {
                 [ReviewRepeatObservationPolicy.VitestReporterVariable] = "verbose",
             };
@@ -2712,7 +2771,7 @@ public sealed class RemoteReviewWorkspace
                 dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
                 plannedCommand, execution.AgentUsage,
                 repeatFilter: repeatFilter, repeatObservedTests: observed,
-                repeatObservation: observation));
+                repeatObservation: observation, envelope: execution.Envelope));
             return execution;
         }
         finally
@@ -2741,7 +2800,8 @@ public sealed class RemoteReviewWorkspace
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct)
     {
-        var baselineRole = $"baseline-{CommandHash(command)[..12]}";
+        var baselineRole = _baselineKeys.TryGetValue((comparison.BaselineSha, command.StepId), out var baselineKey)
+            ? $"baseline-{baselineKey.CommandHash[..12]}" : null;
         var dependencyCacheHit = commands.Any(item => item.Phase == "preparation"
             && item.WorkspaceRole == baselineRole
             && ReviewCachedBaselinePolicy.RanOnCachedDependencies(item));
@@ -2792,12 +2852,6 @@ public sealed class RemoteReviewWorkspace
             ]);
     }
 
-    /// <summary>
-    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
-    /// with fresh home, temp and cache directories and without restoring the
-    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
-    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
-    /// </summary>
     private async Task<BaselineComparison> MeasureRepairedTargetAsync(
         ReviewCommandDto command, BaselineComparison comparison,
         ICollection<ReviewCommandEvidenceDto> commands, ICollection<ReviewArtifactEvidenceDto> artifacts,
@@ -2855,7 +2909,7 @@ public sealed class RemoteReviewWorkspace
     {
         var path = Path.Combine(AttemptRoot, $"target-merge-{Guid.NewGuid():N}");
         var role = repeat ? "target-merge-repeat" : "target-merge";
-        var environment = BaselineProcessEnvironment(HashText(path));
+        var environment = BaselineProcessEnvironment(HashText(path), _candidateDeclaration!);
         try
         {
             var clone = await ProcessRunner.RunAsync("git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
@@ -2870,6 +2924,7 @@ public sealed class RemoteReviewWorkspace
                 environment: environment, clearEnvironment: true, ct: ct);
             if (!merge.Success) throw BaselineUnavailable("Target merge could not be measured: " + merge.StdOut + merge.StdErr, target, command);
             var tree = await GitValueAtAsync(path, ["write-tree"], environment, ct);
+            environment = BaselineProcessEnvironment(HashText(path), await DeclarationAtAsync(tree, ct, path));
             await ExecutePreparationAsync(path, role, target, environment, commands, artifacts, ct, restoreCache: false);
             var isolatedBuild = await BuildBeforeNoBuildAsync(command, path, environment, "TargetMergeMeasurementIncomplete", ct);
             if (isolatedBuild is { Execution.Process.Success: false })
@@ -2883,7 +2938,7 @@ public sealed class RemoteReviewWorkspace
             commands.Add(await AddCommandEvidenceAsync(command.StepId, command.Aspect, command.FileName, command.Arguments,
                 _subject.ExpectedResultSha, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
                 execution.Signal, command.TimeoutSeconds, "target-merge", role, target,
-                comparison: null, retryPerformed: true, dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command));
+                comparison: null, retryPerformed: true, dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command, envelope: execution.Envelope));
             return execution;
         }
         finally
@@ -2893,6 +2948,12 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
+    /// <summary>
+    /// Runs the planned command at the baseline SHA in a fresh same-host clone,
+    /// with fresh home, temp and cache directories and without restoring the
+    /// dependency cache. Its evidence carries phase <c>clean-repeat</c> and
+    /// workspace role <see cref="ReviewCachedBaselinePolicy.WorkspaceRole"/>.
+    /// </summary>
     private async Task<(CommandExecution Execution, bool BlockedByBuild)> RunCleanBaselineAsync(
         ReviewCommandDto command,
         string baselineSha,
@@ -2917,7 +2978,8 @@ public sealed class RemoteReviewWorkspace
             if (!checkedOut.Success)
                 throw BaselineUnavailable(
                     $"Clean baseline could not be checked out: {checkedOut.StdErr.Trim()}", baselineSha, command);
-            var environment = BaselineProcessEnvironment(workspaceRole is null ? "cbase-" + hash : HashText(path));
+            var environment = BaselineProcessEnvironment(workspaceRole is null ? "cbase-" + hash : HashText(path),
+                await DeclarationAtAsync(baselineSha, ct));
             await ExecutePreparationAsync(
                 path, role, baselineSha, environment, commands, artifacts, ct, restoreCache: false);
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
@@ -2937,7 +2999,7 @@ public sealed class RemoteReviewWorkspace
                 head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
                 execution.Signal, command.TimeoutSeconds, ReviewCachedBaselinePolicy.Phase, role,
                 baselineSha, comparison: null, retryPerformed: true,
-                dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command));
+                dependencyCacheHit: false, dependencyCache: null, artifacts, ct, command, envelope: execution.Envelope));
             return (execution, false);
         }
         finally
@@ -2957,10 +3019,8 @@ public sealed class RemoteReviewWorkspace
         ReviewCommandDto command, string baselineSha, string reason)
     {
         var messages = new List<string>();
-        var entry = ReviewBaselineResultCache.EntryPath(
-            BaselineCacheRoot,
-            new ReviewBaselineCacheKey(
-                _subject.RepositoryId, baselineSha, CommandHash(command), ToolchainFingerprint(command)));
+        var entry = _baselineKeys.TryGetValue((baselineSha, command.StepId), out var key)
+            ? ReviewBaselineResultCache.EntryPath(BaselineCacheRoot, key) : null;
         try
         {
             if (File.Exists(entry))
@@ -2983,7 +3043,7 @@ public sealed class RemoteReviewWorkspace
     private async Task<IsolatedBuildResult?> BuildBeforeNoBuildAsync(
         ReviewCommandDto command,
         string workspacePath,
-        IReadOnlyDictionary<string, string?> environment,
+        CommandEnvironment environment,
         string classification,
         CancellationToken ct)
     {
@@ -3019,7 +3079,7 @@ public sealed class RemoteReviewWorkspace
             build.Execution.Signal, build.Build.TimeoutSeconds, phase, workspaceRole,
             baselineSha, comparison: null, retryPerformed: phase == "clean-repeat",
             dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
-            build.Build));
+            build.Build, envelope: build.Execution.Envelope));
 
     private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
         ReviewCommandDto command,
@@ -3144,7 +3204,7 @@ public sealed class RemoteReviewWorkspace
             artifacts,
             ct,
             reusedFromAttemptId: cached.AttemptId,
-            reusedAge: age));
+            reusedAge: age, envelope: cached.Envelope));
         _log(
             $"review baseline cache {hitKind} repository={_subject.RepositoryId} " +
             $"baseline={cached.BaselineSha} step={command.StepId} " +
@@ -3235,7 +3295,7 @@ public sealed class RemoteReviewWorkspace
             ct,
             command,
             verifyReusedFromAttemptId: cached.AttemptId,
-            verifyReusedAge: age));
+            verifyReusedAge: age, envelope: cached.Envelope));
         var citation = ReviewVerifyReuse.Citation(cached.AttemptId, (long)age.TotalSeconds);
         var verdict = ReviewCommandVerdictPolicy.FromExitCode(command.Aspect, command.StepId, cached.ExitCode);
         verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
@@ -3374,15 +3434,15 @@ public sealed class RemoteReviewWorkspace
     /// changed its SDK, its Git, or a planned executable therefore never
     /// reuses a baseline result produced by the previous toolchain.
     /// </summary>
-    private string ToolchainFingerprint(ReviewCommandDto command)
+    private string ToolchainFingerprint(ReviewCommandDto command, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var text = new StringBuilder("runtime=").Append(RuntimeInformation.FrameworkDescription);
-        text.Append("\0git=").Append(ExecutableIdentity("git"));
+        text.Append("\0git=").Append(ExecutableIdentity("git", environment));
         text.Append("\0command:").Append(command.StepId).Append('=')
-            .Append(ExecutableIdentity(_agentCommands.PlannedExecutable(command)));
+            .Append(ExecutableIdentity(_agentCommands.PlannedExecutable(command), environment));
         foreach (var preparation in _subject.Plan.Preparation ?? [])
             text.Append("\0command:").Append(preparation.StepId).Append('=')
-                .Append(ExecutableIdentity(preparation.FileName));
+                .Append(ExecutableIdentity(preparation.FileName, environment));
         return HashText(text.ToString());
     }
 
@@ -3424,7 +3484,7 @@ public sealed class RemoteReviewWorkspace
         return ancestry.ExitCode != 1;
     }
 
-    private IReadOnlyDictionary<string, string?> BaselineProcessEnvironment(string commandHash)
+    private CommandEnvironment BaselineProcessEnvironment(string commandHash, IReadOnlyDictionary<string, string> declared)
     {
         var root = Path.Combine(AttemptRoot, $"baseline-runtime-{commandHash[..12]}");
         var cache = Path.Combine(root, "cache");
@@ -3433,9 +3493,9 @@ public sealed class RemoteReviewWorkspace
         Directory.CreateDirectory(cache);
         Directory.CreateDirectory(temp);
         Directory.CreateDirectory(home);
-        var environment = ProcessEnvironment()
-            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        var environment = ProcessEnvironment(declared);
         environment["HOME"] = home;
+        environment["USERPROFILE"] = home;
         environment["TMPDIR"] = temp;
         environment["TMP"] = temp;
         environment["TEMP"] = temp;
@@ -4414,11 +4474,14 @@ public sealed class RemoteReviewWorkspace
     private static string NormalizeFailureName(string value)
         => FailureHierarchySeparator.Replace(value.Trim(), " > ");
 
-    private static string CommandHash(ReviewCommandDto command)
+    private string CommandHash(ReviewCommandDto command, IReadOnlyDictionary<string, string>? declared = null)
     {
         var text = new StringBuilder(command.FileName);
         // Both baseline and candidate caches are bound to the shared resource shape.
-        text.Append("\0test-envelope-v1=").Append(TestEnvelope.ProcessorCount);
+        text.Append("\0test-envelope=").Append(ReviewBaselineResultCache.EnvironmentContractVersion)
+            .Append(':').Append(TestEnvelope.ProcessorCount)
+            .Append("\0declared=").Append(TestEnvelope.DeclaredDigest(
+                declared ?? _candidateDeclaration ?? TestEnvelope.EmptyEnvironment));
         foreach (var argument in command.Arguments)
             text.Append('\0').Append(argument);
         text.Append('\0').Append(command.WorkingSubdir);
@@ -4509,9 +4572,9 @@ public sealed class RemoteReviewWorkspace
     internal static string HashText(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    private string ExecutableIdentity(string fileName)
+    private string ExecutableIdentity(string fileName, IReadOnlyDictionary<string, string?>? environment = null)
     {
-        var path = ResolveExecutable(fileName);
+        var path = ResolveExecutable(fileName, environment);
         if (path is null)
             return $"unresolved:{fileName}";
         using var stream = File.OpenRead(path);
@@ -4519,7 +4582,7 @@ public sealed class RemoteReviewWorkspace
         return $"{Path.GetFullPath(path)};sha256={digest};size={stream.Length}";
     }
 
-    private string? ResolveExecutable(string fileName)
+    private string? ResolveExecutable(string fileName, IReadOnlyDictionary<string, string?>? environment = null)
     {
         if (Path.IsPathFullyQualified(fileName))
             return File.Exists(fileName) ? fileName : null;
@@ -4530,7 +4593,7 @@ public sealed class RemoteReviewWorkspace
             return File.Exists(repositoryRelative) ? repositoryRelative : null;
         }
 
-        var pathValue = ProcessEnvironment().TryGetValue("PATH", out var configuredPath)
+        var pathValue = (environment ?? ProcessEnvironment()).TryGetValue("PATH", out var configuredPath)
             ? configuredPath
             : null;
         foreach (var directory in (pathValue ?? string.Empty)
@@ -4668,7 +4731,10 @@ internal sealed record CommandExecution(
     DateTime FinishedAt,
     string? Signal,
     RemoteAgentUsage? AgentUsage = null,
-    StallDiagnostics? Stall = null);
+    StallDiagnostics? Stall = null)
+{
+    public PostMergeEnvelopeFingerprint? Envelope { get; init; }
+}
 
 internal sealed record IsolatedBuildResult(ReviewCommandDto Build, CommandExecution Execution);
 

@@ -6,6 +6,10 @@ namespace AgentStudio.Tasks;
 /// Task Server integration-lease API. Remote runners use this before mutating a
 /// project's integration branch; the fencing token returned by acquire must
 /// accompany heartbeat/release and future integration actions.
+/// Acquire polls preserve FIFO position and the original enqueue time. Waiters
+/// expire after ten minutes without an acquire poll; a later poll rejoins at the
+/// tail. GET reports Queued when the lane is free but has live waiters, Held
+/// when a runner owns it, and Free when neither a holder nor waiters remain.
 /// </summary>
 public static class IntegrationLeaseEndpoints
 {
