@@ -149,18 +149,27 @@ public sealed partial class AccessSecurityStore
                 ? item with { State = executed ? "executed" : "skipped", ResultReason = reason } : item).ToList() };
             next.OperatorBatches[position] = updated;
             SaveLocked(next);
-            using var scope = OperatorActorScope.Enter(new(batch.PrincipalId, batch.SessionId, batch.OwnerId)
-                { ApprovalId = batch.Id, ApprovedBy = batch.ApprovedBy, BatchId = batch.Id });
-            AppendIamAudit(batch.Actor, "operator-batch.item", "operator-batch", id, new { index, executed, reason, batchId = id, approvedBy = batch.ApprovedBy, elevationClass = batch.Class, batch.InstructionSource });
-            var recordedItem = updated.Items.First(candidate => candidate.Index == index);
-            var device = next.ServiceAccounts.FirstOrDefault(agent => agent.Id == batch.PrincipalId)
-                ?.Sessions?.FirstOrDefault(session => session.Id == batch.SessionId)?.Device;
-            ControlPlaneAudit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.OperatorAgent, batch.Actor,
-                ElevatedActionClasses.Find(batch.Class)!.Operations[0], executed ? "executed" : "skipped",
-                Target: $"card:{recordedItem.Request.Card}", Session: batch.SessionId,
-                Details: new { elevationClass = batch.Class, batchId = id, approvedBy = batch.ApprovedBy,
-                    deviceThumbprint = device?.DeviceKeyThumbprint ?? device?.KeyThumbprint,
-                    reason = recordedItem.Request.Reason, instructionSource = batch.InstructionSource, result = reason, index }, At: Now));
+            // The move outcome is durable before either audit append is attempted.
+            try
+            {
+                using var scope = OperatorActorScope.Enter(new(batch.PrincipalId, batch.SessionId, batch.OwnerId)
+                    { ApprovalId = batch.Id, ApprovedBy = batch.ApprovedBy, BatchId = batch.Id });
+                AppendIamAudit(batch.Actor, "operator-batch.item", "operator-batch", id, new { index, executed, reason, batchId = id, approvedBy = batch.ApprovedBy, elevationClass = batch.Class, batch.InstructionSource });
+                var recordedItem = updated.Items.First(candidate => candidate.Index == index);
+                var device = next.ServiceAccounts.FirstOrDefault(agent => agent.Id == batch.PrincipalId)
+                    ?.Sessions?.FirstOrDefault(session => session.Id == batch.SessionId)?.Device;
+                ControlPlaneAudit.Append(new ControlPlaneAuditRecord(ControlPlaneAuditStreams.OperatorAgent, batch.Actor,
+                    ElevatedActionClasses.Find(batch.Class)!.Operations[0], executed ? "executed" : "skipped",
+                    Target: $"card:{recordedItem.Request.Card}", Session: batch.SessionId,
+                    Details: new { elevationClass = batch.Class, batchId = id, approvedBy = batch.ApprovedBy,
+                        deviceThumbprint = device?.DeviceKeyThumbprint ?? device?.KeyThumbprint,
+                        reason = recordedItem.Request.Reason, instructionSource = batch.InstructionSource, result = reason, index }, At: Now));
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Operator batch {BatchId} item {Index} audit failed; saved outcome {Outcome} is unchanged",
+                    id, index, executed ? "executed" : "skipped");
+            }
             return updated;
         }
     }

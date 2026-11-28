@@ -111,6 +111,8 @@ public sealed class OperatorBatchService(AccessSecurityStore store, TaskScannerS
         {
             foreach (var item in batch.Items.Where(item => request.Selected.Contains(item.Index) && item.Refusal is null))
             {
+                bool executed;
+                string reason;
                 try
                 {
                     var result = await TaskCrudEndpoints.MoveOperatorWithRunIntentAsync(item.Request.Card, WatchPath(item.Request.Project),
@@ -126,14 +128,17 @@ public sealed class OperatorBatchService(AccessSecurityStore store, TaskScannerS
                             return refusal is null ? null : Results.Conflict(new { error = "batch-item-skipped", message = refusal });
                         });
                     var status = (result as Microsoft.AspNetCore.Http.IStatusCodeHttpResult)?.StatusCode ?? 200;
-                    batch = store.RecordBatchItem(id, item.Index, status is >= 200 and < 300,
-                        status is >= 200 and < 300 ? item.Request.Reason : MoveRefusal(result, status));
+                    executed = status is >= 200 and < 300;
+                    reason = executed ? item.Request.Reason : MoveRefusal(result, status);
                 }
                 catch (Exception exception)
                 {
                     logger.LogError(exception, "Operator batch {BatchId} item {Index} failed", id, item.Index);
-                    batch = store.RecordBatchItem(id, item.Index, false, "Execution failed; inspect the card timeline before submitting again.");
+                    executed = false;
+                    reason = "Execution failed; inspect the card timeline before submitting again.";
                 }
+                // Result persistence is outside the move catch: recording failures cannot undo a move.
+                batch = store.RecordBatchItem(id, item.Index, executed, reason);
             }
         }
         finally { finished = store.FinishOperatorBatch(id); }

@@ -10,6 +10,51 @@ namespace AgentStudio.Tests;
 
 public sealed partial class OperatorApprovalFlowTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Batch_item_preserves_move_result_when_audit_append_fails(bool executed)
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var (agentId, _, _) = StartSession(factory, installationScope: true);
+        var login = store.Login("first.owner", Password, "batch audit failure", CurrentCode());
+        var human = store.AuthenticateSession(login.SessionToken)!;
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var point = key.ExportParameters(false).Q;
+        var start = store.StartOperatorSignIn(new(new("EC", "P-256", OperatorDevicePublicKey.Base64Url(point.X!),
+            OperatorDevicePublicKey.Base64Url(point.Y!)), "batch console", agentId, ["cards.archive-override"]), "127.0.0.1", "test");
+        store.VerifyStepUp(human, CurrentCode());
+        store.ConfirmOperatorSignIn(new(start.UserCode, agentId, ["cards.archive-override"], 8), human, "127.0.0.1");
+        var principal = store.AuthenticateOperatorSession(store.PollOperatorSignIn(start.PollHandle).Token)!;
+        var item = new OperatorBatchItemRequest("alpha-done", TaskStates.Archive, "Duplicate without delivery", "alpha");
+        var batch = store.SubmitOperatorBatch(principal, new("cards.archive-override", [item], "owner-chat"),
+            [new(0, item, "Completed card", "revision", null, null)]);
+        store.VerifyStepUp(human, CurrentCode());
+        store.DecideOperatorBatch(batch.Id, new([0]), human);
+
+        // A directory at the audit path forces an append failure on every platform.
+        var auditPath = store.ControlPlaneAudit.FilePath;
+        var backupPath = auditPath + ".backup";
+        File.Move(auditPath, backupPath);
+        Directory.CreateDirectory(auditPath);
+        const string reason = "The guarded move returned its result.";
+        try
+        {
+            var recorded = store.RecordBatchItem(batch.Id, 0, executed, reason);
+            Assert.Equal(executed ? "executed" : "skipped", Assert.Single(recorded.Items).State);
+            var finished = store.FinishOperatorBatch(batch.Id);
+            Assert.Equal(executed ? "executed" : "skipped", Assert.Single(finished.Items).State);
+            Assert.Equal(reason, Assert.Single(finished.Items).ResultReason);
+            Assert.Equal(finished, Assert.Single(store.ListOperatorBatches()));
+        }
+        finally
+        {
+            Directory.Delete(auditPath);
+            File.Move(backupPath, auditPath);
+        }
+    }
+
     [Fact]
     public async Task Batch_confirmation_runs_once_and_skips_deselected_changed_and_nonqualifying_items()
     {

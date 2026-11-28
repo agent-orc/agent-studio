@@ -740,6 +740,10 @@ Feed and optional push notifications link to the same sheet and grant no
 authority. Hourly limits count individual items: 30 acceptances or 10 archives.
 If execution is interrupted, inspect the batch result and card timelines before
 submitting another batch; Studio will not replay the original confirmation.
+A failed batch-item audit append leaves the saved move result intact and
+Studio continues with the remaining items. Do not resubmit an executed item
+because its audit entry is missing; reconcile its timeline with the server
+error log, which records the batch id and item index.
 
 Batch submission accepts at most 64 KiB and 20 pending batches per session.
 Stored batches older than 30 days are pruned when another batch is submitted;

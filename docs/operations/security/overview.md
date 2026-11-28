@@ -2106,6 +2106,10 @@ class, batch id, device thumbprint, reason and result. Class hourly limits count
 Rejected or expired batches execute nothing; confirmation cannot be replayed.
 After an interruption Studio does not replay a confirmed batch; inspect each
 recorded item result and its card timeline before submitting again.
+Studio persists each move result before appending its batch audit entries.
+An audit append failure is logged as an error and does not change an executed
+item to skipped or stop the remaining items. Inspect the card timeline and
+server error log when reconciling missing audit entries.
 
 Read results with `GET /api/auth/operator-session/batches/{id}` using the same
 session and device proof. Studio performs execution; the agent never receives
