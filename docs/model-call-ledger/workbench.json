@@ -4,10 +4,10 @@
   "title": "Model call ledger",
   "summary": "Capture and price individual model responses, link them to their work, and make the evidence available in Studio and Magazine.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-28",
+  "updatedAt": "2026-11-28T13:51:48Z",
   "sourceTaskKeys": [
     "AGT-4392"
   ],
@@ -293,5 +293,6 @@
       "promptMarkdown": "# Daily and weekly usage issues\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for presentation unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nMagazine reporting and report routes.\n\nImplement deterministic report generation over the shared query API and configured workspace calendar. Publish daily and weekly model use, cost, coverage, waste and top-card evidence in Magazine and matching structured routes. Include revisions, catch-up after restart, access controls, explicit source lag and linked filters.\n\n## Acceptance\n- One issue per period and scope survives replay; late usage creates an explicit revision.\n- Report numbers match the query with identical permissions and revision, including DST boundaries, partial ingestion and unknown prices."
     }
   ],
-  "key": "AGT-W3474"
+  "key": "AGT-W3474",
+  "editedBy": "AGT-4392"
 }
