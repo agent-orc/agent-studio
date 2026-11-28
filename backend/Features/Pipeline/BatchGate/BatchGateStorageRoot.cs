@@ -65,16 +65,6 @@ public static class BatchGateStorageRoot
                 File.WriteAllText(originPath, newRoot);
             }
         }
-        if (!Directory.Exists(instances)) return;
-        foreach (var other in Directory.EnumerateDirectories(instances))
-        {
-            if (string.Equals(other, newRoot, StringComparison.Ordinal) ||
-                !Directory.Exists(Path.Combine(other, "batch-gates"))) continue;
-            if (Directory.EnumerateFiles(Path.Combine(other, "batch-gates"), "manifest.json",
-                    SearchOption.AllDirectories).Any())
-                logger.LogWarning("batch-state-unmatched-instance path={Path} current={Current}; batch manifests may require restore migration",
-                    other, newRoot);
-        }
     }
 
     private static void RelocateEvidence(string root, string oldRoot)

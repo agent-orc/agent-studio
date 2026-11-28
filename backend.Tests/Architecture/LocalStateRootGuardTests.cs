@@ -1,4 +1,6 @@
 using Xunit;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests.Architecture;
 
@@ -12,6 +14,17 @@ namespace AgentStudio.Tests.Architecture;
 [Trait("Category", "Guard")]
 public sealed class LocalStateRootGuardTests
 {
+    [Fact]
+    public void Test_hosts_resolve_state_inside_the_suite_owned_directory()
+    {
+        var suite = Path.GetFullPath(TestTempRoot.SuiteRoot) + Path.DirectorySeparatorChar;
+        Assert.StartsWith(suite, LocalStateRoot.Resolve(), StringComparison.Ordinal);
+        var instance = AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(suite, null, "batch-gates");
+        Assert.StartsWith(suite, instance, StringComparison.Ordinal);
+        Assert.Equal(Path.Combine(TestTempRoot.SuiteRoot, "state"),
+            Environment.GetEnvironmentVariable(LocalStateRoot.OverrideVariable));
+    }
+
     private const string Owner = "contracts/TaskServer.Contracts/LocalStateRoot.cs";
 
     [Fact]

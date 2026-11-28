@@ -63,3 +63,10 @@ member OperationsTelemetryApiCollection OperationsTelemetryApiTests
 
 collection ProductStartupFixtureCollection its test measures the wall-clock start of the production start path on a 1500-card fixture against a baseline taken in the same run; under hundreds of parallel test hosts on the gate host the fixed start missed its 60s deadline though it starts in 12 to 18s alone (AGT-4244).
 member ProductStartupFixtureCollection ProductStartupFixtureTests
+
+# AGT-4236: benchmark the shared suite instance root without concurrent host starts.
+collection InstanceStartupMeasurementCollection measures instance siblings without concurrent host creation or cleanup
+member InstanceStartupMeasurementCollection BatchGateHostStartupCostTests
+
+collection InstanceRetentionCollection sweeps the process-wide suite state and temporarily replaces its ancestors with links; concurrent host fixtures must not access that state
+member InstanceRetentionCollection HostInstanceRetentionTests

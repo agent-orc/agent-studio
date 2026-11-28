@@ -54,6 +54,12 @@ if (args is [AgentStudio.Management.StudioBackupCommand.Flag, .. var backupArgs]
     return;
 }
 
+if (args is [AgentStudio.Pipeline.BatchGateInstanceInspection.Command, .. var inspectionArgs])
+{
+    Environment.ExitCode = AgentStudio.Pipeline.BatchGateInstanceInspection.RunCommand(inspectionArgs, Console.Out);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
