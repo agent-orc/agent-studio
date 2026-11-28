@@ -3563,6 +3563,7 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
     }
 
     [Fact]
+    [Trait("Category", "ReviewBase")]
     public async Task Batch_deferred_actionable_concern_waits_for_a_fix_before_admission()
     {
         using var factory = BuildFactory();

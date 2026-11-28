@@ -430,8 +430,8 @@
     }
     .dashboard {
       display: flex;
-      gap: 18px;
-      padding: 16px;
+      gap: var(--studio-compat-space-8);
+      padding: var(--studio-spacing-4);
       overflow-x: auto;
       flex: 1;
       min-width: 0;
@@ -459,11 +459,11 @@
     .lane-group {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      padding: 6px 6px 0;
-      border: 1px solid rgba(255,255,255,0.04);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.015);
+      gap: var(--studio-spacing-2);
+      padding: var(--studio-compat-space-2) var(--studio-compat-space-2) var(--studio-spacing-0);
+      border: 1px solid var(--studio-border);
+      border-radius: var(--studio-card-radius);
+      background: var(--studio-surface-muted);
       /*
        * Lane groups grow to share the dashboard's horizontal space so
        * the board fills 100% of the viewport. Inside each group, the
@@ -517,10 +517,10 @@
     .lane-group__head {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 4px 8px 0;
+      gap: var(--studio-spacing-2);
+      padding: var(--studio-spacing-1) var(--studio-spacing-2) var(--studio-spacing-0);
       color: var(--studio-fg-dim);
-      font-size: 11px;
+      font-size: var(--studio-compat-type-6);
       letter-spacing: 0.06em;
       text-transform: uppercase;
     }
@@ -529,29 +529,29 @@
       color: var(--studio-fg-dim);
     }
     .lane-group__focus {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
+      background: var(--studio-surface-muted);
+      border: 1px solid var(--studio-border);
       color: var(--studio-fg-dim);
       width: 20px;
       height: 20px;
-      border-radius: 3px;
+      border-radius: var(--studio-compat-radius-9);
       cursor: pointer;
-      font-size: 11px;
+      font-size: var(--studio-compat-type-6);
       line-height: 1;
       display: grid;
       place-items: center;
-      padding: 0;
+      padding: var(--studio-spacing-0);
       flex: 0 0 auto;
     }
     .lane-group__focus { margin-left: auto; }
     .lane-group__focus:hover {
-      background: rgba(255,255,255,0.10);
+      background: var(--studio-bg-hover);
       color: var(--studio-fg-strong);
     }
     .lane-group--focused .lane-group__focus {
-      background: rgba(148,163,184,0.20);
+      background: var(--studio-surface-muted);
       color: var(--studio-fg-strong);
-      border-color: rgba(148,163,184,0.35);
+      border-color: var(--studio-border-strong);
     }
     .lane-group--focused {
       flex: 1 1 100%;
@@ -561,7 +561,7 @@
     }
     .lane-group__lanes {
       display: flex;
-      gap: 12px;
+      gap: var(--studio-spacing-3);
       flex: 1;
       align-items: stretch;
       /* No min-width: 0. See the .lane-group block above for the
@@ -941,29 +941,29 @@
     /* Detail view: collapse the multi-row header to a single thin strip
        and tighten pane padding so the chat starts close to the top. */
     .app--vscode-layout .detail {
-      gap: 0;
+      gap: var(--studio-spacing-0);
     }
     .app--vscode-layout .detail__header {
-      padding: 2px 6px;
+      padding: var(--studio-compat-space-4) var(--studio-compat-space-2);
       align-items: center;
-      gap: 8px;
+      gap: var(--studio-spacing-2);
       min-height: 28px;
     }
     .app--vscode-layout .detail__back {
       width: 22px;
       height: 22px;
-      font-size: 12px;
-      border-radius: 4px;
+      font-size: var(--studio-font-size-sm);
+      border-radius: var(--studio-compat-radius-6);
     }
     .app--vscode-layout .detail__title {
-      font-size: 13px;
-      padding: 1px 4px;
-      margin-left: -4px;
-      gap: 6px;
+      font-size: var(--studio-font-size-md);
+      padding: var(--studio-compat-space-6) var(--studio-spacing-1);
+      margin-left: calc(-1 * var(--studio-spacing-1));
+      gap: var(--studio-compat-space-2);
     }
     .app--vscode-layout .detail__project {
-      font-size: 11px;
-      padding: 0 4px;
+      font-size: var(--studio-compat-type-6);
+      padding: var(--studio-spacing-0) var(--studio-spacing-1);
     }
     .app--vscode-layout .detail__meta {
       display: none;
@@ -980,20 +980,20 @@
     /* Pane chrome removed — panels sit flush on the detail surface. */
     .app--vscode-layout .pane {
       border: none;
-      border-radius: 0;
+      border-radius: var(--studio-radius-none);
       background: transparent;
       box-shadow: none;
     }
     .app--vscode-layout .pane__header {
-      padding: 4px 10px;
+      padding: var(--studio-spacing-1) var(--studio-compat-space-5);
       min-height: 28px;
     }
     .app--vscode-layout .pane__title {
-      font-size: 12px;
+      font-size: var(--studio-font-size-sm);
       letter-spacing: 0;
     }
     .app--vscode-layout .pane__title-icon {
-      font-size: 12px;
+      font-size: var(--studio-font-size-sm);
     }
     /* When the meta-pane is closed, hide the verbose telemetry chips on
        the protocol header. The "i" toggle inside the protocol pane can
@@ -1004,12 +1004,12 @@
       display: none;
     }
     .app--vscode-layout .pane__body {
-      padding: 0;
+      padding: var(--studio-spacing-0);
     }
     /* Inspector tabs ride on `<app-pane-tabs variant="pill">` since F38;
      * the wrapper container keeps `.inspector__header` for layout. */
     .app--vscode-layout .inspector__header {
-      padding: 0;
+      padding: var(--studio-spacing-0);
     }
 
     /*
@@ -1024,9 +1024,9 @@
          current ADR-0025 lane vocabulary. Slice 4 reads N from the
          visible-lane count. */
       grid-template-columns: repeat(7, minmax(220px, 1fr));
-      gap: 4px;
-      padding: 16px;
-      background: var(--surface-2, #1e1e2e);
+      gap: var(--studio-spacing-1);
+      padding: var(--studio-spacing-4);
+      background: var(--surface-2, var(--studio-bg-elevated));
       align-items: stretch;
       width: 100%;
       max-width: none;
@@ -1035,39 +1035,39 @@
       display: contents;
       background: transparent;
       border: 0;
-      padding: 0;
+      padding: var(--studio-spacing-0);
     }
     .app--kanban-spec-v1 .lane-group__head {
       display: none;
     }
     .app--kanban-spec-v1 .lane-group__lanes {
       display: contents;
-      gap: 0;
+      gap: var(--studio-spacing-0);
     }
     .app--kanban-spec-v1 .column {
-      background: var(--surface-1, #181825);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 6px;
-      padding: 4px 8px 8px;
+      background: var(--surface-1, var(--studio-bg-elevated));
+      border: 1px solid var(--studio-border);
+      border-radius: var(--studio-compat-radius-7);
+      padding: var(--studio-spacing-1) var(--studio-spacing-2) var(--studio-spacing-2);
       min-width: 0;
       flex: initial;
-      gap: 8px;
+      gap: var(--studio-spacing-2);
     }
     .app--kanban-spec-v1 .column__header {
       height: 36px;
-      padding-bottom: 0;
-      gap: 8px;
+      padding-bottom: var(--studio-spacing-0);
+      gap: var(--studio-spacing-2);
     }
     .app--kanban-spec-v1 .column__title {
-      font-size: 13px;
+      font-size: var(--studio-font-size-md);
     }
     .app--kanban-spec-v1 .column__count {
-      font-size: 12px;
+      font-size: var(--studio-font-size-sm);
     }
     .app--kanban-spec-v1 .column-rail {
       width: 48px;
       min-width: 48px;
       flex: 0 0 48px;
-      border-radius: 6px;
-      padding: 8px 4px;
+      border-radius: var(--studio-compat-radius-7);
+      padding: var(--studio-spacing-2) var(--studio-spacing-1);
     }

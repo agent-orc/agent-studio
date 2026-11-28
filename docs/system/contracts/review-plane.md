@@ -84,6 +84,15 @@ grading policy and reaches `ProductFailure`.
 The standalone Task Server rejects subject creation with `concept-brief-changed`
 when the plan hash differs from the current `prompt.md`. Both review stores use
 `ConceptRemoteReviewPolicy` for settlement coverage and brief identity.
+Concept-fit reads the full files in the review workspace. A reported failure
+to access required material settles as `ReviewInfra / ReviewMaterialUnavailable`
+with the missing evidence named. Completion requires a fresh content verdict.
+The executor sets `usesDossierCheckout` on parsed concept-fit verdicts when
+it supplies checkout instructions. This also identifies runs of older frozen
+plans on an updated executor. Settlement and completion consult the old
+snapshot prompt and the absence of this flag before interpreting a historical
+concern as a reviewer access failure. The flag is omitted when false to
+preserve the serialized form of earlier verdicts.
 
 `ReviewPlanDto.skippedAspects` and `ReviewReportRequest.skippedAspects` list
 each applicable aspect omitted by configuration or run condition and its

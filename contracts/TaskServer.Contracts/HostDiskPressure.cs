@@ -16,6 +16,8 @@ public sealed record HostDiskPressureDecision(HostDiskPressureLevel Level, strin
 /// <summary>Critical admission stays closed until every measured file system clears warning.</summary>
 public static class HostDiskPressurePolicy
 {
+    public const string PreparationCopies = "preparation copies";
+
     public static HostDiskPressureDecision Decide(IReadOnlyList<HostFilesystemUsageDto>? filesystems,
         HostDiskPressureThresholds thresholds, bool previouslyCritical = false)
     {
@@ -44,6 +46,8 @@ public static class HostDiskPressurePolicy
 
     private static string Describe(HostFilesystemUsageDto filesystem, double percent, string level)
     {
+        if (filesystem.OwnedBytes?.TryGetValue(PreparationCopies, out var copies) == true)
+            return FormattableString.Invariant($"disk pressure on the run host, {filesystem.FreeBytes / 1e9:0.#} GB free, of which {copies / 1e9:0.#} GB preparation copies");
         var consumers = filesystem.OwnedBytes is { Count: > 0 }
             ? "; product consumers: " + string.Join(", ", filesystem.OwnedBytes
                 .OrderByDescending(entry => entry.Value)

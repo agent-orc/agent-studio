@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -307,21 +308,31 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
     public async Task ProcessOutput_RefreshesOnlyTheReadProjectsWikiOncePerBurst()
     {
         WriteTask("burst-reader", "AGT-3793");
-        var service = BuildService(out _, out var cache, TimeSpan.FromMilliseconds(50));
+        // AGT-4360: the burst window runs on an injected clock. With a real 50 ms
+        // window a busy host spread the five lines over two windows.
+        var clock = new FakeTimeProvider();
+        var service = BuildService(out _, out var cache, TimeSpan.FromSeconds(2), clock);
         Assert.True(cache.Preload("Demo"));
         Assert.True(cache.Preload("Other"));
         var before = cache.GetStats();
 
         var at = new DateTime(2026, 11, 15, 21, 0, 0, DateTimeKind.Utc);
         for (var line = 0; line < 5; line++)
+        {
             Assert.Equal(1, service.ProcessOutput("AGT-3793", new[]
             {
                 new CliOutputLine { Timestamp = at.AddSeconds(line), Stream = "stdout", Text = "● Read docs/concepts/overview.md" },
             }));
-        var waited = Stopwatch.StartNew();
-        while (cache.GetStats().Fills == before.Fills && waited.Elapsed < TimeSpan.FromSeconds(10))
-            await Task.Delay(20);
-        await Task.Delay(200);
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+        }
+        // Inside the window nothing is rebuilt on the CLI output path.
+        Assert.Equal(before.Fills, cache.GetStats().Fills);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await WaitForAsync(() => cache.GetStats().MutationInvalidations > before.MutationInvalidations);
+        // The window has closed: a second tick must not find another refresh.
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await WaitForAsync(() => cache.GetStats().Fills > before.Fills);
 
         // One rebuild of the read project; before AGT-3793 each line rebuilt every project.
         var after = cache.GetStats();
@@ -329,6 +340,17 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
         Assert.Equal(before.MutationInvalidations + 1, after.MutationInvalidations);
         var page = cache.GetSnapshot("Demo")!.MetadataByRelPath["concepts/overview.md"];
         Assert.Equal(5, page.AgentReads!.Total);
+    }
+
+    /// <summary>Waits for a completion the injected clock released; the bound only breaks a hang.</summary>
+    private static async Task WaitForAsync(Func<bool> done)
+    {
+        var waited = Stopwatch.StartNew();
+        while (!done())
+        {
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(60), "The refresh released by the clock did not run.");
+            await Task.Delay(10);
+        }
     }
 
     private void WriteTask(string id, string key)
@@ -351,6 +373,10 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
 
     private WikiAgentReadService BuildService(
         out TaskScannerService scanner, out WikiContentCache cache, TimeSpan? refreshDelay)
+        => BuildService(out scanner, out cache, refreshDelay, refreshClock: null);
+
+    private WikiAgentReadService BuildService(
+        out TaskScannerService scanner, out WikiContentCache cache, TimeSpan? refreshDelay, TimeProvider? refreshClock)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -372,16 +398,17 @@ public sealed class WikiAgentReadBackfillTests : IDisposable
         var docs = new ProjectDocsService(scanner, registry, NullLogger<ProjectDocsService>.Instance);
         cache = new WikiContentCache(docs, NullLogger<WikiContentCache>.Instance);
         docs.SetWikiContentCache(cache);
-        return new WikiAgentReadService(
-            scanner,
-            registry,
-            new WikiAgentReadStore(),
-            docs,
-            config,
-            NullLogger<WikiAgentReadService>.Instance)
-        {
-            LiveReadRefreshDelay = refreshDelay ?? TimeSpan.FromSeconds(2),
-        };
+        var store = new WikiAgentReadStore();
+        var logger = NullLogger<WikiAgentReadService>.Instance;
+        var delay = refreshDelay ?? TimeSpan.FromSeconds(2);
+        // Without an injected clock the service keeps its own default clock.
+        return refreshClock is null
+            ? new WikiAgentReadService(scanner, registry, store, docs, config, logger) { LiveReadRefreshDelay = delay }
+            : new WikiAgentReadService(scanner, registry, store, docs, config, logger)
+            {
+                LiveReadRefreshDelay = delay,
+                RefreshClock = refreshClock,
+            };
     }
 
     public void Dispose()

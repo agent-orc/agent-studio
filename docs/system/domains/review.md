@@ -1,40 +1,40 @@
 # Review Domain Map
 
-Acceptance checks the first-parent line after a delivery's verified tree. A
-later card's exact published merge with a verified `gate-not-applicable`
-integration record counts as a covered publication: the integration lane
-already applied the project's gate policy to that merge. The record must name
-the same project, branch, and first-parent SHA. Other uncovered commits still
-refuse acceptance. Their refusal names the source card when known, or the
-commit author, and omits batch diagnostics when the project has no batch gate.
-A passed full-suite gate on a later publication of the same branch also covers
-every earlier publication contained in its tested first-parent tree. Acceptance
-records the covering gate SHA and completion time in the card's completion
-evidence. A failed gate or a tested tree that does not contain the publication
-does not cover it. When a containing later batch gate is still running, the
-refusal says acceptance waits for that run. Otherwise the refusal explains the
-Owner or operator candidate-verification endpoint for the uncovered SHA.
+A code delivery can be accepted once a verified publication on the current
+integration branch's first-parent line contains its current result or its
+proven effective commits. The card's own integration verification can supply
+that proof. A later containing publication with a passing gate, a green
+post-merge run, or an authorized human candidate record can also supply it.
+Acceptance records the SHA of the receipt. Subsequent publications can have
+outstanding checks without reopening an earlier delivery. A branch rewrite
+that removes the evidence requires another containing verified publication.
 
-A server-authored document-key discovery commit is gate-neutral only when its
-first-parent diff changes existing `docs/**/workbench.json` descriptors solely
-by adding `key`. A server-authored Dossier decision-receipt commit
-(`chore(workbench): request revision for|record decision for|archive <id>`)
-is gate-neutral only when it modifies exactly one `docs/**/workbench.json`,
-adds a `decision` receipt object, only appends to `lifecycleHistory` and
-`relatedTaskKeys`, and changes no descriptor value outside the receipt and its
-lifecycle bookkeeping (`lifecycleState`, `status`, `editedBy`, `editedAt`,
-`updatedAt`; AGT-3703). New managed commits carry an operation trailer
-(`Agent-Studio-Operation: workbench-key-discovery` or `workbench-decision`);
-legacy commits require the Agent Studio author and committer identity.
-Acceptance records the inspected commit SHA in the card's completion evidence
-as a gate-neutral Dossier descriptor commit. Every other later commit still
-needs a passed gate.
+A managed commit that assigns Dossier keys or records a Dossier decision can
+inherit the receipt for its parent. Studio checks the operation and the
+first-parent diff, including the descriptor values and append-only history.
+This includes the `chore(dossier): accept concept` lifecycle write. Other
+managed writes can inherit when every changed path is covered by the parent
+commit's `delivery.verificationNeutralPaths` in `.agent-studio/project.yml`.
+Each entry names an exact repository-relative file or a directory prefix ending
+in `/`. Declare only paths outside the build and test inputs. The default is
+empty. A change to the execution definition or another global build input
+requires its own evidence. Each step through a chain of managed writes must
+qualify. The completion evidence identifies the inherited receipt and the
+intervening commits.
+
+An integrated delivery awaiting evidence names the published tip an owner can
+verify. When the post-merge window for that tip reports an admission wait,
+the card and Needs you show when the wait was first observed on that tip,
+the elapsed time and the cause. Subsequent observations preserve the wait start. Recording a candidate
+verification requires an authorized human identity with workspace operation
+scope. The existing post-merge run authority continues to report its own runs.
+
 Batch candidates and direct integration merges assign keys to descriptors
 changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Deterministic measurement dispositions (AGT-4099)
@@ -56,6 +56,27 @@ measurement proof and missing verdicts retain infrastructure handling. A cited,
 diff-confirmed product finding takes the fix-round path even when another
 measurement is environmental. Human holds, immutable results and attempt
 fences remain admission requirements.
+
+For a completed mixed test run, a candidate-only assertion shared with the clean
+repeat receives at most three exact-test control pairs per command. Each pair
+uses fresh candidate and merge-base checkouts with their own pinned declarations.
+A matching assertion fingerprint and an observed passing same-filter base test
+supply the existing product-failure decision, even when other tests fail on the
+base. The settled command retains the assertion identity, fingerprints and both
+control measurements. An aborted host, changed assertion, absent base test or
+unavailable control remains explicit incomplete evidence. Shared base failures
+keep their existing disposition. Parameterized cases that cannot be identified
+by an exact method filter also remain incomplete.
+Assertion fingerprints require the exact test heading, a complete diagnostic
+block and an assertion source location. They retain message whitespace, asserted
+paths, console-like message text and stack locations, including source line
+numbers. Only framing established by the test heading and checkout paths in
+stack source locations are normalized. Missing locations or ambiguous output
+remain incomplete evidence. Report grading requires retained controls before
+accepting a reproduced candidate-only assertion, including environment and
+integration-branch diagnoses; losing the proof cannot turn the mixed run into a
+pass. Inference respects the frozen comparison mode and known backend diff
+scope. A clean repeat that passed keeps its existing disposition.
 
 When a deterministic command is red on a stale merge base and the fetched target
 has advanced, the review host measures the command on a clean target checkout.
@@ -98,13 +119,43 @@ review host checks relative file references in declared tool and preparation
 commands against that commit and the delivery's Git tree. If the plan commit
 contains a file that the delivery tree lacks, the attempt ends as
 `DeliveryPredatesReviewPlan`. Option **(b)** is implemented: the card receives
-an automatic merge round whose prompt names the full immutable result ref and
-asks the agent to merge the target branch, resolve conflicts, and submit the
-new delivery. A merge conflict is handled by that round. The attempt runs no
-review commands and spends no review infrastructure retry. A shell exit 127
-with no such Git-tree skew remains `ReviewInfra/ToolUnavailable` when the host
-lacks the declared binary. A delivery that contains the file runs its plan as
-before.
+an automatic preparation round whose prompt names the full immutable result
+ref and exact plan commit. Git and workspace preparation remain platform-owned;
+the run resolves content conflicts and submits the prepared delivery. The skew
+attempt runs no review commands and spends no review infrastructure retry.
+A shell exit 127 with no such Git-tree skew remains
+`ReviewInfra/ToolUnavailable` when the host lacks the declared binary. A delivery
+that contains the file runs its plan as before.
+
+AGT-4101 bounds the monolith `PlanMergeRound` continuation with the shared
+lifetime `CardRoundBudget` allowance (`OperatorSweeps:MaxRoundsPerCard`, default
+4). Before Ready, an atomic `logs/review-plan-skew-allowance.json` reservation
+binds the accepted settlement key, review attempt, immutable delivery SHA and
+plan commit. A replay reuses that reservation. The common counter counts its
+`card_round_budget_disposition` receipt and the later `quality_loop_reopened`
+receipt once per attempt, including older skew reopen receipts. Reservation
+survives a crash before the lane move; the existing keyed continuation replay
+finishes an interrupted move or its prompt/receipt projection without charging
+again. New delivery SHAs and target commits do not replenish the allowance.
+
+A pending recovery review rebuilds its delivery-specific plan against the
+pinned target commit before claim. Target ref movement alone retains the pin.
+A changed build-profile fingerprint or authored brief explicitly replaces the
+pin with the new plan commit and records `review_attempt_replanned` with cause
+`review-plan-skew-plan-replaced`. It retains all spent reservations. A delivered
+review outcome releases the active pin while retaining the lifetime allowance.
+A legacy settlement uses the executor's fetched target SHA when available;
+without a valid plan identity it cannot open a preparation round.
+
+On exhaustion the source enters `machine-blocker-quarantine` in Escalated with
+its immutable delivery retained and acceptance evidence still unsatisfied. A
+stable creation identity produces one linked configuration repair in Ready,
+with no dependency on the quarantined source. Creation, reference projection
+and continuation completion repair on replay. The repair diagnoses plan churn
+and verification preparation inputs on its platform-assigned base. This path
+creates no operator decision request or operator escalation notification and
+never overrides an existing human lane hold. The separate Engine review action
+applier is outside this monolith continuation contract.
 
 ## Host source cache startup
 
@@ -127,16 +178,27 @@ The review subject's `TaskRequirementsHash` still hashes the complete prompt:
 it identifies the exact instructions for that review attempt, including
 follow-up notes, and is distinct from the authored brief version.
 
-Concept-fit receives a bounded snapshot of the published Dossier index,
-`workbench.json`, and local files linked from them. Its round diff shows what
-changed, while the snapshot supplies unchanged Dossier content. A missing,
-unreadable, or over-budget file is named in the prompt so the aspect cannot
-infer completeness from a truncated excerpt. The plan builder wraps the
-snapshot in `ConceptDossierSnapshotSpan` markers. The review runner keeps that
-span whole: its 120,000-character authored-context cap applies only to the
-brief and instructions around it. The span counts against the diff budget, so
-on a large Dossier the diff is cut (and named) instead of the snapshot
-(AGT-3881, after the AGT-3876 Dossier lost its middle).
+Concept-fit opens the delivered index, `workbench.json`, local includes and
+other changed Dossier files in the review CLI's read-only checkout of the
+verified Result-SHA. This includes unchanged files on a follow-up round.
+The plan names the Dossier entrypoint when known. Reviewers can locate it from
+the brief and changed paths when metadata is unavailable. Prompt budgets still
+apply to the diff. The review host reports omitted diff material and the
+reviewer can read the full files in chunks.
+
+An inaccessible review input carries the marker classification
+`ReviewMaterialUnavailable` and the affected paths. The review settles
+`ReviewInfra` for bounded infrastructure retry or escalation. A confirmed
+omission in the delivered tree is a content finding. Earlier concerns that
+identify incomplete review inputs require a fresh review before completion.
+The legacy text check applies only to verdicts from the frozen snapshot-only
+prompt. A runner that supplies checkout instructions records that fact on its
+verdict, including when it executes an older plan. Before executing a frozen
+stock snapshot prompt, the runner replaces its snapshot grading and tool-use
+directions with checkout reads and the typed read-failure response. It keeps
+the frozen brief, content checks and evidence. In checkout reviews, only
+the explicit material-access classification triggers this recovery. A finding
+about how the concept handles unavailable inputs keeps its content verdict.
 
 For older settled concept reviews, completion accepts a whole-prompt review
 hash as current only while the current authored version equals the delivery
@@ -432,7 +494,8 @@ lifetime per card; the reissue limit applies to the current review epoch.
 The task detail shows the delivered round count, limit, and aspect
 that spent the budget. Automatic continuation admission also checks the
 per-card `CardRoundBudget` (default 4), which counts reissues, review finding
-and concern reopens, and automatic continuations across all epochs.
+and concern reopens, plan-skew reservations, and automatic continuations across
+all epochs. A plan-skew reservation and its reopen receipt spend one round.
 
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the
@@ -502,6 +565,23 @@ reports without a recorded admission remain refused; a legacy literal pass
 retains its existing lineage checks. Stale briefs, a wrong content aspect,
 unsettled or mismatched reviews, and missing required research reports remain
 refused. Report-only local review retains its existing run-bound contract.
+
+For a local coding delivery with a known SHA, review stores its content
+dispositions in `local-content-admission.json` before promotion to Human Review
+(AGT-4195). A literal pass without a local delivery SHA can promote without
+this receipt. An accepted content concern or a required follow-up still needs
+the receipt, including when the content aspect itself passed. The receipt
+records the review attempt, delivery SHA, local run identity, brief version,
+content dispositions and hashes of
+`content-review-context.json` plus each original `aspect-<aspect>.json`.
+The context's `admissionReviewAttemptId` anchors the receipt independently;
+a missing receipt cannot bypass a required follow-up even for a literal pass.
+Original aspect findings are preserved. Completion verifies these identities
+and hashes and reads any required follow-up key from the exact review round
+in `review-round-budget.json`. A new local run clears the context and receipt.
+Missing dispositions, an absent or mismatched delivery, unreadable evidence,
+and failed atomic writes keep promotion pending and log
+`local-content-admission-record-failed`; a later review sweep can retry.
 
 `CompletionContentAdmissionTests` in
 `backend.Tests/CompletionContentPolicyTests.cs` covers advisory and spent-budget
@@ -730,7 +810,7 @@ an empty dependency tree or a red integration branch must not block it. Any
 other concept diff (unknown, several topics, or paths outside `docs/<topic>/`)
 keeps the build and lint commands next to `concept-fit`. The aspect uses the shared aspect
 runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
-compares the delivered Dossier in the Result-SHA diff with the current
+compares the delivered Dossier in the Result-SHA checkout with the current
 `prompt.md` (bounded to 64,000 characters in the rendered prompt): required
 sections, operator directions, recommendations for open
 decisions, and implementation-card source data. A contradiction is a blocking

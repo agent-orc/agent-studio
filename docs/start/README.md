@@ -58,9 +58,12 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Managed PostgreSQL databases for hosted apps: project.yml `databases`, run-zone provisioning, generated credentials, retention and owner deletion (IP-D5 option B, AGT-3877); backups, restore runbook, liveness, size and connection metrics (AGT-3878) | [operations/managed-databases/](../operations/managed-databases/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| Release startup preflight, SSH screenshot shadow and preparation copy cleanup | [operations/studio-host-tools.md](../operations/studio-host-tools.md) |
 | [CLI rollout](../operations/cli-rollout.md) | German operator runbook for CLI rollout, legacy launcher adoption, KORI image pins, drift alerts, and rollback. |
-| Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
+| [Operator-Handbuch](../operations/operator-handbuch.md) | Twelve German recipes from the November 2026 operator log, covering integration, deployment, capacity, review and operator decisions. |
+| Server-first networked deploy, required release startup preflight, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Deploy without lost work: host drain, quiet point, server then hosts one by one, resume; review relaunch and gate refund across restarts (AGT-3647) | [operations/deploy-drain-procedure.md](../operations/deploy-drain-procedure.md) |
+| Deployment attempt history, chain reports and historical import | [operations/deploy-records.md](../operations/deploy-records.md) |
 | Report Studio deploys to the Studio: deploy reporter token, `curl` recipe for start, steps and end, live release and "integrated, not live yet" in Bereitstellung (AGT-3879) | [operations/instance-deploy-records.md](../operations/instance-deploy-records.md) |
 | Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
@@ -68,6 +71,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Access page pilot of the UI standard: section, outline, grid, row detail, action placement, chips, confirm in place, empty state, secret reveal, and the shared components (AGT-4029) | [system/ui-standard/access-page-pilot.md](../system/ui-standard/access-page-pilot.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline, including post-merge gate placement, window deadlines and measurement coverage (AGT-4075) | [domains/pipeline.md](../system/domains/pipeline.md) |
+| Dispatcher personas: admission role, replay evidence and testing strategy boundaries | [decision Dossier](../dispatcher-personas/index.html) |
 | Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
 | Orchestration decision library, action vocabulary and architecture guard | [contracts/orchestration-decisions.md](../system/contracts/orchestration-decisions.md) |
@@ -156,7 +160,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Deck icon alternatives for a multi-faceted project console (AGT-2355, Round 2) | [interactive Dossier](../operations/deck-icon-exploration/index.html) · [standalone SVG proof](../operations/deck-icon-exploration/results/deck-icon-options-round-2.svg) |
 | Guided installer story for an all-Docker install on a fresh Linux or Windows machine, with per-step failure modes and a test protocol template (AGT-2503) | [interactive Dossier](../operations/installer-story/index.html) |
 | Open gap: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the options for the next Docker-deployable card (AGT-2736) | [gap note](../operations/setup/docker-compose-connector-gap.md) |
-| Networked server-first deploy: manifest, host adapter, snapshot, switch, health and rollback procedure (AGT-3513) | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
+| Networked server-first deploy: manifest, host adapter, startup preflight, snapshot, switch, health and rollback procedure (AGT-3513) | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Global Orchestrator Watcher decision dossier: triggers, recovery authority, Activity visibility, model economy, and observe-first slices (AGT-2557) | [decision dossier](../operations/orchestrator-waechter/index.html) |
 | Organization-wide telemetry layer: current signals, shared event model, local-first hybrid bus, orchestrator action rules, Agent Studio operations-hub boundary, and rollout slices (AGT-2661) | [decision dossier](../operations/telemetry-layer/index.html) |
 | Observation theme Dossier: the four-layer observation stack (file, cluster, case, projection), merging the Global Orchestrator Watcher, the organization-wide telemetry layer and the project feed, with ten open decisions (AGT-2800) | [decision dossier](../operations/observation/index.html) |
@@ -256,7 +260,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Retention and archive dossier (policy defaults, archive stages, Task Server management contract, full backup sets) | [operations/retention-und-archiv/index.html](../operations/retention-und-archiv/index.html) |
 | Task Server legacy migration, signed cutover evidence, retention, archive, restore, and full backup operator commands | [legacy migration](../operations/setup/task-server.md#legacy-single-writer-migration) · [retention and archive](../operations/setup/task-server.md#retention-against-the-sqlite-store) |
 | Installation recovery set: versioned manifest, off-host copy, empty-target restore, host fencing, resume gate, and measured drill (I07) | [operations/setup/installation-recovery.md](../operations/setup/installation-recovery.md) |
-| Standalone remote runner / agent host daemon (Linux) | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
+| Standalone remote runner / agent host daemon (Linux), post-merge gate placement and run-host fallback | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
 | Zone network policy on Docker hosts: work-zone egress allowlist through resolver-filled ipsets, no inbound, run-zone denials, IPv6 drop, apply, verify and rollback script, `zone-policy` capability (AGT-3231, IP-2) | [operations/setup/zone-network-policy.md](../operations/setup/zone-network-policy.md) |
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
@@ -309,7 +313,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
 | Workspace and project limits for tokens, compute, and hosting; metering, admission, and owner overrides (AGT-3177) | [concepts/workspace-quotas.md](../concepts/workspace-quotas.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
-| Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
+| Quota forecast: weekly curve, 3-hour burn rate, armed fallback, and per-window admission paces (steady, use by time, unpaced) with a strict cap | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |
 | Admin CLI onboarding | [concepts/admin-cli-onboarding.html](../concepts/admin-cli-onboarding.html) |
 | Orchestrator supervision loop | [concepts/orchestrator-supervision-loop.html](../concepts/orchestrator-supervision-loop.html) |

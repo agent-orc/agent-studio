@@ -868,6 +868,12 @@ public sealed class AgentMessageBusBridge
             topic: "line_guardian_" + kind, summary: TruncateSummary(summary),
             payload: new { incident, kind }, tags: ["line-guardian", "incident:" + incident]), ct);
 
+    public Task<bool> EmitCredentialLifecycleWarningAsync(CredentialLifecycleWarningDto warning, CancellationToken ct = default)
+        => TryEmitAsync(NewMessage(participantId: ParticipantRuntime, role: "system", kind: "observation",
+            severity: "High", project: null, jobId: null, topic: "credential_lifecycle_warning",
+            summary: TruncateSummary($"Owner: credential {warning.Subject} due {warning.DueAt:yyyy-MM-dd} ({warning.ThresholdDays}-day warning): {warning.CredentialId}."),
+            payload: warning, tags: ["credential-lifecycle", "owner", warning.Subject]), ct);
+
     public async Task EmitControlPlaneAuditAlertAsync(string code, string message, long? sequence, CancellationToken ct = default)
     {
         var msg = NewMessage(

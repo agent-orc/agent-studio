@@ -5,7 +5,7 @@
 .run-history__trigger {
   display: inline-flex;
   align-items: center;
-  padding-block: 0;
+  padding-block: var(--studio-spacing-0);
   padding-inline: var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent-4) 40%, transparent);
   border-radius: var(--studio-compat-radius-2);

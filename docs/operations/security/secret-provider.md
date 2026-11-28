@@ -105,10 +105,10 @@ why project keys also allow internal spaces. They keep working:
 - A reference resolves its literal scope first, so a binding to
   `secret://memowikis/prod/DATABASE_URL` still finds the secret stored under
   `memowikis/prod`, also after the project is renamed.
-- An id scope also reads the project's current display-name scope at each
+- An id scope also reads the project's current and retained prior display-name scopes at each
   inheritance level: `secret://PROJ-002/prod/X` looks in `PROJ-002/prod`,
   `memowikis/prod`, `PROJ-002`, `memowikis`, then `workspace`.
-- The scope routes list both scopes. Rotate, revoke and delete act on the
+- The scope routes list every retained scope. Rotate, revoke and delete act on the
   scope that holds the named secret. A new name goes to the id scope, unless a
   store was chosen only for the display-name scope; it then stays there until
   the store is chosen for the id scope.
@@ -117,14 +117,31 @@ why project keys also allow internal spaces. They keep working:
 - Metadata responses keep `scope` as the stored key and add `routeScope`, the
   scope under the display name, which the Settings selectors group by.
 
-Studio-generated managed database credentials (AGT-3877) and the deploy
-telemetry ingest token (M5) still use the scope under the display name they
-are created with. The host receives the database credential reference in its
-run-target spec, so moving it needs the id passed into that spec.
+Studio-generated managed database credentials (AGT-3877) and deploy telemetry
+ingest tokens (M5) use project ids for new secret scopes and bindings
+(AGT-4286). Run-target database specs carry the same id reference. Existing
+database values stay in their original encrypted scope and resolve through
+retained aliases; preparing a host updates its generated database binding to
+the id reference without replacing the password. Existing deploy telemetry
+tokens and their bindings are reused while live.
 
-A secret stored under a display name that is no longer current is not listed
-under the renamed project and is not reached through an id reference. A
-binding that names it keeps resolving.
+Both registry rename paths retain previous display names in the project's
+`SecretDisplayNames` field. Secret lookup accepts these aliases after a restart,
+including for binding files never read before the rename. These aliases apply
+to secret lookup only; general project routes still use the current name or id.
+A display name shared with another project's current or retained name is
+excluded from both projects' secret aliases. Ambiguous legacy telemetry tokens
+are refused rather than assigned to the new owner; id-keyed tokens keep working. Names lost by renames before this history was recorded cannot
+be reconstructed from the registry. Recovering them requires trusted historical identity information;
+this operation does not infer identity from storage directory names.
+
+Telemetry token hashes in `access-state.json` now carry the project id.
+Authentication, listing and revocation lazily migrate matching legacy token
+metadata without rotating the token or changing its hash, signals or expiry.
+Authentication returns the current display name to the telemetry intake, whose
+environment directory and data queries use current project routes. Value masking
+checks id scopes and retained name scopes.
+
 Deeper scopes inherit and may override. A reference to
 `secret://memowikis/stage/MAIL_KEY` resolves the environment secret, then the
 project secret, then the workspace secret. The first secret that exists
@@ -266,14 +283,28 @@ the project's registry id, one LF byte, and the environment ID encoded as
 UTF-8. A project the registry does not know uses the name passed to the
 binding service. A file keyed by the display name, written before AGT-3987,
 is moved to the id key the first time it is read: by the Secrets view, the
-Deploy area's secret readiness, or a deploy claim. A display-name file that
-was never read between the upgrade and a rename is not found afterwards. Each file is a JSON array of
+Deploy area's secret readiness, or a deploy claim. Lookup checks retained
+prior names as well as the current display name, so a rename before the first
+read keeps the binding. If id and name files coexist, records are merged by
+secret name with the id record taking precedence. Each file is a JSON array of
 `{ name, reference, boundBy, boundAt, approvedBy }` records. A rebind replaces
 the record with the same name. The service writes a temporary file in the
 same directory, sets mode 600 on Unix, and atomically replaces the file.
 Missing files mean no bindings. Back up this metadata with `TaskRepository`;
 restoring it alone does not restore the secret values or their key. No value,
 lease token, or resolved version is stored in a binding.
+
+There is no startup migration sweep. To migrate existing binding files and
+telemetry token project metadata explicitly, call
+`POST /api/secrets/migrate-project-keys` on the operator listener with an
+owner or operator credential that may write workspace secrets. The operation
+returns `{ bindingFiles, telemetryTokens }` counts and is safe to repeat.
+It visits registered projects, declared environment ids, preview, and environment
+ids present in stored references, including bindings of removed declarations
+when their references still identify the environment. Values, versions, token
+hashes, and human-approved references remain unchanged; encrypted values keep
+their original scopes and resolve through the retained aliases. The operation
+can be cancelled between environments and retried after an I/O error.
 
 The claim response gives the host only references and preflight problems.
 Health-only retries of an already deployed container skip secret preflight and
@@ -487,6 +518,23 @@ The Secrets section is under Settings → Global → Secrets, next to Credential
 (`#/workspace/settings/secrets`). It lists the secrets of the selected scope
 (workspace, project, or project environment) with versions and metadata. Owners
 and operators can add, rotate and revoke there. Viewers see metadata only.
+
+## Credential inventory metadata (WI-1)
+
+Settings > Credentials includes each readable secret's reference, scope,
+creator, creation date, last use and last rotation, without reading its value.
+Deploy target keys, kubeconfig credentials and app secrets therefore appear as
+long-lived entries with a manual rotation reminder plan. Rotating a secret
+through the provider resets that plan's baseline to `rotatedAt`. Revoked
+secrets remain visible without lifecycle warnings.
+
+Each configured Vault/OpenBao or 1Password Connect binding also contributes an
+external-store-token metadata row, including bindings whose authentication
+comes from an environment variable. The inventory does not read that variable
+or return the backend URL, token, locator content or token prefix. A missing
+expiry is displayed as `none` (no expiry recorded). Unknown historical dates
+stay unknown. The default 90-day reminder interval and 14/3-day Owner notices
+are described in the [security overview](overview.md#credential-lifetimes-and-manual-rotation-plans-wi-1-2026-11-28).
 
 ## Not in this card
 

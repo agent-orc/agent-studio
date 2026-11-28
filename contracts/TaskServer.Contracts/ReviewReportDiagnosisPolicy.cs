@@ -88,6 +88,51 @@ public static class ReviewReportDiagnosisPolicy
                     && baseline.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
                     && baseline.BaselineSha == command.BaselineSha
                     && baseline.ExitCode is > 0);
+            var invocation = (command.FileName + " " + string.Join(' ', command.Arguments)).Replace('\\', '/');
+            var backendUnchanged = invocation.Contains("backend.Tests/", StringComparison.OrdinalIgnoreCase)
+                && request.Workspace.ChangedPaths is { } changedPaths
+                && !changedPaths.Any(path => path.Replace('\\', '/').StartsWith("backend/", StringComparison.Ordinal));
+            var candidateAssertions = (command.InitialFailures ?? []).Concat(command.NewFailures ?? [])
+                .Except(command.PreExistingFailures ?? [], StringComparer.Ordinal).ToArray();
+            var requiresAssertionProof = command.AssertionEvidence.Count > 0
+                || ((!backendUnchanged || command.Diagnosis?.ChargesCard == true)
+                    && !ReviewBaselineModes.IsExitStatus(plan?.Commands
+                        .FirstOrDefault(step => step.StepId == command.StepId)?.BaselineMode)
+                    && (clean is not null || !blockedByBaselineBuild)
+                    && (clean is null ? candidateAssertions.Length > 0
+                        : ReviewRepeatFilterPolicy.RequiresAssertionProof(command, clean)));
+            if (command.AssertionEvidence.Count > ReviewRepeatFilterPolicy.MaximumAssertionControls
+                || (requiresAssertionProof && !command.AssertionEvidence.Any(proof =>
+                    ReviewRepeatFilterPolicy.HasCompleteAssertionProof(proof, command, request.Commands))))
+            {
+                unproven ??= "DiagnosisEvidenceInvalid";
+                // Check before disposition shortcuts: losing proof cannot make
+                // a reproduced candidate-only assertion non-blocking either.
+                var assertions = candidateAssertions.Concat(command.AssertionEvidence.Select(proof => proof.Test))
+                    .Distinct(StringComparer.Ordinal);
+                var reason = $"Incomplete exact-test assertion evidence for {command.StepId}: "
+                    + string.Join(", ", assertions) + ".";
+                var incomplete = new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.FirstOccurrence, 0.2,
+                    (command.Diagnosis?.Evidence ?? []).Append(reason)
+                        .Distinct(StringComparer.Ordinal).ToArray());
+                var singleCommand = request.Commands.Count(item => item.Phase == "verification"
+                    && item.WorkspaceRole == "candidate" && item.Aspect == command.Aspect) == 1
+                    && (plan?.Commands.Count(item => item.Aspect == command.Aspect) ?? 0) <= 1;
+                request = request with
+                {
+                    Commands = request.Commands.Select(item => item == command ? item with { Diagnosis = incomplete } : item).ToArray(),
+                    Verdicts = request.Verdicts.Select(verdict => verdict.Aspect == command.Aspect
+                        && (singleCommand || verdict.EvidenceChecked?.Split(';', StringSplitOptions.TrimEntries)
+                            .Contains("command:" + command.StepId, StringComparer.Ordinal) == true)
+                        ? verdict with
+                        {
+                            Status = "concerns", Classification = DeliveryFailureDiagnosis.FirstOccurrence, Diagnosis = incomplete,
+                            Summary = verdict.Summary.Contains(reason, StringComparison.Ordinal)
+                                ? verdict.Summary : verdict.Summary + " " + reason, Missing = "none",
+                        } : verdict).ToArray(),
+                };
+                continue;
+            }
             if (command.Diagnosis?.Classification == "IntegrationBranchDefect")
             {
                 if (command.BaselineExitCode is > 0 && (clean is not null || blockedByBaselineBuild))

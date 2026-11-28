@@ -61,18 +61,22 @@ public sealed class StructureSnapshotService : BackgroundService
     private (StructureObservedInputs Inputs, DateTime At)? _inputs;
     private (StudioSelfObservation Value, DateTime At)? _selfSample;
     private int _measuring;
+    private readonly StructureRuntimeSampler _runtime;
+    private readonly StructureReportCache _reports;
+    private (IReadOnlyList<RunnerCapabilitySnapshotDto> Hosts, StructureInstallationFacts Facts)? _reading;
+    private readonly SemaphoreSlim _runtimeGate = new(1, 1);
 
     public StructureSnapshotService(IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces,
         ProjectEnvironmentService environments, GitService git, V1ReviewExecutorRegistry hosts, LinkSupervisor links,
         EnvironmentHealthService health, HostReleaseDriftWatchdog releases, OrchestrationEngineReadiness engine,
         PullGateStore gates, TimeProvider clock, IHttpClientFactory clients, StructurePlacementSource placement,
         StudioSelfObserver self, StructureDataLocationService data, ILogger<StructureSnapshotService> logger,
-        AttemptAuthorityService? authority = null, ReviewClaimUnclaimableLog? unclaimable = null)
+        StructureRuntimeSampler runtime, StructureReportCache reports, AttemptAuthorityService? authority = null, ReviewClaimUnclaimableLog? unclaimable = null)
     {
         _configuration = configuration; _projects = projects; _workspaces = workspaces; _environments = environments;
         _git = git; _hosts = hosts; _links = links; _health = health; _releases = releases; _engine = engine;
         _gates = gates; _clock = clock; _clients = clients; _placement = placement; _self = self; _data = data;
-        _logger = logger; _authority = authority; _unclaimable = unclaimable;
+        _reports = reports; _runtime = runtime; _logger = logger; _authority = authority; _unclaimable = unclaimable;
     }
 
     /// <summary>Raised on the refresh worker for every scope whose projection changed.</summary>
@@ -108,7 +112,12 @@ public sealed class StructureSnapshotService : BackgroundService
     {
         using var timer = new PeriodicTimer(RefreshInterval, _clock);
         while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            try { await RuntimeAsync(stoppingToken); }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            { _logger.LogWarning(ex, "structure-sample-failed"); }
             await RefreshDueAsync(stoppingToken);
+        }
     }
 
     /// <summary>One background pass: every scope in demand is rebuilt once and its delta published.</summary>
@@ -203,14 +212,14 @@ public sealed class StructureSnapshotService : BackgroundService
     }
 
     /// <summary>Host reports and the other observations, read at most once per refresh interval for all scopes.</summary>
-    private async Task<StructureObservedInputs> InputsAsync(CancellationToken cancellationToken)
+    internal async Task<StructureObservedInputs> InputsAsync(CancellationToken cancellationToken)
     {
         await _inputGate.WaitAsync(cancellationToken);
         try
         {
             var now = _clock.GetUtcNow().UtcDateTime;
             if (_inputs is { } cached && now - cached.At < RefreshInterval - TimeSpan.FromSeconds(1)) return cached.Inputs;
-            var hosts = await HostsAsync(cancellationToken);
+            var (hosts, facts) = await RuntimeAsync(cancellationToken);
             Dictionary<string, IReadOnlyList<string>>? running = null;
             if (_authority is not null && !TaskServerPlaneProxy.IsConfigured(_configuration))
                 running = hosts.Select(host => host.RunnerId).Distinct(StringComparer.Ordinal).ToDictionary(id => id,
@@ -226,14 +235,30 @@ public sealed class StructureSnapshotService : BackgroundService
                     finally { Interlocked.Exchange(ref _measuring, 0); }
                 }, CancellationToken.None);
             var inputs = new StructureObservedInputs(hosts, _links.Snapshot(), _releases.Current, _engine.State,
-                _gates.Hosts(), new(sample.Value, _data.Current, running));
+                _gates.Hosts(), new(sample.Value, _data.Current, running, Installation: facts));
             _inputs = (inputs, now);
             return inputs;
         }
         finally { _inputGate.Release(); }
     }
 
-    private async Task<IReadOnlyList<RunnerCapabilitySnapshotDto>> HostsAsync(CancellationToken cancellationToken)
+    private async Task<(IReadOnlyList<RunnerCapabilitySnapshotDto> Hosts, StructureInstallationFacts Facts)> RuntimeAsync(CancellationToken ct)
+    {
+        await _runtimeGate.WaitAsync(ct);
+        try
+        {
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (_reading is { } cached && now - cached.Facts.Api.Sample.ObservedAt < RefreshInterval - TimeSpan.FromMilliseconds(250))
+                return cached;
+            var hosts = _reports.Merge(await HostsAsync(ct), now, _self.MachineId, _self.KernelId);
+            var facts = await _runtime.ReadAsync(now, hosts, ct);
+            _reading = (hosts, facts);
+            return (hosts, facts);
+        }
+        finally { _runtimeGate.Release(); }
+    }
+
+    private async Task<IReadOnlyList<RunnerCapabilitySnapshotDto>?> HostsAsync(CancellationToken cancellationToken)
     {
         if (TaskServerPlaneProxy.IsConfigured(_configuration))
         {
@@ -248,8 +273,7 @@ public sealed class StructureSnapshotService : BackgroundService
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable");
-                // The last reports stay visible and turn stale by their own timestamps.
-                return _inputs?.Inputs.Hosts ?? [];
+                return null;
             }
         }
         var snapshots = _hosts.ListCapabilitySnapshots();

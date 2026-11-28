@@ -34,8 +34,8 @@
   }
 
   &__punchline {
-    margin: 0;
-    font-size: 13px;
+    margin: var(--studio-spacing-0);
+    font-size: var(--studio-font-size-md);
     font-weight: 500;
     line-height: 1.4;
     color: var(--studio-fg-muted);

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
+import { createSocketPath } from './agent-socket.mjs';
 import path from 'node:path';
 import { fork, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -92,9 +92,7 @@ export async function serveAgent(configDir, ready = () => {}, { now = () => Date
     : { provider: memoryProvider, note: 'Device binding: memory. Hardware keys are off by default and not yet verified on real hardware.' };
   // On a memory host the initial session key is also the device key. It stays resident across rotations.
   if (provider.bindingKind === 'memory') provider = memoryProvider;
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-op-agent-'));
-  if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\studio-op-${crypto.randomUUID()}` : path.join(directory, 'sign.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\studio-op-${crypto.randomUUID()}` : createSocketPath(configDir);
   let session = null;
   let ended = false;
   let server;
@@ -106,7 +104,8 @@ export async function serveAgent(configDir, ready = () => {}, { now = () => Date
     privateKey = null; provider = null;
     clearInterval(monitor); clearTimeout(pendingEnd);
     server?.close(); bridge?.kill();
-    fs.rmSync(directory, { recursive: true, force: true });
+    process.off('SIGTERM', close); process.off('SIGINT', close);
+    if (process.platform !== 'win32') fs.rmSync(path.dirname(endpoint), { recursive: true, force: true });
   };
   const handle = message => {
     if (ended) throw new Error('Session ended.');
@@ -207,13 +206,18 @@ export async function serveAgent(configDir, ready = () => {}, { now = () => Date
         if (buffer.includes('\n')) socket.end(answer(buffer.split('\n')[0]) + '\n');
       });
     });
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
-    fs.chmodSync(endpoint, 0o600);
+    try {
+      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
+      fs.chmodSync(endpoint, 0o600);
+    } catch (error) { close(); throw error; }
   }
   ready({ endpoint, publicJwk, thumbprint });
   return { close, endpoint, publicJwk, thumbprint };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === moduleFile) {
-  serveAgent(process.argv[2], info => process.send?.(info)).catch(() => { process.send?.({ error: 'Signer failed to start.' }); process.exit(1); });
+  serveAgent(process.argv[2], info => process.send?.(info)).catch(error => {
+    if (process.send) process.send({ error: error.message }, () => process.exit(1));
+    else { console.error(error.message); process.exit(1); }
+  });
 }

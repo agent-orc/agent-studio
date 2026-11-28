@@ -146,7 +146,9 @@ public sealed class RemoteTaskRunner
             continuationBaseRef: continuationBaseRef,
             continuationBaseSha: continuationBaseSha,
             continuationBaseReason: continuationBaseReason,
-            taskTitle: runSpec?.TaskTitle);
+            taskTitle: runSpec?.TaskTitle,
+            requiresContinuationBase: mechanicalDelta is not null
+                || MechanicalRoundFallbackPolicy.RequiresPreparedCheckout(freshRunReason));
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
@@ -186,6 +188,7 @@ public sealed class RemoteTaskRunner
     public async Task<bool> ReleaseDeadAsync(PersistedRunnerSlot slot, string reason)
     {
         _log($"releasing dead persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
+        RunnerPreparationCopies.Release(_options.WorkDir, slot, _log);
         var authorityExhausted = string.Equals(
             slot.Phase,
             "authority-deadline-exhausted",
@@ -408,6 +411,7 @@ public sealed class RemoteTaskRunner
     /// </summary>
     public async Task<bool> ReleaseSettledAsync(PersistedRunnerSlot slot, string reason)
     {
+        RunnerPreparationCopies.Release(_options.WorkDir, slot, _log);
         _log($"releasing settled persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
         if (_client.UsesDurableTaskServer)
         {
@@ -427,7 +431,16 @@ public sealed class RemoteTaskRunner
         return false;
     }
 
-    private async Task<int> RunPersistedAsync(
+    private Task<int> RunPersistedAsync(
+        PersistedRunnerSlot slot,
+        GitWorkspace workspace,
+        CancellationToken shutdown,
+        bool reattach,
+        CancellationToken daemonShutdown = default)
+        => RunnerPreparationCopies.DuringAttemptAsync(_options.WorkDir, slot, _state, daemonShutdown,
+            () => RunPersistedCoreAsync(slot, workspace, shutdown, reattach, daemonShutdown), _log);
+
+    private async Task<int> RunPersistedCoreAsync(
         PersistedRunnerSlot slot,
         GitWorkspace workspace,
         CancellationToken shutdown,
@@ -1247,7 +1260,8 @@ public sealed class RemoteTaskRunner
                 workspace.BaseSha,
                 message => shipper.Add("system", "[runner] " + message),
                 TimeSpan.FromMinutes(20),
-                shutdown).ConfigureAwait(false);
+                stopRun.Token, slot.PreparationCopyId).ConfigureAwait(false);
+        stopRun.Token.ThrowIfCancellationRequested();
         if (projectPreparation.Configured && !projectPreparation.Succeeded)
         {
             throw new RemoteClaimPreparationException(
@@ -1452,7 +1466,7 @@ public sealed class RemoteTaskRunner
             }
         }
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
-        var executed = await AwaitDetachedAsync(
+        return await AwaitDetachedAsync(
             slot,
             workspace,
             shipper,
@@ -1460,12 +1474,6 @@ public sealed class RemoteTaskRunner
             stopRun.Token,
             daemonShutdown,
             operatorStopRequested: operatorStopRequested);
-        // Only a terminal result proves that no command of this run will read the
-        // per-run cache folders again. A daemon shutdown leaves the detached
-        // worker running, so its folder stays and is reclaimed by age instead:
-        // the handoff path throws out of the await above and skips this release.
-        ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
-        return executed;
     }
 
     private async Task<RemoteExecutionResult> AwaitDetachedAsync(

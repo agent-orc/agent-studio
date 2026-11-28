@@ -392,6 +392,11 @@ public sealed partial class ProjectRegistry
         }
     }
 
+    private static IReadOnlyList<string> SecretNameHistory(ProjectRecord project, string nextName)
+        => project.SecretDisplayNames.Append(project.DisplayName)
+            .Where(name => !string.Equals(name, nextName, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal).ToArray();
+
     /// <summary>F45b — rename a project's display name. Id is immutable.</summary>
     public ProjectRecord Rename(string id, string newDisplayName)
     {
@@ -401,7 +406,7 @@ public sealed partial class ProjectRegistry
         lock (_gate)
         {
             ThrowIfDisplayNameCollisionLocked(id, normalized);
-            return MutateLocked(id, p => p with { DisplayName = normalized }, "renamed");
+            return MutateLocked(id, p => p with { DisplayName = normalized, SecretDisplayNames = SecretNameHistory(p, normalized) }, "renamed");
         }
     }
 
@@ -518,6 +523,7 @@ public sealed partial class ProjectRegistry
             var updated = current with
             {
                 DisplayName = updateDisplayName ? displayName! : current.DisplayName,
+                SecretDisplayNames = updateDisplayName ? SecretNameHistory(current, displayName!) : current.SecretDisplayNames,
                 ShortCode = updateShortCode ? shortCode! : current.ShortCode,
                 Color = updateColor ? color : current.Color,
                 WorkspaceId = updateWorkspace ? workspaceId! : current.WorkspaceId,

@@ -17,11 +17,74 @@
       "bytes": 14676
     },
     {
+      "path": "backend.Tests/DispatchEndpointTests.cs",
+      "status": "measured-backlog",
+      "strategy": "Split dispatcher tests into partial fixtures for lease and wave control, forecasts and conflict isolation, and review cohorts and weights. Share the existing host factory and disposal.",
+      "lines": 941,
+      "bytes": 61514
+    },
+    {
+      "path": "backend.Tests/PostMergeIncidentServiceTests.cs",
+      "status": "measured-backlog",
+      "strategy": "Split tests into partial fixtures for repair creation and closure, guardian receipts and owner questions, and per-test quarantine, lift and relapse. Keep receipt builders and project setup shared.",
+      "lines": 677,
+      "bytes": 37353
+    },
+    {
       "path": "backend/Features/Dispatch/DispatchRegistration.cs",
       "status": "measured-backlog",
       "strategy": "Extract ordered registration partials per dispatch feature.",
       "lines": 137,
       "bytes": 9277
+    },
+    {
+      "path": "backend/Features/Git/GitService.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract responsibility-specific partial files for worktree lifecycle, integration synchronization and publication, and delivery attribution and history reads. Share Git invocation and locking helpers.",
+      "lines": 10451,
+      "bytes": 511049
+    },
+    {
+      "path": "backend/Features/Operator/Decisions/OperatorDecisionContracts.cs",
+      "status": "measured-backlog",
+      "strategy": "Split the decision type catalogue and fact-key classification, operation selection, and published fact, event and response records into separate files.",
+      "lines": 174,
+      "bytes": 8969
+    },
+    {
+      "path": "backend/Features/Operator/Decisions/OperatorDecisionFactSources.cs",
+      "status": "measured-backlog",
+      "strategy": "Separate existing collectors for review and tasks, deployment and health, batch gates and publication, provider limits, and post-merge incidents and coverage.",
+      "lines": 473,
+      "bytes": 27561
+    },
+    {
+      "path": "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+      "status": "measured-backlog",
+      "strategy": "Move integration verification, develop-to-main promotion, and push and supersession recovery into partial files. Keep RunSerializedAsync as the coordinator.",
+      "lines": 3094,
+      "bytes": 164309
+    },
+    {
+      "path": "backend/Features/Pipeline/PostMerge/PostMergeIncidentService.Triage.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract partial files for guardian observations and owner requests, per-test triage facts and repair actions, and quarantine preparation and covering-run evidence.",
+      "lines": 498,
+      "bytes": 34422
+    },
+    {
+      "path": "backend/Features/Pipeline/PostMerge/PostMergeRunEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract ordered endpoint mapping methods for develop-state and project reads, placement and window control, and run receipts with their evidence validators.",
+      "lines": 244,
+      "bytes": 16766
+    },
+    {
+      "path": "backend/Features/Pipeline/PostMerge/PostMergeRunStore.cs",
+      "status": "measured-backlog",
+      "strategy": "Separate window and incident updates, run receipt and command coverage validation, and custody renewal into partial files. Share the locked state reader, atomic writer and acceptance evidence cache.",
+      "lines": 379,
+      "bytes": 20109
     },
     {
       "path": "backend/Features/Projects/ProjectSettingsEndpoints.cs",
@@ -38,11 +101,39 @@
       "bytes": 42747
     },
     {
+      "path": "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract partial files for verification command selection and deferral, equivalent-delivery and scoped review diffs, and aspect inputs and deep-review admission. Keep Build as the plan entry point.",
+      "lines": 1399,
+      "bytes": 76114
+    },
+    {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Move V1ReviewExecutorRegistry into its own file. Group endpoint mapping by runner registration and quota, review claims and leases, and attempt reports, cleanup and handoff.",
+      "lines": 5450,
+      "bytes": 292424
+    },
+    {
       "path": "backend/Features/Security/AccessSecurityMiddleware.cs",
       "status": "measured-backlog",
       "strategy": "Extract permission target resolution partials per feature, preserving precedence.",
       "lines": 1764,
       "bytes": 103904
+    },
+    {
+      "path": "backend/Features/Security/Iam/RoutePermissionCatalog.cs",
+      "status": "measured-backlog",
+      "strategy": "Split route permissions into feature-owned partial files and preserve first-match lookup order for overlapping method and path rules.",
+      "lines": 542,
+      "bytes": 38464
+    },
+    {
+      "path": "backend/Features/Tasks/TaskCrudEndpoints.cs",
+      "status": "measured-backlog",
+      "strategy": "Extract ordered mappings for board, archive and detail reads, single and batch creation, promotion, movement and decisions, and metadata updates. Keep the existing task route group.",
+      "lines": 2028,
+      "bytes": 124711
     },
     {
       "path": "backend/Features/Tasks/TaskMutationService.cs",
@@ -57,6 +148,13 @@
       "strategy": "Extract ordered feature registration extension methods, preserving service and endpoint order.",
       "lines": 2747,
       "bytes": 168620
+    },
+    {
+      "path": "contracts/TaskServer.Contracts/PostMergeRun.cs",
+      "status": "measured-backlog",
+      "strategy": "Split contract declarations into run and test verdict evidence, attribution and bisection evidence, project incident and owner state, and window and target records. Preserve the public namespace.",
+      "lines": 240,
+      "bytes": 12576
     },
     {
       "path": "docs/concepts/orchestrator-drive-to-conclusion.html",
@@ -94,6 +192,13 @@
       "bytes": 118422
     },
     {
+      "path": "docs/red-test-isolation/index.html",
+      "status": "measured-backlog",
+      "strategy": "Move quarantine and hold scope, guardian operations and environment parity, and implementation slices and evidence into linked sections on dedicated pages. Keep the original index and anchor targets.",
+      "lines": 816,
+      "bytes": 88141
+    },
+    {
       "path": "docs/start/README.md",
       "status": "measured-backlog",
       "strategy": "Generate the navigation table from per-document metadata.",
@@ -120,6 +225,27 @@
       "strategy": "Split feature sections into linked domain pages with stable anchors.",
       "lines": 4960,
       "bytes": 337475
+    },
+    {
+      "path": "docs/system/domains/review.md",
+      "status": "measured-backlog",
+      "strategy": "Move plan selection and budgets, host placement and attempt isolation, review material and citations, and retry and gate recovery into linked domain pages. Preserve the map and existing anchors.",
+      "lines": 2265,
+      "bytes": 148283
+    },
+    {
+      "path": "docs/system/domains/tasks.md",
+      "status": "measured-backlog",
+      "strategy": "Move onboarding and central storage, board and task detail reads, lifecycle and decisions, and result and Dossier evidence into linked domain pages. Retain the map and stable section anchors.",
+      "lines": 3047,
+      "bytes": 204882
+    },
+    {
+      "path": "runner/RemoteReviewWorkspace.cs",
+      "status": "measured-backlog",
+      "strategy": "Split workspace preparation, baseline comparison and review material into responsibility-specific partial files, preserving execution order and per-attempt state.",
+      "lines": 4864,
+      "bytes": 246916
     }
   ]
 }

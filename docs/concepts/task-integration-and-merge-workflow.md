@@ -110,16 +110,31 @@ explicit card attribution, the report lists its SHA in
 `unattributedIntegrations` and continues measuring the available history.
 These receipts do not contribute to distinct-card counts.
 
-`RegistryHotspotGuardTests` fails above eight distinct contributing cards in a
-UTC calendar week within the last seven revision-relative days for an untracked
-registry candidate. Candidates include document tables/section collections,
-TSV inventories, registration calls, policy type lists and transition adapters.
-The diagnostic instructs contributors to generate, split by feature or register
-a bounded append-only section. `scripts/registry-hotspots.json` records the
-measured baseline, strategies and sizes. Its `measured-backlog` rows explicitly
-track follow-up work; only `bounded-union` and `existing-generator` rows describe
-implemented handling. New hot files require a recorded strategy. The guard
-uses Git history and Python 3, without contacting a running installation.
+`RegistryHotspotGuardTests` runs `python3 scripts/registry-hotspots.py --guard`.
+The guard counts distinct cards per UTC calendar week within the seven days
+ending at the checked revision. Candidates include document tables and section
+collections, TSV inventories, registration calls, policy type lists and
+transition adapters.
+
+In Studio review (`AGENT_REVIEW_NAMESPACE`), the guard compares the card with
+its merge base on the integration target. It uses local or remote-tracking
+target refs and the review runner's integration fetch. A merge on the card
+keeps its net changes in scope. The `Agent-Studio-Task` trailer identifies
+repeat work on the same card. A result without that trailer counts as one
+pending card. If the target is unavailable, fetch it with
+`git fetch origin develop` (substitute the configured target when needed)
+and rerun the review. The guard exits 1 when the card touches
+an unhandled candidate with more than eight distinct cards in the card's week.
+Record the file's strategy, line count and byte count in
+`scripts/registry-hotspots.json`. A `measured-backlog` row describes a planned
+split or generator. The `bounded-union` and `existing-generator` rows describe
+implemented handling.
+
+On integration, new hotspots print warnings and card drafts and the guard
+exits 0. The JSON report also includes the warnings and drafts. This covers
+two cards that each passed review as the eighth contributor. An unrelated
+review also reports the hotspot as a warning. Use `--guard review` or
+`--guard integration` to select the mode explicitly.
 
 If all three stages fail, the merge step persists one structured conflict report with every stage outcome, the capped file list and total count, the integration tip, and the delivery SHA. The card renders that record in three lines beginning `Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)`. Raw Git hint text is never card copy.
 

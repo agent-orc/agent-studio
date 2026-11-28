@@ -93,6 +93,15 @@ public sealed class WorkContainerExecutor(
     public async Task<WorkContainerReceipt> RunAsync(
         WorkContainerAttempt attempt, string image, WorkContainerGrant grant, CancellationToken ct)
     {
+        using var session = new WorkContainerLauncherSession(settings.Launcher);
+        try { return await RunCoreAsync(attempt, image, grant, session, ct); }
+        finally { await session.RevokeAsync(); }
+    }
+
+    private async Task<WorkContainerReceipt> RunCoreAsync(
+        WorkContainerAttempt attempt, string image, WorkContainerGrant grant,
+        WorkContainerLauncherSession session, CancellationToken ct)
+    {
         var started = _clock.GetUtcNow();
         WorkContainerLaunchPlanner.Validate(attempt, image);
 
@@ -129,6 +138,11 @@ public sealed class WorkContainerExecutor(
             plan = WorkContainerLaunchPlanner.Plan(attempt, image, admission.Limits!, settings,
                 credentialRequired: credentials is not null,
                 uid: WorkContainerIdentity.Allocate(attempt.AttemptId, attempt.Fence, uidsInUse));
+            try { await session.AuthorizeAsync(attempt, plan, settings.CacheVersion, ct); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return Denied(attempt, image, "launcher-attempt-capability-unavailable.", started);
+            }
             grantedAt = _clock.GetUtcNow();
             var volume = await runtime.CreateVolumeAsync(plan.AttemptVolume, plan.Labels, ct);
             var prepared = volume.Ok ? await runtime.PrepareAsync(plan.PrepareArguments, ct) : volume;
@@ -260,6 +274,7 @@ public sealed class WorkContainerExecutor(
     public async Task<IReadOnlyList<WorkReconciliationAction>> ReconcileAsync(
         string hostId, IReadOnlyList<WorkAttemptAuthority> authority, CancellationToken ct)
     {
+        await WorkContainerLauncherSession.ReconcileAuthorityAsync(settings.Launcher, hostId, authority, ct);
         var byAttempt = authority.GroupBy(item => item.AttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Fence).First(), StringComparer.Ordinal);
         var inventory = await runtime.ListManagedAsync(hostId, null, ct);

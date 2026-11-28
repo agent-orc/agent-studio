@@ -1,12 +1,15 @@
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
-import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
-import { catchError, map, of } from 'rxjs';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, inject, input, output, signal } from '@angular/core';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
+import { catchError, map, of, switchMap } from 'rxjs';
 import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import type { DeploymentState, EnvironmentStatus, InstanceRunState } from '../../models/deployment.model';
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
 import type { DeployMatrixResponse, DeployMatrixRow } from '../../services/deployment-status.service';
+import type { DeploymentUrl, InstallationOverview, UrlObservation } from '../../models/observed-deployment.model';
+import { InstallationOverviewComponent } from '../installation-overview/installation-overview';
 import { DeliveryLanesComponent } from '../delivery-lanes/delivery-lanes';
+import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
 
 /**
@@ -54,6 +57,9 @@ interface DashboardRow {
   groupId: string;
   tenant: string | null;
   statuses: EnvironmentStatus[];
+  installation: InstallationOverview | null;
+  instanceStatus: EnvironmentStatus | undefined;
+  urls: DeploymentUrl[];
   /** False when the project declares no environments; the row then says so. */
   declared: boolean;
   error: string | null;
@@ -62,12 +68,13 @@ interface DashboardRow {
 @Component({
   selector: 'app-workspace-deployment-dashboard',
   standalone: true,
-  imports: [DeliveryLanesComponent, StatusIndicatorComponent],
+  imports: [DisclosureMarkerComponent, DeliveryLanesComponent, StatusIndicatorComponent, InstallationOverviewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-deployment-dashboard.html',
   styleUrl: './workspace-deployment-dashboard.scss',
 })
 export class WorkspaceDeploymentDashboardComponent {
+  protected readonly changeDetector = inject(ChangeDetectorRef);
   readonly projectSlug = studioProjectSlug;
   readonly declarationDocs = ENVIRONMENT_DECLARATION_DOCS;
   private readonly service = inject(DeploymentStatusService);
@@ -85,23 +92,26 @@ export class WorkspaceDeploymentDashboardComponent {
   readonly groupFilter = signal('all');
   readonly environmentFilter = signal('all');
   readonly tenantFilter = signal('all');
-  readonly environments = [
-    { id: 'staging', name: 'Staging' },
-    { id: 'production', name: 'Production' },
-  ] as const;
+  readonly hasInstallation = computed(() => this.matrix().projects.some(row => row.installation || row.statuses.some(status => status.instance)));
+  readonly hasRecords = computed(() => !!this.matrix().hasDeployRecords);
+  readonly environments = computed(() => {
+    const options = new Map([['staging', 'Staging'], ['production', 'Production']]);
+    for (const row of this.matrix().projects) {
+      for (const status of [...row.statuses, ...row.tenantStatuses]) {
+        if (status.environment.kind === 'other') options.set(this.column(status), status.environment.name);
+      }
+      for (const url of row.urls ?? []) options.set(this.urlColumn(url), url.name);
+    }
+    return [...options].map(([id, name]) => ({ id, name }));
+  });
+  private readonly probes = toSignal(toObservable(this.matrix).pipe(switchMap(matrix =>
+    this.service.urlObservations(matrix.projects.flatMap(row => row.urls ?? [])))));
 
   readonly groups = computed(() => this.workspaces().map(workspace => ({
     id: workspace.id, name: workspace.displayName,
   })));
   readonly tenants = computed(() => [...new Set(this.matrix().projects.flatMap(row =>
     row.tenantStatuses.map(status => status.tenant).filter((tenant): tenant is string => !!tenant)))].sort());
-
-  /**
-   * The matrix has one row per project this instance watches, so it also
-   * decides which projects get delivery lanes: a project the workspace
-   * registers but this instance does not watch is never requested.
-   */
-  readonly watchedProjects = computed(() => this.matrix().projects.map(row => row.projectId));
 
   readonly rows = computed<DashboardRow[]>(() => {
     const normalized = (path: string) => path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -130,16 +140,55 @@ export class WorkspaceDeploymentDashboardComponent {
       .flatMap(({ project, matrixRow }) => {
         const shared = { declared: matrixRow.environmentsDeclared !== false, error: matrixRow.error };
         const tenants = [...new Set(matrixRow.tenantStatuses.map(status => status.tenant).filter((tenant): tenant is string => !!tenant))];
-        return [{ ...project, ...shared, tenant: null, statuses: matrixRow.statuses },
+        return [{ ...project, ...shared, tenant: null, installation: matrixRow.installation ?? null, instanceStatus: matrixRow.statuses.find(status => !!status.instance), urls: matrixRow.urls ?? [],
+            statuses: matrixRow.statuses.filter(status => !matrixRow.installation || !status.instance) },
           ...tenants.map(tenant => ({ ...project, ...shared, id: `${project.id}:${tenant}`, tenant,
-            statuses: matrixRow.tenantStatuses.filter(status => status.tenant === tenant) }))];
+            installation: null, instanceStatus: undefined, urls: [], statuses: matrixRow.tenantStatuses.filter(status => status.tenant === tenant) }))];
       })
       .filter(project => this.tenantFilter() === 'all' || project.tenant === this.tenantFilter())
       .filter(project => this.groupFilter() === 'all' || project.groupId === this.groupFilter());
   });
 
-  readonly visibleEnvironments = computed(() => this.environments.filter(environment =>
-    this.environmentFilter() === 'all' || environment.id === this.environmentFilter()));
+  readonly installationRow = computed(() => ['all', 'production'].includes(this.environmentFilter())
+    ? this.rows().find(row => row.installation) : undefined);
+  readonly installationTitle = computed(() => this.installationRow()?.statuses.some(status =>
+    status.environment.name.toLowerCase() === 'production') ? 'Running Studio build' : 'Production');
+  readonly noTargets = computed(() => this.environmentFilter() === 'all' ? this.rows().filter(row =>
+    !row.installation && !row.declared && !row.error && !row.urls.length && !row.statuses.length) : []);
+  readonly matrixRows = computed(() => this.rows().filter(row => {
+    const filter = this.environmentFilter();
+    if (row.error) return true;
+    return row.statuses.some(status => filter === 'all' || this.column(status) === filter)
+      || row.urls.some(url => filter === 'all' || this.urlColumn(url) === filter);
+  }));
+  readonly visibleEnvironments = computed(() => {
+    const filter = this.environmentFilter();
+    if (filter !== 'all') return this.environments().filter(item => item.id === filter);
+    const rows = this.matrixRows();
+    const columns = this.environments().filter(item => !item.id.startsWith('url:')
+      && (rows.some(row => row.statuses.length) || !rows.some(row => row.urls.length)));
+    if (rows.some(row => row.urls.length)) columns.push({ id: 'urls', name: 'Registered URLs' });
+    return columns;
+  });
+  readonly watchedProjects = computed(() => this.environmentFilter() === 'all' && this.tenantFilter() === 'all'
+    ? [...new Set(this.matrixRows().filter(row => !row.installation && !row.error && row.statuses.length).map(row => row.name))]
+    : []);
+
+  column(status: EnvironmentStatus): string {
+    return status.environment.kind === 'other' ? 'declared:' + status.environment.name.toLowerCase() : status.environment.kind;
+  }
+  urlColumn(url: DeploymentUrl): string { return 'url:' + url.name.toLowerCase(); }
+  observation(url: DeploymentUrl): UrlObservation | undefined { return this.probes()?.get(url.projectId + '/' + url.id); }
+  reachable(fact: UrlObservation): boolean {
+    return fact.statusCode !== null && fact.statusCode >= 200 && fact.statusCode < 300;
+  }
+  reachability(fact: UrlObservation): string {
+    if (fact.statusCode !== null) return 'HTTP ' + fact.statusCode + (this.reachable(fact) ? ' · Reachable' : ' · HTTP error');
+    if (fact.kind === 'local-only') return 'Local only · Open on the serving machine';
+    if (fact.kind === 'timeout') return 'Probe timed out';
+    if (fact.kind === 'offline') return 'Unreachable';
+    return 'Reachability not observed · Check URL probe access';
+  }
 
   /** Why the table has no row: still loading, the read failed, nothing is watched, or the filters hide everything. */
   readonly emptyReason = computed(() => {
@@ -150,8 +199,8 @@ export class WorkspaceDeploymentDashboardComponent {
     return 'No project matches the selected filters.';
   });
 
-  statusFor(row: DashboardRow, kind: 'staging' | 'production'): EnvironmentStatus | undefined {
-    return row.statuses.find(status => status.environment.kind === kind);
+  statusesFor(row: DashboardRow, column: string): EnvironmentStatus[] {
+    return row.statuses.filter(status => this.column(status) === column);
   }
 
   cellLabel(row: DashboardRow, environment: string): string {

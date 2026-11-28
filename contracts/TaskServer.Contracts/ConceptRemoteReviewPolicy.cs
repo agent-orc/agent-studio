@@ -1,12 +1,99 @@
+using System.Text.RegularExpressions;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
 /// Fail closed when a concept report omits its content aspect or judges a
-/// different brief. The existing aspect runner supplies the content verdict;
-/// this policy only checks coverage and brief identity at settlement.
+/// different brief. Distinguish unavailable review inputs from content findings.
 /// </summary>
 public static class ConceptRemoteReviewPolicy
 {
+    public const string MaterialUnavailable = "ReviewMaterialUnavailable";
+
+    public const string WorkspaceInstructions =
+        "Read the complete Dossier in the read-only Result-SHA checkout. Inspect the index, workbench.json, "
+        + "local files they link or include, and other Dossier files changed by this delivery. Read large files in chunks. "
+        + "The diff and any snapshot in the prompt are excerpts. Use the checkout even if an excerpt marks a file missing. "
+        + "Use only tracked files inside this repository. If a required file is absent from the Git tree, cite that delivery gap. "
+        + "If review material cannot be read, emit the aspect sentinel with status=concerns and classification="
+        + MaterialUnavailable + ". Name the inaccessible paths and read failure in missing.";
+
+    // Only the old stock prompt instructed the reviewer to judge the snapshot without tools.
+    private const string LegacyPromptEnding = "End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.";
+
+    public static string PrepareCheckoutPrompt(string prompt)
+    {
+        // The stock template puts its grading rules before the rendered card data.
+        // Rewrite its instructions without touching a quotation in the frozen brief or Dossier.
+        const string checksHeading = "Check each requirement the brief actually makes:";
+        const string cardHeading = "\n## Project and card";
+        const string missingEvidenceRule = "If the exact Dossier content is absent or truncated so a required check cannot\n"
+            + "be made, return `concerns` and name the missing evidence. Do not claim a pass.";
+        var card = prompt.IndexOf(cardHeading, StringComparison.Ordinal);
+        var ending = prompt.LastIndexOf(LegacyPromptEnding, StringComparison.Ordinal);
+        if (card > 0 && ending > card && prompt.StartsWith("# Aspect review: concept fit", StringComparison.Ordinal))
+        {
+            var header = prompt[..card].ReplaceLineEndings("\n").TrimEnd();
+            var checks = header.IndexOf(checksHeading, StringComparison.Ordinal);
+            if (checks >= 0 && header.EndsWith(missingEvidenceRule, StringComparison.Ordinal))
+            {
+                var grading = header[checks..^missingEvidenceRule.Length].TrimEnd();
+                var material = prompt[card..ending];
+                // The earliest stock footer calls the diff the source of Dossier content.
+                // Limit the replacement to the footer after the card's evidence.
+                const string diffFooter = "\nThe executor appends the authoritative changed-file list and unified diff";
+                var footer = material.LastIndexOf(diffFooter, StringComparison.Ordinal);
+                if (footer >= 0)
+                    material = material[..footer] + material[footer..].Replace(
+                        "That material is the source for Dossier content.", "Use it to check what changed in this round.", StringComparison.Ordinal);
+                return "# Aspect review: concept fit\n\nReview the delivered Concept Dossier against the frozen brief.\n"
+                    + WorkspaceInstructions + "\n\n" + grading + "\n" + material
+                    + "For a checkout read failure, use `[[ASPECT_VERDICT: status=concerns; classification="
+                    + MaterialUnavailable + "; summary=<read failure>; evidence_checked=<inputs checked>; missing=<inaccessible paths>]]`.\n\n"
+                    + "End with `[[TASK_DONE]]` on its own line. Leave the workspace unchanged."
+                    + prompt[(ending + LegacyPromptEnding.Length)..];
+            }
+        }
+        return prompt.Contains(WorkspaceInstructions, StringComparison.Ordinal) ? prompt
+            : prompt + "\n\n## Delivery checkout instructions\n\n" + WorkspaceInstructions;
+    }
+
+    private static readonly Regex IncompleteInput = new(
+        @"(?:^|, but )(?:the )?(?:supplied diff (?:is|was) insufficient for (?:a full |the )?concept-fit review"
+        + @"|(?:published Dossier snapshot|unchanged Dossier sections) (?:is|are|was|were) (?:incomplete|unavailable)"
+        + @"|incomplete Dossier evidence prevents a full concept-fit review"
+        + @"|Dossier content needed to judge completeness is unavailable"
+        + @"|required Dossier (?:content|sections) and the (?:complete|full) (?:implementation-)?card sequence cannot be verified"
+        + @"|(?:I|we|the reviewer) (?:could not|cannot) (?:read|access|see) (?:the |the full |the complete )?(?:Dossier|index\.html|workbench\.json))\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+
+    public static bool IsMaterialUnavailable(ReviewVerdictDto verdict, ReviewPlanDto? plan = null)
+    {
+        if (!string.Equals(verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(verdict.Status, "concerns", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(verdict.Classification, MaterialUnavailable, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (verdict.UsesDossierCheckout || plan?.Commands.Any(command =>
+                string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                && command.Prompt?.TrimEnd().EndsWith(LegacyPromptEnding, StringComparison.Ordinal) == true) != true)
+            return false;
+        var missing = verdict.Missing?.Trim();
+        if (string.Equals(missing?.TrimEnd('.'), "Published Dossier files are marked missing, and their diffs are truncated",
+                StringComparison.OrdinalIgnoreCase))
+            return true;
+        return IncompleteInput.IsMatch(verdict.Summary?.Trim() ?? "") &&
+            (string.IsNullOrEmpty(missing)
+             || missing.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("Full ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("Complete ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("The complete ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("The published ", StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static string MaterialFailureSummary(ReviewVerdictDto verdict)
+        => $"Concept-fit review material unavailable. {verdict.Summary} {verdict.Missing}".TrimEnd();
+
     public static bool AppliesTo(ReviewPlanDto plan)
         => string.Equals(plan.TaskMode, "concept", StringComparison.OrdinalIgnoreCase)
            || plan.BriefSha256 is not null
@@ -47,6 +134,14 @@ public static class ConceptRemoteReviewPolicy
             string.Equals(item.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase));
         if (verdict is null)
             return Fail(report, "The concept-fit aspect did not run or supplied no verdict; build and lint alone cannot pass this concept delivery.");
+        if (IsMaterialUnavailable(verdict, plan))
+            return report with
+            {
+                Outcome = "ReviewInfra",
+                FailureClassification = MaterialUnavailable,
+                Summary = MaterialFailureSummary(verdict),
+                Verdicts = report.Verdicts.Where(item => !IsMaterialUnavailable(item, plan)).ToArray(),
+            };
         if (ReviewGradingPolicy.IsBlockingToken(verdict.Status)
             && string.Equals(report.Outcome, "Pass", StringComparison.Ordinal))
             return report with

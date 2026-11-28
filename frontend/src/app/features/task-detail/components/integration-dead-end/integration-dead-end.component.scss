@@ -9,10 +9,10 @@
   font-size: var(--studio-compat-type-11);
 }
 .dead-end > app-status-indicator { justify-self: start; }
-.dead-end p { margin: 0; overflow-wrap: anywhere; }
+.dead-end p { margin: var(--studio-spacing-0); overflow-wrap: anywhere; }
 .dead-end__evidence {
   max-height: 12rem;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-2);
   overflow: auto;
   background: var(--studio-bg-surface);

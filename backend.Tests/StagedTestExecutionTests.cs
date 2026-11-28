@@ -175,11 +175,11 @@ public sealed class TestSelectionPlannerTests : IDisposable
         Assert.Equal("frontend", frontend.WorkingSubdir);
         Assert.Equal(TestExecutionLevels.WorkPackage, frontend.TestScope);
         Assert.True(frontend.BlocksWorkPackage);
-        Assert.Contains("project-git-panel/*.spec.ts", frontend.Command);
+        Assert.Contains("project-git-panel/project-git-panel.component.spec.ts", frontend.Command);
         Assert.Contains("src/app/app.spec.ts", frontend.Command);
         Assert.Contains("studio-shell.component.spec.ts", frontend.Command);
         Assert.Contains("features/task-detail/task-detail.spec.ts", frontend.Command);
-        Assert.DoesNotContain("unrelated.component.spec.ts", frontend.Command);
+        Assert.Contains("unrelated.component.spec.ts", frontend.Command); // cohesive feature union is below the cap
         Assert.DoesNotContain(result.Commands, command => command.Command == fullFrontend);
         Assert.DoesNotContain(result.Commands, command => command.Command == profileFullFrontend);
         Assert.DoesNotContain(result.Commands, command => command.Command == fullDotNet);
@@ -395,7 +395,7 @@ public sealed class TestSelectionPlannerTests : IDisposable
             command.Kind == VerifyCommandKind.Test
             && command.Command.Contains("dotnet test", StringComparison.Ordinal));
         Assert.Contains(result.Commands, command =>
-            command.Command.Contains("src/app/features/board/*.spec.ts", StringComparison.Ordinal));
+            command.Command.Contains("src/app/features/board/board.component.spec.ts", StringComparison.Ordinal));
         // The declared frontend suite is replaced by the bounded include slice,
         // and the lints keep running as non-test commands.
         Assert.Contains("npm --prefix frontend run test:ci", result.Audit.OmittedTestCommands);
@@ -428,7 +428,7 @@ public sealed class TestSelectionPlannerTests : IDisposable
         Assert.Contains(result.Commands, command =>
             command.Command.Contains("FullyQualifiedName~GateFlakyRerunBehaviorTests", StringComparison.Ordinal));
         Assert.Contains(result.Commands, command =>
-            command.Command.Contains("src/app/features/board/*.spec.ts", StringComparison.Ordinal));
+            command.Command.Contains("src/app/features/board/board.component.spec.ts", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -503,7 +503,7 @@ public sealed class TestSelectionPlannerTests : IDisposable
             TaskStates.Completed, TestExecutionLevels.WorkPackage);
 
         var command = Assert.Single(result.Commands);
-        Assert.Contains(expectedInclude, command.Command);
+        Assert.Contains(componentSpec, command.Command);
         Assert.Contains("src/app/app.spec.ts", command.Command);
         Assert.Contains("studio-shell.component.spec.ts", command.Command);
         Assert.Contains("features/task-detail/task-detail.spec.ts", command.Command);
@@ -520,7 +520,8 @@ public sealed class TestSelectionPlannerTests : IDisposable
         Write("frontend/src/app/features/task-detail/task-detail.spec.ts", "// task-detail barrel probe");
         Write("frontend/src/app/features/studio-shell/services/studio-route.spec.ts", "// touched service spec");
         Write("frontend/src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.spec.ts", "// touched component spec");
-        Write("frontend/src/app/services/project-identity.util.spec.ts", "// touched shared-service folder spec");
+        Write("frontend/src/app/services/studio-project-slug.util.ts", "export function projectSlug() {}");
+        Write("frontend/src/app/services/project-identity.util.spec.ts", "import { projectSlug } from './studio-project-slug.util'; it('slug', () => projectSlug());");
         var verify = new VerifyPlan([
             new(VerifyEcosystem.Node, VerifyCommandKind.Test, "frontend", "npm run test:ci"),
         ], VerifyPlan.SourceBuildProfile);
@@ -538,9 +539,9 @@ public sealed class TestSelectionPlannerTests : IDisposable
             TestExecutionLevels.WorkPackage);
 
         var command = Assert.Single(result.Commands);
-        Assert.Contains("src/app/features/studio-shell/services/*.spec.ts", command.Command);
-        Assert.Contains("src/app/features/task-detail/components/concept-dossier-notice/*.spec.ts", command.Command);
-        Assert.Contains("src/app/services/*.spec.ts", command.Command);
+        Assert.Contains("src/app/features/studio-shell/services/studio-route.spec.ts", command.Command);
+        Assert.Contains("src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.spec.ts", command.Command);
+        Assert.Contains("src/app/services/project-identity.util.spec.ts", command.Command);
         Assert.Contains("src/app/features/studio-shell/studio-shell.component.spec.ts", command.Command);
         Assert.Contains("src/app/features/task-detail/task-detail.spec.ts", command.Command);
     }

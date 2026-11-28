@@ -7,20 +7,20 @@
 .lane-group-head--burst {
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
 }
 .lane-group-head__title {
   display: flex;
   align-items: center;
   gap: var(--studio-spacing-2);
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-dim);
   font-size: var(--studio-lane-header-secondary-size);
   font-weight: 600;
 }
 .lane-group-head--burst .lane-group-head__title { color: var(--studio-fg); }
-.lane-group-head__icon { font-size: 13px; line-height: 1; }
+.lane-group-head__icon { font-size: var(--studio-font-size-md); line-height: 1; }
 .lane-group-head__label { min-width: 0; overflow-wrap: anywhere; }
 /* Same count treatment as the lane total (HUC-S6 --studio-count-* tokens). */
 .lane-group-head__count {
@@ -42,7 +42,7 @@
   font-variant-numeric: tabular-nums;
 }
 .lane-group-head__since {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-dim);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }

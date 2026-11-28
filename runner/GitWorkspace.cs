@@ -29,6 +29,7 @@ public sealed partial class GitWorkspace
     private readonly string? _continuationBaseSha;
     private readonly string? _continuationBaseReason;
     private readonly bool _continuationBaseRequired;
+    private readonly bool _requiresFreshContinuationPreparation;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
     private readonly string? _restoredBaseSha;
@@ -55,7 +56,8 @@ public sealed partial class GitWorkspace
         string? continuationBaseRef = null,
         string? continuationBaseSha = null,
         string? continuationBaseReason = null,
-        string? taskTitle = null)
+        string? taskTitle = null,
+        bool requiresContinuationBase = false)
     {
         _options = options;
         _log = log;
@@ -94,7 +96,9 @@ public sealed partial class GitWorkspace
             ? null
             : continuationBaseSha.Trim();
         var continuationComplete = continuationBranch is not null && continuationSha is not null;
+        _requiresFreshContinuationPreparation = requiresContinuationBase;
         _continuationBaseRequired = continuationBranch is not null || continuationSha is not null
+            || requiresContinuationBase
             || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
         _continuationBaseRef = _continuationBaseRequired ? continuationBranch : null;
         _continuationBaseSha = continuationComplete ? continuationSha : null;
@@ -104,7 +108,7 @@ public sealed partial class GitWorkspace
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
     public string SharedRepoPath => Path.Combine(ProjectCachePath, "repo");
     public string RepoPath => Path.Combine(ProjectCachePath, "worktrees", _safeTaskKey);
-    public string PreparationCachePath => Path.Combine(ProjectCachePath, "caches", "preparation");
+    public string PreparationCachePath => Path.Combine(Path.GetFullPath(ProjectCachePath), "caches", "preparation");
     public string WorktreeLeasePath => Path.Combine(ProjectCachePath, "worktrees", ".leases", _safeTaskKey + ".json");
     public string? RepositoryUrl => _gitRemote;
     /// <summary>Canonical branch that retains this task's salvage generation.</summary>
@@ -329,12 +333,12 @@ public sealed partial class GitWorkspace
                     await QuarantineBrokenWorktreeAsync(ct);
                 else
                 {
-                    if (await TryResumePushProtectionAsync(ct))
+                    if (!_requiresFreshContinuationPreparation && await TryResumePushProtectionAsync(ct))
                     {
                         _log($"push-protection-recovery-ready path={RepoPath} cause={_pushProtectionRecovery!.Summary}");
                         return _workBranch;
                     }
-                    if (await TryResumeRetainedWorktreeAsync(ct))
+                    if (!_requiresFreshContinuationPreparation && await TryResumeRetainedWorktreeAsync(ct))
                         return _workBranch;
                     var retained = HasFencedGeneration
                         ? await SecureAndRemoveAsync(

@@ -1,4 +1,4 @@
-.run-timeline { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-1) 0 var(--studio-spacing-2); }
+.run-timeline { display: flex; flex-direction: column; gap: var(--studio-spacing-1); padding: var(--studio-spacing-1) var(--studio-spacing-0) var(--studio-spacing-2); }
 .run-timeline__empty { padding: var(--studio-spacing-2) var(--studio-spacing-3); font-size: var(--studio-compat-type-5); color: var(--studio-fg-dim); font-style: italic; }
 .run-timeline__header { display: flex; align-items: center; gap: var(--studio-spacing-2); padding: var(--studio-spacing-1) var(--studio-spacing-2); flex-wrap: wrap; border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-9); background: var(--studio-bg-elevated); }
 .run-timeline__title { font-size: var(--studio-compat-type-19); text-transform: uppercase; letter-spacing: 0.06em; color: var(--studio-fg-dim); font-weight: 600; }
@@ -61,7 +61,7 @@
   line-height: 1;
   flex: 0 0 auto;
 }
-.run-card__chip { font-size: var(--studio-compat-type-44); padding: 0 var(--studio-spacing-1); border-radius: var(--studio-compat-radius-2); background: var(--studio-bg-hover); color: var(--studio-fg); text-transform: lowercase; flex: 0 0 auto; }
+.run-card__chip { font-size: var(--studio-compat-type-44); padding: var(--studio-spacing-0) var(--studio-spacing-1); border-radius: var(--studio-compat-radius-2); background: var(--studio-bg-hover); color: var(--studio-fg); text-transform: lowercase; flex: 0 0 auto; }
 .run-card__chip--intent[data-intent="recovery"],
 .run-card__chip--intent[data-intent="reissue"] { background: color-mix(in srgb, var(--severity-warn) 30%, transparent); color: var(--severity-warn); }
 .run-card__chip--intent[data-intent="continue"] { background: color-mix(in srgb, var(--severity-info) 25%, transparent); color: var(--severity-info); }
@@ -78,7 +78,7 @@
 .run-detail__empty { padding: var(--studio-spacing-3); color: var(--studio-fg-dim); font-size: var(--studio-font-size-sm); }
 .run-detail__panel { display: flex; flex-direction: column; gap: var(--studio-spacing-2); padding: var(--studio-spacing-2); }
 .run-detail__head { display: flex; align-items: flex-start; gap: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); padding-bottom: var(--studio-spacing-2); }
-.run-detail__title { margin: 0; font-size: var(--studio-font-size-lg); line-height: 1.25; color: var(--studio-fg-strong); }
+.run-detail__title { margin: var(--studio-spacing-0); font-size: var(--studio-font-size-lg); line-height: 1.25; color: var(--studio-fg-strong); }
 .run-detail__subtitle { margin-top: var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-19); }
 /* AGT-2003 runner attribution chip in the run-detail header: which runner
    executed this run (remote lease owner / out-of-band source), or "lokal". */
@@ -95,7 +95,7 @@
   margin-left: auto;
   width: 20px;
   height: 20px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   display: inline-grid;
   place-items: center;
   border-radius: var(--studio-compat-radius-8);
@@ -130,7 +130,7 @@
 .run-card__context-toggle:hover,
 .run-card__filter:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
 .run-card__context-pre {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   max-height: 320px;
   overflow: auto;
   padding: var(--studio-spacing-2);
@@ -153,17 +153,17 @@
 .run-card__commits-error { color: var(--severity-high); }
 
 .run-card__commits-summary { color: var(--studio-fg-dim); margin-bottom: var(--studio-spacing-1); }
-.run-card__commit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+.run-card__commit-list { list-style: none; margin: var(--studio-spacing-0); padding: var(--studio-spacing-0); display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
 .run-card__commit { display: flex; gap: var(--studio-spacing-2); align-items: baseline; }
 .run-card__commit-sha { font-size: var(--studio-compat-type-6); color: var(--studio-fg-dim); flex: 0 0 auto; }
 .run-card__commit-subject { flex: 1 1 auto; }
 .run-card__commit-stats { color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); flex: 0 0 auto; }
 .run-card__row--actions { gap: var(--studio-spacing-1); }
 .run-card__filter:disabled { opacity: 0.5; cursor: not-allowed; }
-.run-card__filter--primary { border-color: var(--studio-accent); color: var(--studio-on-accent, var(--studio-bg)); background: var(--studio-accent); font-weight: 600; }
+.run-card__filter--primary { border-color: var(--studio-accent); color: var(--studio-on-accent); background: var(--studio-accent); font-weight: 600; }
 .run-card__filter--primary:hover:not(:disabled) { filter: brightness(1.06); }
 
-.run-transition { display: flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); padding: 0 var(--studio-spacing-4); }
+.run-transition { display: flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg-muted); font-size: var(--studio-compat-type-6); padding: var(--studio-spacing-0) var(--studio-spacing-4); }
 .run-transition__line { height: 1px; flex: 1 1 auto; background: var(--studio-border); }
 .run-transition__text { flex: 0 1 auto; white-space: normal; text-align: center; }
 

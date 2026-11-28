@@ -16,7 +16,7 @@
   border-radius: var(--studio-compat-radius-3);
   background: var(--studio-bg-elevated);
   color: var(--studio-fg-strong);
-  box-shadow: 0 16px 48px color-mix(in srgb, var(--studio-fg-strong) 25%, transparent);
+  box-shadow: var(--elevation-popover);
 
   &__backdrop {
     position: fixed;
@@ -28,7 +28,7 @@
     background: var(--studio-scrim);
   }
 
-  h2, p { margin: 0; }
+  h2, p { margin: var(--studio-spacing-0); }
   h2 { font-size: var(--studio-font-size-xl); }
   p { color: var(--studio-fg-dim); }
   &__findings { display: grid; gap: var(--studio-spacing-2); overflow: auto; }
@@ -44,7 +44,7 @@
     color: var(--studio-fg-strong);
   }
   textarea { width: 100%; padding: var(--studio-spacing-2); resize: vertical; }
-  pre { margin: 0; padding: var(--studio-spacing-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { margin: var(--studio-spacing-0); padding: var(--studio-spacing-2); white-space: pre-wrap; overflow-wrap: anywhere; }
   &__actions { display: flex; justify-content: flex-end; gap: var(--studio-spacing-2); }
   &__actions button { padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: var(--studio-compat-radius-7); }
   &__actions button:last-child { border: 0; background: var(--studio-accent); color: var(--studio-on-accent); }
@@ -76,7 +76,7 @@
   }
 
   [data-testid='review-retry-message'] {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg);
     font-size: var(--studio-font-size-sm);
   }
@@ -130,7 +130,7 @@
   }
 
   &__giveup-note {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg-dim);
     font-size: var(--studio-compat-type-6);
     line-height: 1.5;
@@ -177,7 +177,7 @@
 
     pre {
       max-height: min(360px, 45vh);
-      margin: 0;
+      margin: var(--studio-spacing-0);
       overflow: auto;
       color: var(--studio-fg);
       font: inherit;
@@ -218,7 +218,7 @@
     font-weight: 700;
   }
 
-  &__answer-error { margin: 0; color: var(--severity-high); font-size: var(--studio-compat-type-6); }
+  &__answer-error { margin: var(--studio-spacing-0); color: var(--severity-high); font-size: var(--studio-compat-type-6); }
 
   &__submit-answer {
     align-self: flex-start;

@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { DialogComponent } from '@studio/ui/components/dialog/dialog.component';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
+import { NowTickService } from '../../../../services/now-tick.service';
 import { AuthService } from '../../../../services/auth.service';
 import { AccessElevatedSessionsComponent } from '../../../access/components/access-elevated-sessions/access-elevated-sessions.component';
 import { OperatorAgentsService } from '../../../access/services/operator-agents.service';
@@ -21,7 +22,7 @@ export class ElevationControlComponent {
   private readonly auth = inject(AuthService);
   private readonly overlays = inject(WorkspaceOverlaysService);
   readonly open = signal(false);
-  private readonly now = signal(Date.now());
+  private readonly now = inject(NowTickService).now;
   readonly sessions = computed(() => this.operators.agents().flatMap(agent => agent.disabledAt ? [] : agent.sessions
     .filter(session => (session.state === 'active' || session.state === 'pending') && (session.classes?.length ?? 0) > 0)
     .map(session => ({ agent: agent.name, session }))));
@@ -52,12 +53,13 @@ export class ElevationControlComponent {
 
   constructor() {
     effect(() => {
-      if (this.auth.status()?.user?.role === 'owner') void this.operators.load();
+      if (this.auth.status()?.user?.role === 'owner') untracked(() => void this.operators.load());
     });
     const timer = setInterval(() => {
-      this.now.set(Date.now());
-      if (this.auth.status()?.user?.role === 'owner') void this.operators.load();
-    }, 15_000);
+      if (document.visibilityState === 'visible' && this.auth.status()?.user?.role === 'owner') {
+        void this.operators.refresh();
+      }
+    }, 60_000);
     inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
   list(): void {

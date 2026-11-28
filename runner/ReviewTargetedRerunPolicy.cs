@@ -7,7 +7,7 @@ namespace AgentRunner;
 internal static partial class ReviewTargetedRerunPolicy
 {
     internal static ReviewCommandDto Select(
-        ReviewCommandDto command, IReadOnlyList<string> failures, string output = "", string? signal = null)
+        ReviewCommandDto command, IReadOnlyList<string> failures, string output = "", string? signal = null, bool exactTest = false)
     {
         if (signal is not null || AbortedRun().IsMatch(output)) return command;
         var names = failures
@@ -23,7 +23,9 @@ internal static partial class ReviewTargetedRerunPolicy
         if (classes.Length is 0 or > 5)
             return command;
 
-        var classFilter = ClassFilter(failures);
+        var classFilter = exactTest
+            ? failures.Count == 1 ? ReviewRepeatFilterPolicy.ExactTestFilter(failures[0]) : null
+            : ClassFilter(failures);
         if (classFilter is null) return command;
         if (Path.GetFileNameWithoutExtension(command.FileName).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
             && command.Arguments.FirstOrDefault() == "test")

@@ -20,6 +20,8 @@ export default defineConfig({
       '**/system/ui-foundation.spec.ts',
       '**/board/card-state-pill-matches-lane.spec.ts',
       '**/board/identity-chip-card.spec.ts',
+      '**/board/project-name-contrast.spec.ts',
+      '**/settings/section-picker-navigation.spec.ts',
       '**/board/remote-pickup-mode.spec.ts',
       '**/board/large-board-window.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',

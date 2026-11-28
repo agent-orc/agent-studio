@@ -45,8 +45,9 @@ button.copy-key:focus-visible {
 }
 
 .copy-key--card {
+  font-family: var(--studio-record-key-font);
   height: 22px;
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border-radius: var(--studio-compat-radius-1);
   color: var(--studio-fg-dim);
   background: var(--studio-card-muted-bg);
@@ -56,8 +57,9 @@ button.copy-key:focus-visible {
 }
 
 .copy-key--detail {
+  font-family: var(--studio-record-key-font);
   height: 22px;
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border-radius: var(--studio-compat-radius-6);
   font-size: var(--studio-compat-type-6);
   letter-spacing: 0.03em;

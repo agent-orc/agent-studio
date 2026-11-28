@@ -348,7 +348,8 @@ public sealed class TaskTransitionService
         if (checksOperatorAcceptance && operatorAcceptance is null
             && (_guardedDelivery || IntegrationStatuses.IsMerged(completionIntegrationStatus?.Status)))
             return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
-                "Operator acceptance needs a published tree that contains the current delivery.", info.FolderPath);
+                completionIntegrationStatus?.Verification is { UncoveredPublication: not null, Reason: { } remedy }
+                    ? remedy : "Operator acceptance needs a published tree that contains the current delivery.", info.FolderPath);
 
         // Hide a queued follow-up while the terminal move is in flight. The
         // move can still be refused by the state machine, so do not record a
@@ -1883,7 +1884,7 @@ public sealed class TaskTransitionService
             {
                 Evidence = $"{contentClaim.Evidence} {gateName}"
                     + (gate.GateNeutralCommits.Count == 0 ? string.Empty
-                        : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", gate.GateNeutralCommits)}."),
+                        : $" Verification-neutral commits: {string.Join(", ", gate.GateNeutralCommits)}."),
             };
         }
         var boundCompletionClaim = contentClaim is null
@@ -1966,13 +1967,8 @@ public sealed class TaskTransitionService
             // that responsibility explicitly with an override.
             if (operatorOverride || IntegrationVerificationStates.PermitsCompletion(verification))
                 return null;
-            // A later publication without verification is not a project.yml
-            // problem; the refusal names its owner and the missing evidence.
-            if (verification?.UncoveredPublication is { } uncovered)
-                return new MoveJobOutcome(
-                    MoveJobStatus.IntegrationFailed,
-                    $"Acceptance cannot verify the later publication {uncovered}. {verification.Reason}",
-                    reviewed.FolderPath);
+            if (verification?.UncoveredPublication is not null)
+                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, verification.Reason, reviewed.FolderPath);
             return new MoveJobOutcome(
                 MoveJobStatus.IntegrationFailed,
                 AgentStudio.Pipeline.VerifyDefinitionPolicy.DescribesMissingDefinition(verification?.Reason)
@@ -2211,6 +2207,7 @@ public sealed class TaskTransitionService
                 actor,
                 // ES-2: an operator session's override names the approval and the approving Owner.
                 approvalId = OperatorActorScope.Current?.ApprovalId,
+                batchId = OperatorActorScope.Current?.BatchId,
                 approvedBy = OperatorActorScope.Current?.ApprovedBy is { } approvedBy ? TimelineActors.Human(approvedBy) : null,
                 at = _time.GetUtcNow(),
                 deliveryEpoch = subject?.RunAttemptId ?? card.CompletionClaim?.DeliveryEpoch,
@@ -2414,9 +2411,13 @@ public sealed class TaskTransitionService
         var delivery = claim?.ResultSha;
         if (!ReviewSubjectStore.IsValidResultSha(delivery))
             delivery = status?.Sha;
-        if (!ReviewSubjectStore.IsValidResultSha(published)
-            || !ReviewSubjectStore.IsValidResultSha(delivery)
-            || !_git.IsDeliveryPublished(root, delivery!, published!)) return null;
+        if (!ReviewSubjectStore.IsValidResultSha(published) || !ReviewSubjectStore.IsValidResultSha(delivery)) return null;
+        var verifiedTree = status?.Status == IntegrationStatuses.Integrated
+            && status.Verification is { State: IntegrationVerificationStates.Verified } verified
+                ? verified.GateNeutralCommits.FirstOrDefault() ?? verified.Sha : null;
+        if (verifiedTree is not null && (!ReviewSubjectStore.IsValidResultSha(verifiedTree)
+                || !_git.IsAncestor(root, verifiedTree, published!))) return null;
+        if (verifiedTree is null && !_git.IsDeliveryPublished(root, delivery!, published!)) return null;
 
         var subject = ReviewSubjectStore.Read(accepted.FolderPath);
         var baseSha = subject is not null
@@ -2428,19 +2429,19 @@ public sealed class TaskTransitionService
                 (ancestor, descendant) => _git.IsAncestor(root, ancestor, descendant))
             .Select(commit => commit.Sha)
             .ToList();
-        if (commits.Any(commit => !_git.IsDeliveryPublished(root, commit, published!))) return null;
+        if (verifiedTree is null && commits.Any(commit => !_git.IsDeliveryPublished(root, commit, published!))) return null;
         var external = AgentStudio.Pipeline.ExternalPublishedVerificationStore.Read(accepted.WatchPath)
             .FirstOrDefault(item => AgentStudio.Pipeline.IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch)
                 && _git.IsAncestor(root, item.CandidateSha, published!)
                 && _git.IsDeliveryPublished(root, delivery!, item.CandidateSha));
         var record = new TaskIntegrationRecord
         {
-            Id = $"operator-acceptance-{published![..12]}-{delivery![..12]}",
+            Id = $"operator-acceptance-{(verifiedTree ?? published!)[..12]}-{delivery![..12]}",
             Classification = IntegrationRecordClasses.IntegratedVerified,
             RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
             AcceptedAtUtc = _time.GetUtcNow().UtcDateTime,
             IntegrationBranch = branch,
-            IntegrationSha = published,
+            IntegrationSha = verifiedTree ?? published,
             SourceSha = delivery,
             CommitShas = commits,
             Actor = actor ?? "operator:unspecified",

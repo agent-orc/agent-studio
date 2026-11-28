@@ -1,0 +1,59 @@
+<div class="batch-links">
+  @for (batch of pending(); track batch.id) {
+    <button type="button" class="btn btn--secondary access-secondary" (click)="open(batch)">Review {{ batch.items.length }} operator items</button>
+  }
+</div>
+@if (batch(); as current) {
+  <app-dialog title="Confirm operator batch" eyebrow="Operator approval" widthTier="lg" testid="operator-batch-sheet" (closeRequest)="close()">
+    <div class="batch-sheet">
+      <div class="batch-sheet__meta">
+        <p><strong>{{ current.principalName ?? current.actor }}</strong> · {{ classLabels[current.class] ?? current.class }}</p>
+        <p>Source: {{ sourceText(current.instructionSource) }}</p>
+        @if (untrusted(current.instructionSource)) { <p>Source content proposes actions. Your confirmation authorizes the selected items.</p> }
+        <p>Expires {{ time(current.expiresAt) }}. Selected items run in order, with your approval recorded on each card.</p>
+        <details class="batch-sheet__session"><summary>Session details</summary><p>{{ current.actor }}</p><p>Batch: {{ current.id }}</p></details>
+      </div>
+      @if (service.error(); as error) { <p role="alert">{{ error }}</p> }
+      <ol class="batch-sheet__items" aria-label="Batch items">
+        @for (item of current.items; track item.index) {
+          <li class="batch-sheet__item" [attr.data-item-index]="item.index">
+            <label class="batch-sheet__selection">
+              <input type="checkbox" [attr.aria-label]="'Select ' + item.request.card" [checked]="selected().has(item.index)"
+                     [disabled]="!!item.refusal || current.state !== 'pending' || service.busy()"
+                     (change)="toggle(item.index, $any($event.target).checked)" />
+              <strong>{{ item.request.card }} · {{ item.title }}</strong>
+            </label>
+            <div class="batch-sheet__detail">
+              <p class="batch-sheet__reservation"><span>Reservation:</span> {{ item.reservation ?? 'None stated' }}</p>
+              <p class="batch-sheet__reason"><span>Agent's reason:</span> {{ item.request.reason }}</p>
+              @if (item.refusal || current.state !== 'pending') {
+                <p class="batch-sheet__result" role="status">{{ item.refusal ?? item.resultReason ?? current.state }}</p>
+              }
+              <a [href]="link(item)" target="_blank" rel="noopener">Open {{ item.request.card }}</a>
+            </div>
+          </li>
+        }
+      </ol>
+    </div>
+    <div footer class="batch-sheet__footer">
+      @if (current.state === 'pending') {
+        <p>Use a passkey, or enter an authenticator code.</p>
+        <label class="batch-sheet__factor">Authenticator code
+          <input autocomplete="one-time-code" inputmode="numeric" placeholder="6-digit code (optional)" [value]="code()" [disabled]="service.busy()" (input)="code.set($any($event.target).value)" />
+        </label>
+        <div class="batch-sheet__actions">
+          <button type="button" class="btn btn--primary" [disabled]="service.busy() || !selected().size" (click)="decide(true)">Confirm {{ selected().size }} items</button>
+          <button type="button" class="btn btn--secondary access-secondary" [disabled]="service.busy()" (click)="decide(false)">Reject batch</button>
+        </div>
+      } @else {
+        <p role="status">Batch {{ current.state }}. This batch cannot be confirmed again.</p>
+        <p>Executed {{ executed() }} of {{ current.items.length }} items. Each item records its result above.</p>
+      }
+    </div>
+  </app-dialog>
+}
+@if (single()) {
+  <app-dialog title="Operator approval" widthTier="lg" testid="operator-single-sheet" (closeRequest)="close()">
+    <app-access-operator-approvals />
+  </app-dialog>
+}

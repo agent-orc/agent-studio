@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { CredentialInventoryComponent } from './credential-inventory.component';
 import { CredentialInventoryService, type CredentialInventory } from '../credential-inventory.service';
+import { WorkspaceOverlaysService } from '../../shell/state/workspace-overlays.service';
 import { ProviderAuthStatusService } from '../../remote-hosts/services/provider-auth-status.service';
 import { CodexSignInDialogService } from '../../remote-hosts/services/codex-sign-in-dialog.service';
 
@@ -22,6 +23,7 @@ const INVENTORY: CredentialInventory = {
 describe('CredentialInventoryComponent', () => {
   it('shows required gaps and filters by host and state', () => {
     const open = vi.fn();
+    const select = vi.fn();
     const statuses = signal([{
       provider: 'codex', hostId: 'coding-a', runnerId: 'coding-a', hostName: 'Coding host',
       aliases: ['coding-a'], state: 'limited', advertisedAt: '2026-10-16T09:00:00Z',
@@ -29,6 +31,7 @@ describe('CredentialInventoryComponent', () => {
     TestBed.configureTestingModule({
       imports: [CredentialInventoryComponent],
       providers: [provideZonelessChangeDetection(),
+        { provide: WorkspaceOverlaysService, useValue: { select } },
         { provide: ProviderAuthStatusService, useValue: { start: vi.fn(), statuses } },
         { provide: CodexSignInDialogService, useValue: { open } }, {
         provide: CredentialInventoryService,
@@ -40,6 +43,14 @@ describe('CredentialInventoryComponent', () => {
     const element: HTMLElement = fixture.nativeElement;
     expect(element.querySelectorAll('.credentials__row')).toHaveLength(2);
     expect(element.textContent).toContain('Affected cards: AGT-1');
+    expect(element.textContent).toContain('long-lived');
+    expect(element.textContent).toContain('Holder: coding-a');
+    expect(element.textContent).toContain('Expires: none');
+    expect(element.textContent).toContain('Every 90 days');
+    fixture.componentInstance.openActions({ ...INVENTORY.items[1], kind: 'external_store_token' });
+    expect(select).toHaveBeenLastCalledWith('secrets');
+    fixture.componentInstance.openActions({ ...INVENTORY.items[1], kind: 'service_account_token' });
+    expect(select).toHaveBeenLastCalledWith('access');
     const missing = element.querySelector<HTMLElement>('[data-testid="credential-state-one"]')!;
     expect([missing.dataset['tone'], missing.dataset['icon'], missing.textContent?.trim()]).toEqual(['danger', 'close', 'Missing']);
     const ok = element.querySelector<HTMLElement>('[data-testid="credential-state-two"]')!;
@@ -61,5 +72,6 @@ describe('CredentialInventoryComponent', () => {
     fixture.componentInstance.state.set('ok');
     fixture.detectChanges();
     expect(element.textContent).toContain('No credentials match these filters.');
+    expect(fixture.componentInstance.attention()).toBe(0);
   });
 });

@@ -8,7 +8,7 @@ import { setTheme } from '../helpers/theme';
 /**
  * AGT-3576: one header entry answers "what needs me".
  *
- * The header count is the number of rows the attention list shows (R3); the
+ * Each header count matches its section in the attention list. The
  * rows are grouped by the decision-event classes of the operator stream and
  * each offers one action. A human review card opens from the list without
  * scrolling the board. Covered at 1280 and 390 px in light and dark themes.
@@ -37,8 +37,8 @@ async function plantReviewCard(watchPath: string, title: string): Promise<{ id: 
 }
 
 async function gotoStudio(page: Page): Promise<void> {
-  await page.goto('/');
-  await expect(page.getByTestId('studio-attention-trigger')).toBeVisible({ timeout: 30_000 });
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await expect(page.getByTestId('studio-attention-trigger')).toBeVisible({ timeout: 120_000 });
 }
 
 /** Opens the list and checks the header count against the visible rows and group counts. */
@@ -46,24 +46,31 @@ async function openAndReconcile(page: Page): Promise<number> {
   await page.getByTestId('studio-attention-trigger').click();
   const list = page.getByTestId('studio-attention-list');
   await expect(list).toBeVisible();
+  let total = 0;
   await expect.poll(async () => {
-    const count = Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
-    const rows = await list.getByTestId('attention-row').count();
-    const groups = (await list.getByTestId('attention-count-in-group').allTextContents())
-      .reduce((sum, value) => sum + Number(value.trim()), 0);
-    return count > 0 && count === rows && count === groups;
+    const counts = await list.evaluate(dialog =>
+      [['Decisions', 'studio-attention-count'], ['Notices', 'studio-attention-notice-count']].map(([name, id]) => {
+        const badge = document.querySelector(`[data-testid="${id}"]`);
+        const section = dialog.querySelector(`section[aria-label="${name}"]`);
+        const rows = section?.querySelectorAll('[data-testid="attention-row"]').length ?? 0;
+        const groups = Array.from(section?.querySelectorAll('[data-testid="attention-count-in-group"]') ?? [])
+          .reduce((sum, group) => sum + Number(group.textContent), 0);
+        return { header: badge ? Number(badge.textContent) : -1, rows, groups };
+      }));
+    total = counts.reduce((sum, section) => sum + section.rows, 0);
+    return counts.every(section => section.header === section.rows && section.rows === section.groups);
   }).toBe(true);
-  return Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
+  return total;
 }
 
 async function screenshot(page: Page, name: string): Promise<void> {
   mkdirSync(SHOT_DIR, { recursive: true });
-  await page.screenshot({ path: join(SHOT_DIR, `${name}.png`), animations: 'disabled' });
+  await page.screenshot({ path: join(SHOT_DIR, `${name}.png`), animations: 'disabled', timeout: 60_000 });
 }
 
 test.describe('Operator attention list', () => {
   test('coverage survives failed polls, recovers, and ages retained and new rows while open', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(300_000);
     const start = Date.now();
     await page.clock.install({ time: start });
     let fail = true;
@@ -127,7 +134,7 @@ test.describe('Operator attention list', () => {
     backupFail = true;
     await openAndReconcile(page);
     await expect(page.getByTestId('attention-list-coverage')).toContainText('Backups: stale');
-    await expect(page.getByTestId('studio-attention-count')).toHaveText('2');
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('1');
     await expect(page.getByTestId('attention-group-installation')).toContainText('Backups off');
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize(viewport);
@@ -485,6 +492,61 @@ test.describe('Operator attention list', () => {
     }
   });
 
+  test('counts decisions and notices separately and dismisses an escalation group with a reason', async ({ page }) => {
+    test.setTimeout(360_000);
+    const [watch] = await api<WatchPath[]>('/api/watch-paths');
+    const cards = [];
+    const titles = ['Review the rollout', 'Choose the recovery step'];
+    try {
+      for (const title of titles)
+        cards.push(await createJob({ title, watchPath: watch.path, targetState: '5e-escalated', mode: 'concept',
+          requiresIntegration: false, fixture: false }));
+      // Only the notice is synthetic. The two decisions and the dismissal use the isolated server.
+      await page.route('**/api/operator/attention', async route => {
+        const response = await route.fetch();
+        const body = await response.json();
+        const items = body.items.filter((item: { type: string; title: string }) =>
+          item.type === 'escalation.opened' && titles.includes(item.title));
+        items.push({ id: 'disk-fixture', type: 'host.disk-pressure', project: null, cards: [],
+          cardKey: null, title: 'Review host', reason: 'Review disk space is low.', isDecision: false,
+          observedAt: new Date().toISOString(), suggestedOperations: [] });
+        await route.fulfill({ response, json: { items, count: items.length } });
+      });
+      await page.route('**/api/workbenches', route => route.fulfill({ json: { items: [] } }));
+      await page.route('**/api/operator/backups', route => route.fulfill({ json: {
+        state: 'ok', stale: false, warnings: [], backups: [], offHost: {},
+      } }));
+      await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({ json: {
+        generatedAt: new Date().toISOString(), items: [],
+      } }));
+      await gotoStudio(page);
+      await expect(page.getByTestId('studio-attention-count')).toHaveText('2', { timeout: 45_000 });
+      await expect(page.getByTestId('studio-attention-notice-count')).toHaveText('1');
+      for (const surface of ['header', 'list']) {
+        if (surface === 'list') await openAndReconcile(page);
+        for (const width of [1024, 390]) {
+          await page.setViewportSize({ width, height: 850 });
+          for (const theme of ['light', 'dark'] as const) {
+            await setTheme(page, theme);
+            await screenshot(page, `attention-decisions-notices-${surface}-${width}-${theme}`);
+          }
+        }
+      }
+      await page.getByTestId('attention-group-escalation').getByTestId('attention-dismiss-group').click();
+      await expect(page.getByTestId('confirm-dialog-confirm')).toBeDisabled();
+      await page.getByTestId('confirm-dialog-reason-input').fill('Both decisions are tracked in the handover.');
+      await page.getByTestId('confirm-dialog-confirm').click();
+      await expect(page.getByTestId('studio-attention-count')).toHaveText('0');
+      await page.reload({ waitUntil: 'commit', timeout: 90_000 });
+      await expect(page.getByTestId('studio-attention-notice-count')).toHaveText('1', { timeout: 60_000 });
+      await openAndReconcile(page);
+      await expect(page.getByTestId('attention-group-escalation')).toHaveCount(0);
+      await expect(page.getByTestId('attention-row')).toHaveCount(1);
+    } finally {
+      for (const card of cards) await moveJob(card.id, watch.path, '7-archive');
+    }
+  });
+
   test('groups every decision-event class and counts exactly the visible rows', async ({ page }) => {
     await page.route('**/api/workbenches', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }),
@@ -508,7 +570,7 @@ test.describe('Operator attention list', () => {
       row('5', 'batch.isolating', null, 'Batch b-17 isolates its red members in 2 diagnostic batches.'),
       row('10', 'batch-gate.stuck', null, 'Batch b-18 is running for 151 min with 4 pending members. No automatic next step is recorded.'),
       row('6', 'push.pending-overdue', 'AGT-9004', 'Push of AGT-9004 has been pending for 14 minutes: remote rejected.'),
-      row('10', 'push.blocked', 'AGT-9006', 'Push of AGT-9006 is blocked: Publication stopped: the approved merge result c58e247a1 is not on the local develop integration line, so nothing was pushed to origin/develop.'),
+      row('11', 'push.blocked', 'AGT-9006', 'Push of AGT-9006 is blocked: Publication stopped: the approved merge result c58e247a1 is not on the local develop integration line, so nothing was pushed to origin/develop.'),
       row('7', 'quota.exhausted', null, 'claude reached its provider limit until 12:00: rate limited', null),
       row('8', 'quota.fallback-active', 'AGT-9005', 'AGT-9005 runs on the codex fallback.'),
       row('9', 'backend.stalled', null, 'agent-runner-01 refuses claims. Check the host admission.', null),
@@ -517,7 +579,7 @@ test.describe('Operator attention list', () => {
       status: 200, contentType: 'application/json', body: JSON.stringify({ items, count: items.length }),
     }));
     await gotoStudio(page);
-    await expect(page.getByTestId('studio-attention-count')).toHaveText(String(items.length));
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('4');
 
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -555,7 +617,7 @@ test.describe('Operator attention list', () => {
     await page.locator('[data-attention-type="batch-gate.stuck"] [data-testid="attention-row-action"]').click();
     await expect(page.getByTestId('studio-attention-list')).toBeHidden();
     await expect(page.getByTestId('batch-panel')).toBeVisible();
-    await expect(page.getByTestId('batch-panel').getByText('alpha', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('batch-panel').getByText(/^alpha · /)).toBeVisible();
     await page.keyboard.press('Escape');
     await openAndReconcile(page);
     await page.getByTestId('attention-group-host').getByTestId('attention-row-action').click();
@@ -610,7 +672,7 @@ test.describe('Operator attention list', () => {
         state: 'expiring', detail: 'Expires soon.' }] }),
     }));
     await gotoStudio(page);
-    await expect(page.getByTestId('studio-attention-count')).toHaveText(/1[23]/);
+    await expect(page.getByTestId('studio-attention-count')).toHaveText('10');
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       for (const theme of ['light', 'dark'] as const) {

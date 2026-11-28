@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -46,7 +46,9 @@ describe('RunGitViewerComponent keyboard navigation', () => {
     { status: 'M', path: 'frontend/src/app.ts', added: 5, removed: 0 },
   ];
 
-  async function makeComponent(): Promise<RunGitViewerComponent> {
+  afterEach(() => TestBed.resetTestingModule());
+
+  async function makeComponent() {
     await TestBed.configureTestingModule({
       imports: [RunGitViewerComponent],
       providers: [
@@ -61,21 +63,15 @@ describe('RunGitViewerComponent keyboard navigation', () => {
     c.files.set(FILES);
     // Expand every folder so the file rows are part of the visible list.
     c.expanded.set(new Set(['', 'backend', 'frontend', 'frontend/src']));
-    return c;
-  }
-
-  /** A detached tree element with one `.rgv__node` per visible row so the
-   *  component's roving-focus call has something real to focus. */
-  function fakeTree(rowCount: number): HTMLElement {
-    const aside = document.createElement('aside');
-    for (let i = 0; i < rowCount; i++) {
+    // Keep the focusable rows inside the root that TestBed tears down.
+    const tree = fixture.nativeElement as HTMLElement;
+    c.visibleNodes().forEach(() => {
       const div = document.createElement('div');
       div.className = 'rgv__node';
       div.tabIndex = -1;
-      aside.appendChild(div);
-    }
-    document.body.appendChild(aside);
-    return aside;
+      tree.appendChild(div);
+    });
+    return { c, tree };
   }
 
   function press(c: RunGitViewerComponent, tree: HTMLElement, key: string): void {
@@ -83,7 +79,7 @@ describe('RunGitViewerComponent keyboard navigation', () => {
   }
 
   it('flattens the visible tree and defaults the roving path to the first row', async () => {
-    const c = await makeComponent();
+    const { c } = await makeComponent();
     const paths = c.visibleNodes().map((r) => r.node.fullPath);
     expect(paths).toEqual([
       'backend',
@@ -96,8 +92,7 @@ describe('RunGitViewerComponent keyboard navigation', () => {
   });
 
   it('ArrowDown walks the rows and selects files (loading their diff)', async () => {
-    const c = await makeComponent();
-    const tree = fakeTree(c.visibleNodes().length);
+    const { c, tree } = await makeComponent();
 
     press(c, tree, 'ArrowDown'); // backend -> backend/Foo.cs (file → selected)
     expect(c.selectedPath()).toBe('backend/Foo.cs');
@@ -113,8 +108,7 @@ describe('RunGitViewerComponent keyboard navigation', () => {
   });
 
   it('ArrowLeft collapses the focused folder and ArrowRight re-expands it', async () => {
-    const c = await makeComponent();
-    const tree = fakeTree(c.visibleNodes().length);
+    const { c, tree } = await makeComponent();
 
     press(c, tree, 'Home');      // focus "backend" folder
     press(c, tree, 'ArrowLeft'); // collapse it

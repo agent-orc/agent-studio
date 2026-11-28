@@ -31,6 +31,8 @@ type LoadState = 'idle' | 'loading' | 'ready' | 'denied' | 'error';
 export class OperatorAgentsService {
   private readonly http = inject(HttpClient);
   private activityRequest = 0;
+  private agentsRequest = 0;
+  private agentsInFlight = 0;
   private readonly auth = inject(AuthService);
   readonly agentFilter = signal<string | null>(null);
   readonly elevatedOnly = signal(false);
@@ -56,17 +58,31 @@ export class OperatorAgentsService {
   /** True while the switch or a drill runs; both are rare and must not be started twice. */
   readonly killing = signal(false);
 
-  async load(): Promise<void> {
-    this.state.set('loading');
-    this.error.set(null);
+  /** Header freshness preserves the shared loading and error state. */
+  refresh(): Promise<void> {
+    if (this.agentsInFlight || this.busy() || this.killing() || this.state() === 'denied') return Promise.resolve();
+    return this.load(true);
+  }
+
+  async load(background = false): Promise<void> {
+    const request = ++this.agentsRequest;
+    this.agentsInFlight++;
+    if (!background) {
+      this.state.set('loading');
+      this.error.set(null);
+    }
     try {
-      this.agents.set(await firstValueFrom(this.http.get<OperatorAgent[]>(OPERATORS)));
+      const agents = await firstValueFrom(this.http.get<OperatorAgent[]>(OPERATORS));
+      if (request !== this.agentsRequest) return;
+      this.agents.set(agents);
       this.available.set(true);
       this.state.set('ready');
     } catch (failure: unknown) {
-      if (this.refused(failure)) return;
+      if (request !== this.agentsRequest || this.refused(failure) || background) return;
       this.state.set('error');
       this.error.set(message(failure, 'Operator agents could not be loaded.'));
+    } finally {
+      this.agentsInFlight--;
     }
   }
 
@@ -221,6 +237,7 @@ export class OperatorAgentsService {
   private refused(failure: unknown, missingHides = true): boolean {
     const status = failure instanceof HttpErrorResponse ? failure.status : 0;
     if (status !== 401 && status !== 403 && !(missingHides && status === 404)) return false;
+    this.agentsRequest++;
     this.agents.set([]);
     this.activity.set(null);
     this.killSwitch.set(null);

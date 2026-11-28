@@ -29,6 +29,42 @@
 :root {
   // Preserve the square initial radius of the previously undeclared alias.
   --studio-radius-sm: 0;
+
+  // Shared geometry and interaction states for the Studio workbench surfaces.
+  --studio-link-ink: var(--studio-accent);
+  --studio-record-key-font: var(--font-ui);
+  --studio-workbench-statement: var(--studio-compat-type-35);
+  --studio-inspector-title: var(--studio-compat-type-99);
+  --studio-section-heading: var(--studio-compat-type-9);
+  --studio-spacing-0: 0;
+  --studio-radius-none: 0;
+  --studio-radius-pill: 999px;
+  --studio-swatch-ring: 0 0 0 1px var(--studio-border-strong);
+  --studio-filter-focus-ring: 0 0 0 1px color-mix(in srgb, var(--studio-accent) 40%, transparent);
+  --studio-swatch-inset: inset 0 0 0 1px var(--studio-border-strong);
+  --studio-card-highlight-start: 0 0 0 0 color-mix(in srgb, var(--studio-accent) 70%, transparent), 0 0 0 0 color-mix(in srgb, var(--studio-accent) 40%, transparent);
+  --studio-card-highlight-peak: 0 0 0 4px color-mix(in srgb, var(--studio-accent) 55%, transparent), 0 0 22px 8px color-mix(in srgb, var(--studio-accent) 30%, transparent);
+  --studio-card-highlight-end: 0 0 0 0 color-mix(in srgb, var(--studio-accent) 0%, transparent), 0 0 0 0 color-mix(in srgb, var(--studio-accent) 0%, transparent);
+  --studio-running-card-shadow: 0 0 0 1px var(--studio-card-running-border), var(--shadow-running);
+  --studio-running-card-hover-shadow: 0 0 0 1px var(--studio-card-running-border), var(--shadow-running), 0 14px 32px color-mix(in srgb, var(--studio-accent-3) 25%, transparent);
+  --studio-attention-card-shadow: 0 0 0 1px var(--studio-card-attention-border), var(--studio-card-shadow);
+  --studio-attention-card-hover-shadow: 0 0 0 1px var(--studio-card-attention-border), 0 2px 4px var(--alpha-black-10), 0 10px 24px color-mix(in srgb, var(--studio-accent-6) 22%, transparent);
+  --studio-active-step-ring: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent-3) 16%, transparent);
+  --studio-blocked-step-ring: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent-6) 14%, transparent);
+  --studio-running-dot-pulse: 0 0 0 4px color-mix(in srgb, var(--studio-accent-3) 0%, transparent);
+  --studio-running-dot-ring: 0 0 0 3px color-mix(in srgb, var(--studio-status-running) 22%, transparent);
+  --studio-foreign-running-dot-ring: 0 0 0 3px color-mix(in srgb, var(--studio-status-running) 14%, transparent);
+  --studio-active-tab-shadow: inset 0 -2px 0 var(--studio-accent), inset 0 1px 0 var(--studio-border-strong);
+  --studio-tab-dot-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
+  --studio-active-control-ring: 0 0 0 3px color-mix(in srgb, var(--studio-accent-strong) 18%, transparent);
+  --studio-control-focus-ring: 0 0 0 2px var(--studio-accent-faint, color-mix(in srgb, var(--studio-accent-strong) 35%, transparent));
+  --studio-steer-card-ring: 0 0 0 1px color-mix(in srgb, var(--severity-warn) 10%, transparent) inset;
+  --studio-decision-focus-ring: 0 0 0 2px color-mix(in srgb, var(--studio-accent) 15%, transparent);
+  --studio-file-focus-ring: inset 0 0 0 2px color-mix(in srgb, var(--studio-accent) 60%, transparent);
+  --studio-selection-inset: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent) 50%, transparent);
+  --studio-title-focus-ring: 0 0 0 2px var(--studio-accent);
+  --studio-title-input-ring: 0 0 0 3px color-mix(in srgb, var(--studio-accent-3) 20%, transparent);
+
   --studio-font-size-sm: 12px;
   --studio-font-size-md: 13px;
   --studio-font-size-lg: 14px;

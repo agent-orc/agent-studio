@@ -6,7 +6,7 @@
   align-items: flex-start;
   gap: var(--studio-spacing-2);
 
-  p { margin: 0; }
+  p { margin: var(--studio-spacing-0); }
 
   &__retry {
     min-height: var(--studio-action-height-sm);

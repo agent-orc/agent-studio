@@ -21,8 +21,8 @@
 }
 
 .replay__header h4 {
-  margin: 0;
-  font-size: var(--studio-font-size-sm, var(--studio-font-size-md));
+  margin: var(--studio-spacing-0);
+  font-size: var(--studio-font-size-sm);
 }
 
 .replay__header span,
@@ -41,7 +41,7 @@ dt {
 // Provenance, not an alarm: the marker stays dim in both themes and never
 // competes with acute run status.
 .replay__origin {
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border: 1px solid var(--studio-border-subtle);
   border-radius: var(--studio-compat-radius-2);
   background: var(--studio-bg-elevated);
@@ -61,8 +61,8 @@ dt {
 .replay__events {
   display: grid;
   gap: var(--studio-spacing-2);
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 
@@ -75,14 +75,14 @@ dt {
 }
 
 .replay__event-head strong {
-  font-size: var(--studio-font-size-sm, var(--studio-font-size-md));
+  font-size: var(--studio-font-size-sm);
 }
 
 .replay__metadata {
   display: flex;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2) var(--studio-spacing-4);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .replay__metadata div {
@@ -91,7 +91,7 @@ dt {
 }
 
 .replay__metadata dd {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-font-size-xs, var(--studio-compat-type-6));
   font-variant-numeric: tabular-nums;
 }

@@ -50,12 +50,12 @@
   font-size: var(--studio-font-size-md);
   padding: var(--studio-spacing-5) var(--studio-spacing-4);
   max-width: 480px;
-  margin: 0 auto;
+  margin: var(--studio-spacing-0) auto;
 }
 .git-view__files {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   max-height: 30vh;
   overflow: auto;
   border: 1px solid var(--studio-border);
@@ -116,7 +116,7 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  border-radius: 0;
+  border-radius: var(--studio-radius-none);
   /* Solid (not translucent) — the maximized diff is a focus mode and must
      fully obscure the board behind it. */
   background: var(--studio-bg-editor);
@@ -147,7 +147,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   color: var(--studio-fg);
   font-size: var(--studio-font-size-sm);
   // diff2html renders `.d2h-code-linenumber` (and `.d2h-code-side-linenumber`
@@ -228,7 +228,7 @@
   opacity: 0.7;
 }
 .git-view__gated-hint {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   opacity: 0.7;
 }
 .git-view__gated-actions {
@@ -249,8 +249,8 @@
 .git-view__diff ::ng-deep .d2h-wrapper { background: transparent; }
 .git-view__diff ::ng-deep .d2h-file-wrapper {
   border: 0;
-  border-radius: 0;
-  margin: 0;
+  border-radius: var(--studio-radius-none);
+  margin: var(--studio-spacing-0);
 }
 .git-view__diff ::ng-deep .d2h-ins,
 .git-view__diff ::ng-deep .d2h-ins.d2h-change {
@@ -362,7 +362,7 @@
   justify-content: center;
   min-width: 22px;
   height: 22px;
-  padding: 0 var(--studio-compat-space-2);
+  padding: var(--studio-spacing-0) var(--studio-compat-space-2);
   margin-left: var(--studio-spacing-1);
   border: 1px solid var(--studio-border);
   border-radius: var(--studio-compat-radius-7);
@@ -390,7 +390,7 @@
   align-items: center;
   gap: var(--studio-spacing-1);
   height: 22px;
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
   border-radius: var(--studio-compat-radius-2);
   background: transparent;
@@ -418,14 +418,14 @@
 .git-view.git-view--split {
   min-height: 0;
   height: 100%;
-  padding-bottom: 0;
+  padding-bottom: var(--studio-spacing-0);
   overflow: hidden;
 }
 .git-view--split .git-view__split-body {
   flex: 1;
   flex-direction: row;
   align-items: stretch;
-  gap: 0;
+  gap: var(--studio-spacing-0);
   width: 100%;
   min-width: 0;
   min-height: 0;
@@ -502,7 +502,7 @@
   height: 100%;
 }
 .git-view__commit-msg-display {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-compat-space-2) var(--studio-spacing-2);
   border-radius: var(--studio-compat-radius-5);
   background: var(--studio-bg-hover);
@@ -514,7 +514,7 @@
 
 .git-view__empty-hint {
   display: block;
-  margin: var(--studio-compat-space-2) 0 0;
+  margin: var(--studio-compat-space-2) var(--studio-spacing-0) var(--studio-spacing-0);
   color: var(--studio-fg-muted);
   font-size: var(--studio-font-size-sm);
   line-height: 1.5;
@@ -540,8 +540,8 @@
 }
 .git-view__ladder {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -565,7 +565,7 @@
 }
 .git-view__ladder-sha {
   font-family: var(--font-mono, monospace);
-  color: var(--studio-accent);
+  color: var(--studio-link-ink);
 }
 
 /* AGT-2006: landed-ladder loading placeholder. Occupies the ladder's slot with
@@ -602,7 +602,7 @@
   position: absolute;
   width: 1px;
   height: 1px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   margin: var(--studio-compat-space-36);
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
@@ -623,7 +623,7 @@
   gap: var(--studio-spacing-1);
   min-width: 0;
 }
-.git-view__head--collapsed { gap: 0; }
+.git-view__head--collapsed { gap: var(--studio-spacing-0); }
 .git-view__head-toggle {
   display: flex;
   align-items: baseline;

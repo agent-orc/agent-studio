@@ -20,9 +20,8 @@ import {
 import { forkJoin } from 'rxjs';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
-  DossierGroupBoardComponent,
   TaskColumnComponent,
-  KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
+  TagFiltersComponent, TagChipsComponent,
   LaneCollapseService,
   TypeFilterOption,
   BoardDragStateService,
@@ -39,7 +38,7 @@ import {
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
-import { CreateTaskDialogComponent, FiltersDropdownComponent, ProjectTabsComponent } from './features/board/lazy';
+import { CreateTaskDialogComponent, FiltersDropdownComponent, ProjectTabsComponent, DossierGroupBoardComponent, KanbanFilterSidesheetComponent } from './features/board/lazy';
 import { projectRunnerMode } from './features/studio-shell/studio-shell.auto-pickup';
 import {
   TaskDetailComponent,
@@ -103,8 +102,7 @@ import { UpdateBlockModalComponent } from './features/update';
 import { UpdateCenterComponent, UpdateVersionBadgeComponent } from './features/update/lazy';
 import { VerboseDebugHostComponent, type VerboseDebugContext } from './features/verbose-debug/lazy';
 import {
-  StudioShellComponent, TaskDefaultsControlComponent,
-  StudioTabActionsComponent,
+  StudioShellComponent,
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
@@ -125,7 +123,7 @@ import {
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
 import { ProjectOverlaysComponent, ProjectUrlPreviewTabComponent, WorkbenchTabHostComponent } from './features/project-detail/lazy';
-import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent } from './features/studio-shell/lazy';
+import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent, StudioTabActionsComponent, TaskDefaultsControlComponent } from './features/studio-shell/lazy';
 import { TaskService } from './services/task.service';
 import { ClientService } from './services/client.service';
 import { NotificationService } from '@studio/ui/services/notification.service';

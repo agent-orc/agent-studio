@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -211,6 +211,46 @@ full-inventory behavior. The generated per-card project map remains available
 for those projects. `ProjectTestSelectionGuardTests` checks every tracked
 top-level source folder and every declared routine/build/lint assignment.
 
+Fast coding reviews can additionally opt into fixed .NET checks through
+`.agent-studio/review-base.json`. This repository-owned array names an existing
+routine `suite`, exact-file or directory-prefix `paths` (`*` means any .NET
+input), and a `category` trait value or `classes` list. Selector names accept
+only identifiers and dots, never filter operators or shell text. Each suite
+must also be present in `commands.test` as a single filterable `dotnet test`
+invocation. Invalid opt-in inventory refuses planning. No executable command
+is read from this file, and projects without it keep their existing behavior.
+
+The Studio inventory selects `Category=ReviewBase` on any .NET input: durable
+task mutations, every board mutation theory row, deferred actionable-concern
+settlement, and every monolith engine-settlement theory row. Task Server,
+contracts, runner, engine and decision changes also select the separate
+`StandaloneReviewLoopCutoverTests` class through `orchestrator-engine-routine`.
+The existing architecture/Guard selection includes both request-delegate
+generator profiles. Fixed checks and guards share one invocation per declared
+test command, retaining its original exclusions such as `MachineBound`.
+Other selected class invocations exclude only the checks covered by the same
+declared invocation, matched by command without its filter, working directory
+and shell. A selector in one project never excludes cases from another project.
+The retained filter must also match the replacement's base filter or use the
+selector's simple parenthesized conjunction to narrow that filter. Different
+declared filters retain separate replacement coverage, independent of command
+order. Broader filters, other filter shapes and commands without a matching
+replacement keep their selected cases, even when already marked as guard steps.
+
+This union runs after fast review fallback, including an unmapped path or an
+overly broad type-reference selection, on both the shared impact map and the
+legacy generated-map path. Whole .NET routine invocations remain post-merge
+obligations in these opted-in fast reviews. Only an unfiltered invocation or
+one filtered solely by `Category!=MachineBound` is recognized as whole-project.
+Explicit class or trait selections and unrecognized filters remain selected
+even when they exactly match a declared command. The selection audit records the
+commands and their reasons without treating selection as execution: attempted
+commands and tests must come from execution receipts, and selected commands
+without receipts remain missing evidence. A narrowed check never claims a
+complete routine suite. Docs-only and report-only reviews, balanced and strict
+strategies, batch gates, full and nightly verification keep their existing
+semantics. The opt-in file does not activate the shared `testSelection` map.
+
 Compile-only integration under fast, balanced or exact-review reuse still
 runs the selected builds; its receipt explicitly omits tests and lint. Docs-only
 integration runs its documentation check even at that level. Strict pre-merge
@@ -352,10 +392,21 @@ The run host is the fallback. Once the oldest pending integration reaches the
 project's `windowMinutes`, occupied coding slots and host load no longer veto
 that window. It runs sequentially inside the existing worker test envelope;
 its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering puts merge
-checks first. Fixed-slot gate admission preserves the separate integration
+fallback still waits for free coding capacity. Gate queue ordering uses attempt
+creation time first, with merge precedence only at the same instant. Both
+authorities scan bounded pages of 32 in that order until eligible work is found,
+so later arrivals cannot indefinitely overtake either queue. The daemon keeps
+two durable flights and continues claiming while ordinary execution is active.
+A claimed successor in the same lane waits for its predecessor to finish and
+for claim recovery before materializing, including when the predecessor faults
+or is independently cancelled. Shutdown cancellation still stops the wait.
+Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
@@ -572,7 +623,33 @@ The Runner service posts start, terminal, and skip receipts to
 `/api/runner/post-merge/projects/{project}/runs`. `PostMergeRunStore` persists
 the exact tip, window range, command verdicts, timestamps, last green SHA,
 last completed window tip, and `developState` per project outside card folders.
-Only a matching active run can complete. Green advances last green; red keeps
+Terminal receipts must retain the active run's project, ID, kind, exact tip,
+start timestamp, and ordered command list. Green requires one verdict for each
+planned command, with no omitted, substituted, extra, or duplicate coverage.
+Red and inconclusive receipts may contain partial evidence, but every supplied
+verdict must belong to the original plan.
+
+Sharded verdicts may replace a planned `dotnet test ... --no-build` command when
+the start envelope's `shardPlan` declares that suite as `auto` or a fixed count.
+The terminal envelope supplies a count from 1 to 16, preserving a fixed start
+count, and `suiteSelection.suiteCommands` maps the suite ID to its original
+command. A mapping present at start must agree. Each verdict names the suite
+and uses the original command without its `--filter`, followed by
+`--settings '<directory>/post-merge-<run-id>/shard-<index>.runsettings'`.
+All shards for that command share a directory and have distinct indices in
+`0..count-1`. Green requires every index; partial red or inconclusive evidence
+must still use indices within the declared count. Malformed settings arguments
+are refused as receipt conflicts. The settings path is one shell-quoted argument;
+apostrophes use the runner's `'\''` escape. Extra arguments after the path do
+not prove coverage, even if the command ends with a valid shard filename.
+The route returns HTTP 409 for plan or
+coverage conflicts and HTTP 400 for malformed or oversized receipt fields.
+Neither refusal advances green state or consumes the active claim.
+
+Exact terminal replay remains idempotent; changed replay conflicts. Legacy
+receipts without optional suite or envelope fields remain supported for exact
+command coverage, within the existing 64-command and 64-verdict bounds.
+Green advances last green; red keeps
 the previous green; an unchanged tip records a skip. The gate-economics row
 projects the state, last green SHA, nightly verdict, and red duration. The board
 header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red
@@ -857,7 +934,24 @@ first red time, repair key and current lane, and disappears when the repair
 starts or the incident resolves. The RT owner-decision ladder remains in place.
 Repair briefs list each failing test's first diagnostic; new runners preserve
 these before compacting console output. Older receipts explicitly say when a
-diagnostic was not recorded. Suspect lists use the RT static test-file and
+diagnostic was not recorded. When a declared lint command outside a test suite
+fails with Node TAP output, its receipt retains the failed test names and first
+error lines. The runner repeats that lint command once at the same tip. Only
+tests reported failing again receive a confirmed failure. A failure first seen
+on the repeat carries its own name and diagnostic. An explicit TAP pass clears
+an initial failure when the point can be matched across attempts. Nested tests
+include their parent names. When a suite summarizes failed children, the receipt
+records the children's results. A suite's own failure, such as a failing
+teardown hook, gets a separate verdict even when TAP omits `failureType`.
+In that case, a failed suite with failed children counts as a summary when its
+error is absent or reports only the number of failed subtests.
+For duplicate names, the receipt uses source
+locations where they identify individual tests. Where TAP leaves the match
+ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
+A skipped, TODO or absent test stays unresolved even when the repeat exits
+successfully. A later passing
+execution of the same lint command supplies covering evidence for its base
+check. Suspect lists use the RT static test-file and
 covering-folder map, retaining build inputs and project-graph fallback when
 reach is unknown. Measured control and bisect attribution remains authoritative.
 
@@ -2752,10 +2846,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   names the current Attempt and that Git already projects the delivery as
   `integrated`. A passed gate on the delivery's recorded verification tree
   remains valid after the branch advances when that tree is on the published
-  first-parent line and later publications have passed per-task or batch gates.
-  A later exact full-suite gate on a first-parent publication covers earlier
-  ungated publications that its tree contains. A partial or red later gate does
-  not. A rewritten tree or an uncovered later publication refuses acceptance.
+  first-parent line. A green post-merge run or another verified containing
+  publication on that line can supply the receipt for an earlier delivery.
+  Later unverified publications leave that proof valid.
   The completion claim names the gate that verified the
   delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
@@ -3040,14 +3133,28 @@ comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/PreDevelopBuildGate.cs` and
   `FrontendWorkPackagePlanner.cs`: exact-merge develop boundary. Non-frontend
   deliveries retain the build-only level. A merge result that touches
-  `frontend/` runs a blocking Angular work package made from every spec in each
-  touched source folder plus the fixed app, studio-shell, and task-detail
-  barrel collision probes. Broad frontend suite commands stay outside the
+  frontend code runs a blocking Angular work package with explicit spec paths:
+  changed unit specs, companion specs of changed TypeScript and template/style
+  owners, direct named references, and companion specs of immediate production
+  consumers. Named imports resolve to their declaring modules through aliases
+  and barrel re-exports. The union of touched feature folders is included only
+  when it contains at most eight specs. The fixed app, studio-shell, and
+  task-detail collision probes remain in every frontend code slice. Playwright
+  specs are excluded from unit discovery. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
   cannot silently turn this boundary into the promotion full suite.
   Focused Angular slices prefer the declared `test:ci` script, including the
   report-validating `node scripts/run-unit-tests.mjs` wrapper. This preserves
   the completed-test report check instead of falling back to raw `ng test`.
+  Normal fast coding reviews reuse this slice, including mapped, deferred and
+  broad-fallback plans. Review selection reads the pinned result tree rather
+  than the integration checkout, so renamed components and result-only
+  consumers participate. Strict review and full integration verification keep
+  their existing full-suite behavior. Documentation-only deliveries add no
+  Angular invocation. Selection reasons record missing companion/collision
+  matches and oversized feature omissions; these are selected paths, not
+  attempted tests. The existing wrapper report supplies execution and
+  zero-test evidence. Full feature coverage remains a post-merge obligation.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -4346,18 +4453,13 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
-- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
-  gate after later publications only when its recorded verification tree is on
-  the published branch's first-parent line. One bounded first-parent range from
-  that tree to the current tip identifies the later publication commits. Each
-  must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, by the publishing card's exact verified
-  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
-  first-parent publication. The latter names its covering publication in the
-  acceptance reason. Batch evidence cannot substitute for the original
-  tree's first-parent ancestry. A branch rewrite or an uncovered later
-  publication is refused; acceptance evidence names the gate that verified
-  the delivery.
+- **Verified ancestor acceptance.** A receipt covers the delivery while the
+  published integration line contains the verified state and that state
+  contains the current delivery. Managed Dossier bookkeeping and other
+  explicitly declared non-input paths can inherit a parent receipt. A
+  refusal identifies the tip an owner can verify and any admission wait for
+  that tip. See the [review domain map](review.md) for the execution
+  definition and receipt rules.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a
@@ -5055,6 +5157,21 @@ and preserves both sides. Staging, the merge commit, publication, refs and works
 lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
+
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. A mechanical fallback advances
+the pin only if the published ref resolves to the exact reported commit and
+that commit descends from the pinned delivery. A resolved merge then becomes
+the next checkout base. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
 
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic

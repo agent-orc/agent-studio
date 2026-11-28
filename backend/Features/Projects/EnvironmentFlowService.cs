@@ -19,7 +19,8 @@ public sealed record EnvironmentFlowSnapshot(DateTime CapturedAt, EnvironmentDai
 public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineLog timeline,
     TimeProvider clock, ILogger<EnvironmentFlowService> logger, BatchGateStore batchGates,
     AutoReviewStatusSnapshot autoReview, PickupHoldSweep pickupHolds,
-    AgentStudio.Deploy.InstanceDeployService? instanceDeploy = null)
+    AgentStudio.Deploy.InstanceDeployService? instanceDeploy = null,
+    DeliveryIntegrationQueueBoard? integrationQueue = null, ProjectSettingsService? projectSettings = null)
 {
     private readonly object _cacheGate = new();
     private EnvironmentFlowSnapshot? _cached;
@@ -64,17 +65,25 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
                 && publication.VerifiedAtUtc.UtcDateTime >= now.AddHours(-24)
                 && publication.VerifiedAtUtc.UtcDateTime <= now
                 ? manifest.Members.Count : 0);
+        var reviewActivities = autoReview.Read().ActiveJobs;
+        var localProjects = projectSettings is null ? null : tasks.Select(task => task.ProjectName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(project => ProjectExecutionPolicy.ResolveExecutionLocation(projectSettings.Get(project))
+                == ExecutionLocations.Local).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return Aggregate(tasks, task => events.GetValueOrDefault(task.FolderPath) ?? [], now,
             batchGates.ListPending().Select(item => item.EnqueuedAtUtc).ToList(),
-            autoReview.Read().ActiveJobs.Where(item => item.Step == AutoReviewActivitySteps.GateQueued)
+            reviewActivities.Where(item => item.Step == AutoReviewActivitySteps.GateQueued)
                 .Select(item => item.StartedAt).ToList(), batchReleased,
-            instanceDeploy?.CardsWentLive(now.Date, now));
+            instanceDeploy?.CardsWentLive(now.Date, now), integrationQueue?.Read(), reviewActivities, localProjects);
     }
 
     internal static EnvironmentFlowSnapshot Aggregate(IReadOnlyList<TaskInfo> tasks,
         Func<TaskInfo, IReadOnlyList<TimelineEvent>> readTimeline, DateTime nowUtc,
         IReadOnlyList<DateTimeOffset>? batchPending = null, IReadOnlyList<DateTime>? gateQueued = null,
-        int? batchReleasedLast24h = null, int? deployedToday = null)
+        int? batchReleasedLast24h = null, int? deployedToday = null,
+        IReadOnlyDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>>? integrationQueues = null,
+        IReadOnlyList<AutoReviewActivityView>? reviewActivities = null,
+        IReadOnlySet<string>? localIntegrationProjects = null)
     {
         tasks = tasks.Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var now = nowUtc.ToUniversalTime();
@@ -89,11 +98,24 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         var integrated = 0;
         var completed = 0;
         var gateCompleted = 0;
+        var integrationsLast24h = 0;
+        var localIntegrationsLast24h = 0;
+        var acceptancesLast24h = 0;
         var readyToIntegration = new List<double>();
 
         foreach (var task in tasks)
         {
             var taskEvents = readTimeline(task);
+            foreach (var success in taskEvents.Where(e => e.Kind == TimelineEventKinds.IntegrationSucceeded
+                         && e.Ts >= since && e.Ts <= now))
+            {
+                // Placement controls current admission only. Historical output belongs to the
+                // path recorded by the event, even after a project changes execution location.
+                if (success.Details?.GetValueOrDefault("stage") == RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage)
+                    integrationsLast24h++;
+                else
+                    localIntegrationsLast24h++;
+            }
             if (taskEvents.Any(e => e.Kind == TimelineEventKinds.PostStepFinished
                     && e.Ts >= since && e.Ts <= now
                     && e.Details?.GetValueOrDefault("pipelineStepId") == PipelineCatalogue.BuildTestGateStepId))
@@ -117,6 +139,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
                 {
                     if (entered.ContainsKey(to)) entered[to]++;
                     if (left.ContainsKey(from)) left[from]++;
+                    if (from == TaskStates.HumanReview && to == TaskStates.Completed) acceptancesLast24h++;
                 }
                 if (e.Ts >= since && e.Ts <= now && from.Length > 0 && dwell.ContainsKey(from))
                 {
@@ -156,7 +179,10 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
 
         var live = tasks.Where(task => task.State != TaskStates.Archive
             && task.State != TaskStates.Completed).ToList();
-        var queues = new[]
+        var integrationRows = integrationQueues?.Values.SelectMany(rows => rows).ToList();
+        var oldestIntegration = integrationRows?.Where(row => row.SinceUtc is { } at && at.UtcDateTime <= now)
+            .Select(row => row.SinceUtc!.Value.UtcDateTime).DefaultIfEmpty().Min();
+        var queues = new List<EnvironmentQueueFlow>
         {
             Queue("Coding", TaskStates.Ready, TaskStates.Progress),
             Queue("Review", TaskStates.AutoReview, TaskStates.HumanReview),
@@ -168,9 +194,18 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
                 batchPending is { Count: > 0 }
                     ? (now - batchPending.Min().UtcDateTime).TotalMinutes : null,
                 batchReleasedLast24h / 24d),
-            Queue("Integration", TaskStates.HumanReview, TaskStates.Completed),
+            // An empty published queue is authoritative. Never replace it with Human Review work.
+            integrationRows is not null
+                ? new EnvironmentQueueFlow("Integration", integrationRows.Count,
+                    oldestIntegration is null or { Ticks: 0 } ? null : (now - oldestIntegration.Value).TotalMinutes,
+                    integrationsLast24h / 24d)
+                : LocalIntegrationFallback(live),
+            Queue("Acceptance", TaskStates.HumanReview, TaskStates.Completed)
+                with { ThroughputPerHour = acceptancesLast24h / 24d },
         };
-        var reasons = live.Where(IsWaiting).GroupBy(WaitReason, StringComparer.Ordinal)
+        if (integrationRows is not null && (localIntegrationProjects is { Count: > 0 } || localIntegrationsLast24h > 0))
+            queues.Add(LocalIntegrationFallback(live.Where(task => localIntegrationProjects?.Contains(task.ProjectName) == true)));
+        var reasons = live.Where(IsWaiting).GroupBy(task => WaitReason(task, integrationQueues, reviewActivities), StringComparer.Ordinal)
             .Select(g => new EnvironmentWaitReason(g.Key, g.Count()))
             .OrderByDescending(g => g.Count).ThenBy(g => g.Reason, StringComparer.Ordinal)
             .Take(6).ToList();
@@ -179,6 +214,19 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
                 integrated, deployedToday, completed, Median(readyToIntegration)),
             lanes.Select(lane => new EnvironmentLaneFlow(lane, entered[lane], left[lane],
                 Median(dwell[lane]))).ToList(), queues, reasons);
+
+        EnvironmentQueueFlow LocalIntegrationFallback(IEnumerable<TaskInfo> candidates)
+        {
+            // Local delivery has no published integration queue. Keep its legacy lane proxy explicit;
+            // acceptance is never evidence that integration succeeded. Events without the remote
+            // pre-review stage retain the legacy fallback attribution, independent of placement.
+            var waiting = candidates.Where(task => task.State == TaskStates.HumanReview).ToList();
+            var oldest = waiting.Select(task => task.EnteredLaneAt)
+                .Where(at => at != default && at <= now).DefaultIfEmpty().Min();
+            return new EnvironmentQueueFlow("Integration (local lane fallback)", waiting.Count,
+                oldest == default ? null : (now - oldest).TotalMinutes,
+                (integrationRows is null ? integrationsLast24h + localIntegrationsLast24h : localIntegrationsLast24h) / 24d);
+        }
 
         EnvironmentQueueFlow Queue(string name, string waitingLane, string exitLane)
         {
@@ -191,17 +239,40 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         }
     }
 
-    private static string WaitReason(TaskInfo task)
+    private static string WaitReason(TaskInfo task,
+        IReadOnlyDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>>? integrationQueues,
+        IReadOnlyList<AutoReviewActivityView>? reviewActivities)
     {
         if (task.PickupHold is { } hold) return HoldReason(hold.Mechanism);
         if (task.CauseWait is not null) return "Cause hold";
         if (task.QuotaWait is not null) return "Provider quota";
         if (task.RemoteClaimFailure is not null) return "Remote claim failure";
+        if (task.State == TaskStates.AutoReview)
+        {
+            var row = integrationQueues?.GetValueOrDefault(task.ProjectName)?
+                .FirstOrDefault(row => string.Equals(row.JobId, task.Id, StringComparison.OrdinalIgnoreCase));
+            if (row is not null)
+                return row.Activity == DeliveryIntegrationQueueBoard.Waiting
+                    ? "Waiting for integration" : $"Integration: {row.Activity}";
+            var activity = reviewActivities?.FirstOrDefault(item =>
+                string.Equals(item.Project, task.ProjectName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.JobId, task.Id, StringComparison.OrdinalIgnoreCase));
+            if (activity is not null)
+                return activity.Step.Split(':')[0] switch
+                {
+                    AutoReviewActivitySteps.GateQueued => "Waiting for build/test gate",
+                    AutoReviewActivitySteps.Gate => "Build/test gate",
+                    AutoReviewActivitySteps.Aspects => "Review aspects",
+                    AutoReviewActivitySteps.Grade => "Review grading",
+                    AutoReviewActivitySteps.Decision => "Review decision",
+                    _ => "Post-processing",
+                };
+        }
         return task.State switch
         {
             TaskStates.Ready => "Waiting for coding slot",
             TaskStates.AutoReview => "Waiting for review",
-            TaskStates.HumanReview => "Waiting for acceptance or integration",
+            TaskStates.HumanReview => "Waiting for acceptance",
             TaskStates.Escalated => "Escalated",
             _ => "In progress",
         };

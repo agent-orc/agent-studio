@@ -1029,8 +1029,9 @@ DS-D1 through DS-D10 option B remain the working decisions. `CreateTaskRequest`
 accepts `waveId` (at most 200 characters) and `citedPaths` (at most 200
 repository-relative file paths, without line suffixes). Both persist in task
 metadata and detail facts. New wave cards retain the unpinned order sentinel
-999 by default; explicit owner positions remain intact. Cited paths join the source prompt as inputs to the
-shared model-free forecast, including Backlog cards. Packer packages retain
+999 by default. Explicit owner positions remain intact. Tracked source citations
+seed the model-free forecast, including co-change expansion for Backlog cards.
+When none resolve in the integration tree, the forecast uses the title and prompt. Packer packages retain
 the wave and the union of their originals' citations.
 
 `POST /api/tasks/batch` accepts `{ "cards": [...] }` with 1 to 200 ordinary
@@ -1089,8 +1090,20 @@ Automatic changes use the existing `OperatorDecision` switch through
 `AiOperatorDecisionGateway` with decider `dispatch-lease`. Monolith is the
 default; Engine mode waits for its receipt. The effect compares the frozen
 lease fence before applying, so a later Owner control supersedes pending
-receipts. Both pickup paths refresh the scheduler before recording a live
-plan. A minute sweep also checks settled cards when there is no new pickup.
+receipts. A pause handoff also depends on the available planners recorded in
+the occurrence, since a resume can leave the fence unchanged. Monolith and
+Engine both recheck current scoped grants against the original competition
+evidence and write the fenced lease under the activation store's lock.
+A resume that finishes first invalidates the handoff. A resume that follows
+a committed handoff restores the assigned persona on the next refresh.
+Evidence collection runs outside the activation lock.
+Both pickup paths refresh the scheduler before recording a live
+plan. A change to the active scoped grants invalidates the one-minute refresh
+cache. An existing lease assignment carries its certified project plan grant
+while the activation stays in scope and its descriptor supports planning.
+When the assigned persona is paused, the next refresh fences its lease
+and hands it to Queue keeper. Resuming restores the assigned persona if it is
+still eligible in that window. A minute sweep also refreshes idle projects.
 The application-owned `.dispatch` lease file atomically stores the lease,
 fence, window, actor, reason and rollout state. Legacy acquisition cannot
 overwrite a scheduler-owned lease. The baseline has platform authority even
@@ -1144,7 +1157,11 @@ delivery commits in its brief.
 
 `PostMergeSchedulingPolicy` owns window age promotion, the three-window owner
 deadline, gate queue priority and the last supersedable phase. Hosts collect
-clock, window and gate-phase facts. The gate authority serializes conditional
+clock, window and gate-phase facts. `PostMergeQueueOrder` places attempt age
+before kind priority and arrival order. Both authorities retain this order
+before each 32-item page and continue past ineligible candidates. The library
+also bounds daemon flights and protects the integration share of host grants.
+The gate authority serializes conditional
 cancellation against the worker's transition to `running` immediately before
 tests. Run-host promotion keeps the worker test envelope and load receipts.
 This changes verification placement, never the project's testing strategy.

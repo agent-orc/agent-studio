@@ -10,7 +10,7 @@
 
 .studio-explorer-tree__registry-hint {
   display: inline-flex;
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   white-space: nowrap;
 }
 
@@ -20,7 +20,7 @@
 .studio-url-status-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   flex-shrink: 0;
   background: var(--studio-fg-muted);
 }
@@ -43,8 +43,8 @@
   display: inline-grid;
   place-items: center;
   border: 0;
-  padding: 0;
-  border-radius: 3px;
+  padding: var(--studio-spacing-0);
+  border-radius: var(--studio-compat-radius-9);
   background: transparent;
   color: var(--studio-fg-muted);
   opacity: 0;
@@ -58,7 +58,7 @@
 
   &:hover {
     background: var(--studio-bg-hover);
-    color: var(--studio-accent);
+    color: var(--studio-link-ink);
   }
 }
 
@@ -112,7 +112,7 @@
 }
 
 .studio .studio-explorer-tree__ws-head .tree-row {
-  padding-right: calc(var(--studio-rail-trailing-gutter) + 28px);
+  padding-right: calc(var(--studio-rail-trailing-gutter) + var(--studio-compat-space-16));
 }
 
 /* Each workspace group (header + its project rows) is the drop zone for the
@@ -122,7 +122,7 @@
    one drag system. */
 .studio-explorer-tree__ws-group {
   display: block;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
 
   &--drop-target {
     background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
@@ -152,8 +152,8 @@
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   font: inherit;
   color: var(--studio-text-strong, inherit);
-  background: var(--studio-surface-inset, rgba(255, 255, 255, 0.06));
+  background: var(--studio-surface-inset, var(--studio-surface-muted));
   border: 1px solid var(--studio-accent);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   outline: none;
 }

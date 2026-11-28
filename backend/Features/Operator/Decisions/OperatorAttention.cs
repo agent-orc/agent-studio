@@ -16,26 +16,34 @@ public sealed record OperatorAttentionItem(
     IReadOnlyList<string> SuggestedOperations,
     IReadOnlyList<OperatorEvidenceLink> Evidence,
     string? Title = null,
-    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null);
+    IReadOnlyList<OperatorOwnerOption>? OwnerOptions = null)
+{
+    public bool IsDecision => Type is OperatorDecisionTypes.HumanReviewReady or OperatorDecisionTypes.EscalationOpened
+        or OperatorDecisionTypes.DecisionCardOpened or OperatorDecisionTypes.ElevationRateEnded or OperatorDecisionTypes.AuditAlert
+        or OperatorDecisionTypes.PushBlocked or OperatorDecisionTypes.BatchRecordUnreadable || OwnerOptions is { Count: > 0 };
+    public bool CanDismiss { get; init; }
+}
 
 /// <summary>
 /// Answer of <c>GET /api/operator/attention</c>. <see cref="Count"/> is the
-/// number of <see cref="Items"/>, so a header count and the list it opens
-/// cannot disagree (style-guide R3).
+/// number of <see cref="Items"/>, with separate counts for decisions and notices.
 /// </summary>
-public sealed record OperatorAttentionResponse(IReadOnlyList<OperatorAttentionItem> Items, int Count);
+public sealed record OperatorAttentionResponse(IReadOnlyList<OperatorAttentionItem> Items, int Count)
+{
+    public int DecisionCount => Items.Count(item => item.IsDecision);
+    public int NoticeCount => Count - DecisionCount;
+}
 
 /// <summary>
 /// Pure projection from the facts the decision stream currently sees to the
-/// rows of the attention list. It reads the same facts as the stream, so the
-/// list wakes on exactly what <c>studio-op watch</c> wakes on, and it applies
-/// the stream's project scope. It adds no threshold or rule of its own.
+/// current rows in the reader's scope. Card occurrences use the live board
+/// and post-merge receipts share one row per project integration line.
 /// </summary>
 public static class OperatorAttention
 {
     public static OperatorAttentionResponse Project(
         IEnumerable<OperatorDecisionFact> facts, OperatorDecisionReader reader,
-        Func<string, bool>? activeProject = null)
+        Func<string, bool>? activeProject = null, OperatorAttentionBoard? board = null)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var items = facts
@@ -44,6 +52,13 @@ public static class OperatorAttention
                 && OperatorDecisionPolicy.Shows(fact.Type, fact.Project, reader)
                 && (fact.Project is null || activeProject is null || activeProject(fact.Project))
                 && seen.Add(fact.Key))
+            .Where(fact => board?.IsOpen(fact) != false)
+            // Receipts cover the single integration line recorded for each project.
+            .OrderByDescending(fact => fact.OwnerOptions is { Count: > 0 })
+            .ThenByDescending(fact => fact.ObservedAtUtc)
+            .ThenBy(fact => fact.Key, StringComparer.Ordinal)
+            .DistinctBy(fact => fact.Type is OperatorDecisionTypes.PostMergeRedIncident or OperatorDecisionTypes.PostMergeRunsMissing
+                ? ("branch", fact.Project) : ("occurrence", fact.Key))
             .OrderBy(fact => fact.Type == OperatorDecisionTypes.EnvironmentIncidentOpen ? 0 : 1)
             .ThenBy(fact => fact.ObservedAtUtc)
             .ThenBy(fact => fact.Key, StringComparer.Ordinal)

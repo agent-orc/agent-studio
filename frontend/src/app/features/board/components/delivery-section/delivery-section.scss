@@ -28,7 +28,7 @@
   width: auto;
   min-height: 0;
   min-width: 0;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   color: inherit;
   font: inherit;
   line-height: inherit;
@@ -58,7 +58,7 @@
 
 .delivery__rail-label {
   writing-mode: vertical-rl;
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -75,11 +75,11 @@
   align-items: center;
   flex-direction: column;
   max-width: 100%;
-  gap: 2px;
-  padding: 4px 2px;
-  border-radius: var(--studio-card-radius, 8px);
+  gap: var(--studio-compat-space-4);
+  padding: var(--studio-spacing-1) var(--studio-compat-space-4);
+  border-radius: var(--studio-card-radius);
   background: var(--studio-bg-surface);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
 }
 
 .delivery__rail-column-label {
@@ -94,7 +94,7 @@
   place-items: center;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: color-mix(in srgb, var(--studio-warn) 20%, transparent);
   color: var(--studio-fg-strong);
   font-weight: 800;
@@ -115,7 +115,7 @@
     flex: 0 0 auto;
     width: 13px;
     height: 13px;
-    margin: 0;
+    margin: var(--studio-spacing-0);
   }
 }
 
@@ -126,10 +126,10 @@
 }
 
 .delivery__notice {
-  margin: 0;
-  padding: 0 var(--studio-spacing-2);
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 .delivery__columns {
@@ -148,7 +148,7 @@
   min-height: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-1);
   border: 1px solid transparent;
-  border-radius: var(--studio-card-radius, 8px);
+  border-radius: var(--studio-card-radius);
   contain: inline-size layout paint;
 }
 
@@ -173,7 +173,7 @@
 .delivery-column__toggle {
   @include m.disclosure-control;
   font-weight: 600;
-  font-size: var(--studio-lane-header-primary-size, 13px);
+  font-size: var(--studio-lane-header-primary-size);
   color: var(--studio-fg);
 }
 
@@ -190,10 +190,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--studio-spacing-1) var(--studio-spacing-2);
-  margin: 0;
-  padding: 0 var(--studio-spacing-2);
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -210,7 +210,7 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--studio-card-list-gap, 8px);
+  gap: var(--studio-card-list-gap);
   min-height: 0;
   overflow-y: auto;
 }
@@ -232,7 +232,7 @@
   gap: var(--studio-spacing-2);
   margin-top: var(--studio-spacing-2);
   color: var(--studio-fg-dim);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -246,10 +246,10 @@
 }
 
 .delivery-column__empty {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 
 // Studio board: a super-column stacks its lanes top to bottom, so the

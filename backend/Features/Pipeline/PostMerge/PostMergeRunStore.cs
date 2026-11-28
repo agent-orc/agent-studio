@@ -13,6 +13,8 @@ public sealed class PostMergeRunStore
     private readonly string _root;
     private readonly object _gate = new();
 
+    private readonly Dictionary<string, (DateTime WriteTime, long Length, PostMergeAcceptanceEvidence Evidence)> _acceptance = [];
+
     public PostMergeRunStore(string? root = null)
     {
         _root = root ?? LocalStateRoot.Combine("agentstudio", "post-merge");
@@ -35,6 +37,32 @@ public sealed class PostMergeRunStore
     public PostMergeProjectState Read(string projectId)
     {
         lock (_gate) return ReadLocked(projectId);
+    }
+
+    internal PostMergeAcceptanceEvidence? ReadAcceptanceEvidence(string projectId)
+    {
+        lock (_gate)
+        {
+            var file = new FileInfo(PathFor(projectId));
+            if (!file.Exists) return null;
+            if (_acceptance.TryGetValue(projectId, out var cached)
+                && cached.WriteTime == file.LastWriteTimeUtc && cached.Length == file.Length)
+                return cached.Evidence;
+            var json = File.ReadAllText(file.FullName);
+            var state = ParseState(json, projectId);
+            var receipts = state.Runs.Where(run => run.Status == "green" && run.FinishedAtUtc.HasValue)
+                .Reverse().Select(run => new PostMergeLastReport(run.TipSha, run.FinishedAtUtc!.Value)).ToArray();
+            var window = state.PendingWindow;
+            var waitingSince = window?.AdmissionReason is { Length: > 0 }
+                ? JsonSerializer.Deserialize<StoredMetadata>(json, Json)?.AdmissionWaitingSinceUtc ?? window.ObservedAtUtc
+                : (DateTimeOffset?)null;
+            var version = CanonicalFields.Sha256Hex([state.LastGreenSha, window?.TipSha,
+                window?.OpenedAtUtc?.ToString("O"), window?.AdmissionReason, waitingSince?.ToString("O"),
+                .. receipts.Select(receipt => receipt.TipSha)]);
+            var evidence = new PostMergeAcceptanceEvidence(receipts, state.LastGreenSha, window, waitingSince, version);
+            _acceptance[projectId] = (file.LastWriteTimeUtc, file.Length, evidence);
+            return evidence;
+        }
     }
 
     public void ObserveWindow(string projectId, PostMergeWindowObservation observation)
@@ -96,6 +124,10 @@ public sealed class PostMergeRunStore
     {
         lock (_gate)
         {
+            if (run.Commands is null || run.Verdicts is null
+                || run.Commands.Any(string.IsNullOrWhiteSpace)
+                || run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count)
+                return null;
             var state = ReadLocked(projectId);
             if (state.Runs.FirstOrDefault(item => item.Id == run.Id) is { } recorded)
                 return JsonSerializer.Serialize(recorded, Json) == JsonSerializer.Serialize(run, Json) ? state : null;
@@ -109,7 +141,9 @@ public sealed class PostMergeRunStore
             if (run.Status == "running")
             {
                 if (active?.Id == run.Id)
-                    return active.TipSha == run.TipSha && active.Kind == run.Kind ? state : null;
+                    return active.TipSha == run.TipSha && active.Kind == run.Kind
+                        && active.Project == run.Project && active.StartedAtUtc == run.StartedAtUtc
+                        && active.Commands.SequenceEqual(run.Commands, StringComparer.Ordinal) ? state : null;
                 if (active is not null && !MonolithTransitionAdapter.PostMergeCustodyMayReplace(
                         active.StartedAtUtc, active.Kind, custody?.ExpiresAtUtc, now))
                     return null;
@@ -133,10 +167,11 @@ public sealed class PostMergeRunStore
             else if (run.Status is "green" or "red" or "inconclusive")
             {
                 if (active is null || active.Id != run.Id || active.TipSha != run.TipSha
-                    || active.Kind != run.Kind || run.FinishedAtUtc is null
+                    || active.Kind != run.Kind || active.Project != run.Project || active.StartedAtUtc != run.StartedAtUtc
+                    || !ValidCommandCoverage(active, run) || run.FinishedAtUtc is null
                     || run.FinishedAtUtc < run.StartedAtUtc
                     || run.Verdicts.Count == 0 && MonolithTransitionAdapter.PostMergeCustodyNeedsVerdict(run.Status)
-                    || run.Status == "green" && (run.Verdicts.Count < run.Commands.Count
+                    || run.Status == "green" && (run.Verdicts.Any(verdict => verdict.TimedOut)
                         || run.Verdicts.Any(verdict => verdict.ExitCode != 0)
                         && run.Failure?.AllFailuresQuarantined != true))
                     return null;
@@ -160,6 +195,92 @@ public sealed class PostMergeRunStore
             WriteLocked(projectId, state, custody, replaceCustody: true);
             return state;
         }
+    }
+
+    // Receipt integrity belongs at the persistence boundary. Custody and state
+    // transitions remain decisions of the orchestration adapter above.
+    private static bool ValidCommandCoverage(PostMergeRunRecord active, PostMergeRunRecord run)
+    {
+        if (!active.Commands.SequenceEqual(run.Commands, StringComparer.Ordinal)) return false;
+        var coverage = active.Commands.ToDictionary(command => command,
+            _ => new List<PostMergeCommandVerdict>(), StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var shardIds = new HashSet<(string Command, int Index)>();
+        foreach (var verdict in run.Verdicts)
+        {
+            if (verdict is null || string.IsNullOrWhiteSpace(verdict.Command) || !seen.Add(verdict.Command))
+                return false;
+            if (coverage.TryGetValue(verdict.Command, out var exact))
+            {
+                exact.Add(verdict);
+                continue;
+            }
+            // The host represents shards with a suite ID, an explicit terminal
+            // shard count, and generated settings commands. Only a suite that
+            // opted into sharding at start may replace its original command.
+            var suite = verdict.SuiteId;
+            if (suite is null || !ShardCount(active.Envelope?.ShardPlan, suite, out var planned)
+                || !ShardCount(run.Envelope?.ShardPlan, suite, out var completed)
+                || planned != "auto" && planned != completed
+                || !int.TryParse(completed, out var count) || count < 1 || count > ProjectTestSuite.MaxShards
+                || run.SuiteSelection is not { } selection
+                || !selection.SuiteCommands.TryGetValue(suite, out var original)
+                || original is null || !coverage.ContainsKey(original)
+                || active.SuiteSelection?.SuiteCommands is { Count: > 0 } frozen
+                    && (!frozen.TryGetValue(suite, out var frozenCommand) || frozenCommand != original)
+                || !original.Contains("dotnet test ", StringComparison.Ordinal)
+                || !original.Contains("--no-build", StringComparison.Ordinal)) return false;
+            var bare = System.Text.RegularExpressions.Regex.Replace(original,
+                "\\s--filter(?:\\s+|=)(?:\"[^\"]*\"|'[^']*'|\\S+)", "").Trim();
+            var prefix = bare + " --settings '";
+            if (verdict.Command.Length <= prefix.Length
+                || !verdict.Command.StartsWith(prefix, StringComparison.Ordinal)
+                || !verdict.Command.EndsWith("'", StringComparison.Ordinal)) return false;
+            var settingsArgument = verdict.Command[prefix.Length..^1];
+            // The runner shell-quotes one path, escaping apostrophes as '\''.
+            // An unescaped quote ends that argument and permits extra arguments.
+            const string escapedQuote = "'\\''";
+            if (settingsArgument.Replace(escapedQuote, "", StringComparison.Ordinal).Contains('\''))
+                return false;
+            var settings = settingsArgument.Replace(escapedQuote, "'", StringComparison.Ordinal).Replace('\\', '/');
+            var marker = "/post-merge-" + active.Id + "/shard-";
+            var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
+            if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
+                || !int.TryParse(settings[(markerIndex + marker.Length)..^12], out var index)
+                || index < 0 || index >= count
+                || !shardIds.Add((original, index))) return false;
+            coverage[original].Add(verdict);
+        }
+        foreach (var (command, verdicts) in coverage)
+        {
+            if (verdicts.Count == 0)
+            {
+                if (run.Status == "green") return false;
+                continue; // Red and interrupted runs may stop before the next command.
+            }
+            if (verdicts.Any(verdict => verdict.Command == command))
+            {
+                if (verdicts.Count != 1) return false;
+                continue;
+            }
+            var suite = verdicts[0].SuiteId!;
+            if (verdicts.Any(verdict => verdict.SuiteId != suite)
+                || !ShardCount(run.Envelope?.ShardPlan, suite, out var completed)
+                || !int.TryParse(completed, out var count)
+                || (run.Status == "green" ? verdicts.Count != count : verdicts.Count > count)) return false;
+            // Paths are shard identities, even if a command uses different separators.
+            var paths = verdicts.Select(verdict => verdict.Command.Replace('\\', '/')).ToArray();
+            if (paths.Select(path => path[..path.LastIndexOf('/')]).Distinct(StringComparer.Ordinal).Count() != 1)
+                return false;
+        }
+        return run.Status != "green" || active.Commands.Count > 0;
+    }
+
+    private static bool ShardCount(string? plan, string suite, out string count)
+    {
+        var entries = (plan ?? "").Split(',').Where(entry => entry.StartsWith(suite + "=", StringComparison.Ordinal)).ToArray();
+        count = entries.Length == 1 ? entries[0][(suite.Length + 1)..] : "";
+        return entries.Length == 1;
     }
 
     public PostMergeCustody? RenewCustody(string projectId, string runId, string owner, long fence,
@@ -189,9 +310,13 @@ public sealed class PostMergeRunStore
         lock (_gate) return ReadCustodyLocked(projectId);
     }
 
-    private PostMergeCustody? ReadCustodyLocked(string projectId)
-        => File.Exists(PathFor(projectId))
-            ? JsonNode.Parse(File.ReadAllText(PathFor(projectId)))?["custody"]?.Deserialize<PostMergeCustody>(Json) : null;
+    private sealed record StoredMetadata(PostMergeCustody? Custody, PostMergeWindowObservation? PendingWindow,
+        DateTimeOffset? AdmissionWaitingSinceUtc);
+
+    private static StoredMetadata? ReadMetadata(string path) => File.Exists(path)
+        ? JsonSerializer.Deserialize<StoredMetadata>(File.ReadAllText(path), Json) : null;
+
+    private PostMergeCustody? ReadCustodyLocked(string projectId) => ReadMetadata(PathFor(projectId))?.Custody;
 
     /// <summary>Records the repair card after its own escalation move succeeds; evidence only, never a placement input.</summary>
     public void RecordAttributionEscalation(string projectId, string taskId)
@@ -209,9 +334,12 @@ public sealed class PostMergeRunStore
     {
         var path = PathFor(projectId);
         if (!File.Exists(path)) return PostMergeProjectState.Empty(projectId);
-        return JsonSerializer.Deserialize<PostMergeProjectState>(File.ReadAllText(path), Json)
-            ?? throw new IOException($"Post-merge state for {projectId} is empty.");
+        return ParseState(File.ReadAllText(path), projectId);
     }
+
+    private static PostMergeProjectState ParseState(string json, string projectId)
+        => JsonSerializer.Deserialize<PostMergeProjectState>(json, Json)
+            ?? throw new IOException($"Post-merge state for {projectId} is empty.");
 
     private void WriteLocked(string projectId, PostMergeProjectState state,
         PostMergeCustody? custody = null, bool replaceCustody = false)
@@ -220,13 +348,21 @@ public sealed class PostMergeRunStore
         Directory.CreateDirectory(_root);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var document = JsonSerializer.SerializeToNode(state, Json)!;
-        document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : ReadCustodyLocked(projectId), Json);
+        var previous = ReadMetadata(path);
+        document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : previous?.Custody, Json);
+        if (state.PendingWindow is { AdmissionReason.Length: > 0 } pending)
+        {
+            var since = previous?.PendingWindow is { AdmissionReason.Length: > 0 } prior && prior.TipSha == pending.TipSha
+                ? previous.AdmissionWaitingSinceUtc ?? prior.ObservedAtUtc : pending.ObservedAtUtc;
+            document["admissionWaitingSinceUtc"] = since;
+        }
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             JsonSerializer.Serialize(stream, document, Json);
             stream.Flush(flushToDisk: true);
         }
         File.Move(temp, path, overwrite: true);
+        _acceptance.Remove(projectId);
     }
 
     private string PathFor(string projectId)
@@ -236,5 +372,8 @@ public sealed class PostMergeRunStore
         return Path.Combine(_root, projectId + ".json");
     }
 }
+
+internal sealed record PostMergeAcceptanceEvidence(IReadOnlyList<PostMergeLastReport> GreenReceipts,
+    string? LastGreenSha, PostMergeWindowObservation? PendingWindow, DateTimeOffset? AdmissionWaitingSinceUtc, string Version);
 
 public sealed record PostMergeCustody(string RunId, string Owner, long Fence, DateTimeOffset ExpiresAtUtc, string? RecoveryId = null);

@@ -9,6 +9,27 @@ compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
 
+## Writable preparation copies
+
+Each coding attempt reserves its own preparation copy ID in its durable slot before
+restoring npm, NuGet and Playwright from the project's published entries. The copy
+survives daemon handoff and same-attempt resume. Terminal cleanup releases it on
+success, failure, cancellation and lease loss. On Linux, terminal cleanup and eviction check surviving
+processes for cache bindings, path arguments, working directories, open files,
+executables and file mappings inside the copy. When a child still uses a copy
+selected for release, the runner marks it for the five-minute sweep. This also
+covers copies first discovered at startup or under pressure. The sweep retries
+below the size limit once the last reference clears. A new round receives a fresh copy.
+On upgrade, the runner reads older bindings from the detached worker specification.
+
+The coding daemon sweeps unreferenced copies at startup. Every five minutes it
+measures file bytes under the runner's project and legacy preparation roots and
+evicts the oldest unreferenced copies until the total fits the smaller of 20 GB
+and 15 percent of the work disk. `RUNNER_PREPARATION_COPIES_MAX_GB` changes the
+absolute ceiling. Live copies can exceed the target. Host filesystem telemetry
+reports the measured total as `ownedBytes["preparation copies"]`. A disk hold
+names free space and the preparation footprint in the card and Operations.
+
 ## Dispatch overlap admission, DS-0 and AGT-4037
 
 Both the local pickup in `ProjectRunner` and the remote claim in
@@ -1274,8 +1295,18 @@ unreported claim expires with its lease and is queued again.
   AGT-2985 the slot used the lease id, so Stable 0.9.3 rejected every
   production completion with continuation evidence. The legacy-plane contract
   test (`backend.Tests/LegacyRunnerCompletionContractTests.cs`) and the
-  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 seconds or the
-  1,211,213-token observation threshold. Semantic conflicts and invalid
+  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 charged seconds or the
+  1,211,213-token observation threshold. On a worker with cgroup v2 CPU pressure
+  accounting, charged duration excludes that worker group's `cpu.pressure` full
+  stall intervals. It includes provider, I/O and tool waits. Logs name the measure
+  and report wall seconds and excluded CPU wait. Without that counter, the log
+  explicitly records the existing wall-clock fallback. A pressure-observation fault
+  switches subsequent intervals to wall-clock charging without resetting the budget.
+  Diagnostic write failures cannot expire the watchdog or stop the live CLI.
+  Lower card limits and caller cancellation still apply. A claim carrying a
+  mechanical recovery delta or a mechanical fallback reason requires a pinned
+  base. The runner prepares the exact ref and SHA with the current integration
+  tip before starting the CLI. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
   Both automatic integration recovery (`IntegrationAgentRoundService`, including

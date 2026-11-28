@@ -1,10 +1,6 @@
 <section class="deployment-dashboard" data-testid="deployment-dashboard" aria-labelledby="deployment-dashboard-title">
   <header class="deployment-dashboard__header">
-    <div>
-      <p class="deployment-dashboard__eyebrow">Workspace / Deployments</p>
-      <h1 id="deployment-dashboard-title">Deployment dashboard</h1>
-      <p>Releases across projects, environments, and tenants.</p>
-    </div>
+    <h1 id="deployment-dashboard-title">Deployment dashboard</h1>
     <div class="deployment-dashboard__filters">
       <label>Project group
         <select data-testid="deployment-group-filter" [value]="groupFilter()" (change)="groupFilter.set($any($event.target).value)">
@@ -16,7 +12,7 @@
       <label>Environment
         <select data-testid="deployment-environment-filter" [value]="environmentFilter()" (change)="environmentFilter.set($any($event.target).value)">
           <option value="all">All environments</option>
-          @for (environment of environments; track environment.id) { <option [value]="environment.id">{{ environment.name }}</option> }
+          @for (environment of environments(); track environment.id) { <option [value]="environment.id">{{ environment.name }}</option> }
         </select>
       </label>
       <label>Tenant
@@ -27,13 +23,21 @@
       </label>
     </div>
   </header>
+  @if (installationRow(); as row) {
+    @if (row.installation; as installation) {
+      <app-installation-overview [facts]="installation" [title]="installationTitle()" [instanceStatus]="row.instanceStatus" [project]="row.name" [hasRecords]="hasRecords()"
+        (openCard)="openCard.emit($event)" (openDeployment)="openDeployment.emit($event)" />
+    }
+  }
+  @if (matrixRows().length) {
+  <h2>{{ installationRow() ? 'Other deployment targets' : 'Deployment targets' }}</h2>
   <div class="deployment-dashboard__table-wrap">
     <table>
       <thead><tr><th scope="col">Project</th>
         @for (environment of visibleEnvironments(); track environment.id) { <th scope="col">{{ environment.name }}</th> }
       </tr></thead>
       <tbody>
-        @for (row of rows(); track row.id) {
+        @for (row of matrixRows(); track row.id) {
           <tr [attr.data-testid]="'deployment-project-' + row.id">
             <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }} @if (row.tenant) { <span>· {{ row.tenant }}</span> }</button><a [href]="'#/projects/' + projectSlug(row.name) + '/operations/structure'" [attr.data-testid]="'deployment-structure-' + row.id">Structure</a></th>
             @if (row.error) {
@@ -41,19 +45,29 @@
                 <strong>Environment declarations could not be read</strong>
                 <span>{{ row.error }}</span>
               </td>
-            } @else if (!row.declared && !row.statuses.length) {
-              <td [attr.colspan]="visibleEnvironments().length" class="deployment-dashboard__note" [attr.data-testid]="'deployment-undeclared-' + row.id">
-                <strong>No environments declared</strong>
-                <span>Add one JSON file per environment under <code>docs/deployments/environments</code> in the project repository. <a [href]="declarationDocs" target="_blank" rel="noopener noreferrer">How to declare environments</a></span>
-              </td>
             } @else {
               @for (environment of visibleEnvironments(); track environment.id) {
                 <td>
-                  @if (statusFor(row, environment.id); as status) {
+                  @if (environment.id === 'urls' || environment.id.startsWith('url:')) {
+                    @for (url of row.urls; track url.id) {
+                      @if (environment.id === 'urls' || urlColumn(url) === environment.id) {
+                        <div class="deployment-dashboard__url">
+                          <a [href]="url.url" target="_blank" rel="noopener noreferrer">{{ url.name }}</a>
+                          <span>{{ url.url }}</span>
+                          @if (observation(url); as fact) {
+                            <sui-status-indicator [compact]="true" [tone]="reachable(fact) ? 'success' : 'neutral'" [label]="reachability(fact)" />
+                            <span>{{ fact.commit ? 'Commit ' + fact.commit.slice(0, 9) : 'Commit not observed. Publish a build-commit meta tag.' }}</span>
+                          } @else { <span>Checking reachability…</span> }
+                        </div>
+                      }
+                    } @empty { <span>No registered URL</span> }
+                  } @else {
+                  @for (status of statusesFor(row, environment.id); track status.environment.id) {
                     <button type="button" class="deployment-dashboard__cell"
                             [attr.data-state]="cellState(status) ?? 'unknown'"
                             [attr.aria-label]="cellLabel(row, environment.name)"
                             (click)="openDeployment.emit(row.name)">
+                      @if (statusesFor(row, environment.id).length > 1) { <strong>{{ status.environment.name }}</strong> }
                       <span class="deployment-dashboard__cell-head">
                         <strong>@if (status.releaseUncertain) { Running release uncertain. A failed release may be running. } @else { Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }} }</strong>
                         <app-status-indicator [tone]="stateTone(cellState(status))" [label]="stateLabel(cellState(status))" [compact]="true" testId="deployment-dashboard-state" />
@@ -66,21 +80,31 @@
                       @if (status.currentDeployment?.state === 'awaiting-approval') { <app-status-indicator tone="warning" label="Approval pending" [compact]="true" testId="deployment-dashboard-approval" /> }
                       @if (!status.releaseUncertain && status.newerRelease; as newer) { <app-status-indicator tone="info" [label]="'Newer release ' + newer.version + ' · ' + newer.channel" [compact]="true" testId="deployment-dashboard-newer-release" /> }
                     </button>
-                  } @else {
+                  } @empty {
                     <p class="deployment-dashboard__absent">No {{ environment.name.toLowerCase() }} environment</p>
+                  }
                   }
                 </td>
               }
             }
           </tr>
-        } @empty {
-          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty" data-testid="deployment-empty" role="status">{{ emptyReason() }}</td></tr>
         }
       </tbody>
     </table>
   </div>
+  } @else if (!installationRow() && !noTargets().length) {
+    <p data-testid="deployment-empty" role="status">{{ emptyReason() }}</p>
+  }
   @for (project of watchedProjects(); track project) {
     <app-delivery-lanes [project]="project" [heading]="project + ' delivery'"
       (openDeployment)="openDeployment.emit($event)" (openCard)="openCard.emit($event)" />
+  }
+  @if (noTargets().length) {
+    <details class="deployment-dashboard__no-target" #unplaced (toggle)="changeDetector.markForCheck()"><summary><sui-disclosure-marker [open]="unplaced.open" /> {{ noTargets().length }} {{ noTargets().length === 1 ? 'project has' : 'projects have' }} no deployment target</summary>
+      <ul>@for (row of noTargets(); track row.id) { <li [attr.data-testid]="'deployment-undeclared-' + row.id">{{ row.name }}</li> }</ul>
+      @if (!hasInstallation()) { <p>To identify this Studio installation, make its source repository available or set <code>InstanceDeploy:SourceProject</code>.</p> }
+      <p>Register a project URL or add one JSON file per environment under <code>docs/deployments/environments</code> in the project repository.
+        <a [href]="declarationDocs" target="_blank" rel="noopener noreferrer">How to declare environments</a></p>
+    </details>
   }
 </section>

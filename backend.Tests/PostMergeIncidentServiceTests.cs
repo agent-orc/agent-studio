@@ -1,3 +1,5 @@
+extern alias Runner;
+
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
@@ -319,7 +321,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Record(store, service, project, red);
         Assert.Empty(service.ActiveQuarantines(project));
         Assert.Equal("red", store.Read(project.Id).DevelopState);
-        Assert.NotNull(store.Read(project.Id).LineStop);
+        Assert.Contains("Demo.Tests.Fails", store.Read(project.Id).LineStop);
         clock.Advance(TimeSpan.FromHours(1));
         service.AskOwnerWhenOverdue(project);
         service.AskOwnerWhenOverdue(project);
@@ -369,11 +371,17 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         foreach (var id in new[] { "shard-1", "shard-2" })
         {
             clock.Advance(TimeSpan.FromMinutes(1));
+            const string command = "dotnet test --no-build --filter Category!=MachineBound";
+            var shards = Runner::AgentRunner.PostMergeShards.Commands(command,
+                ["Demo.Tests", "Other.Tests"], 2, Path.Combine(_root, "post-merge-" + id));
             Record(store, service, project, Green(id, clock.GetUtcNow()) with
             {
-                Verdicts = [new("dotnet test --settings /tmp/shard.runsettings", 0, false) { SuiteId = "backend-routine" }],
+                Commands = [command],
+                Verdicts = shards.Select(shard => new PostMergeCommandVerdict(shard, 0, false)
+                    { SuiteId = "backend-routine" }).ToArray(),
+                Envelope = new("a", "b", "worker", null, 2, null, "backend-routine=2", null, null),
                 SuiteSelection = new(["backend-routine"], [], [])
-                    { SuiteCommands = new Dictionary<string, string> { ["backend-routine"] = "dotnet test --filter Category!=MachineBound" } },
+                    { SuiteCommands = new Dictionary<string, string> { ["backend-routine"] = command } },
             });
         }
         Assert.Empty(service.ActiveQuarantines(project));

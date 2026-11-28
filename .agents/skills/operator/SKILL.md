@@ -80,9 +80,10 @@ this text is the last line, not the only one.
    prompts; pass `--base-ref` only to pick another ref of the same card.
 8. **Accept only green.** `studio-op accept` refuses (exit 7) unless the latest
    review passed with proven build and tests, nothing blocks, and no decision is
-   open (OA-D5). A refused card stays with the Owner: write a `decided` log
-   entry and move on. Never accept by moving a card to `6-completed`;
-   `studio-op move` refuses that lane.
+   open (OA-D5). A refused card needs an Owner decision: use the
+   [batch confirmation workflow](#owner-confirmed-override-batches) when it
+   qualifies, otherwise write a `decided` log entry and move on. Never accept
+   by moving a card to `6-completed`; `studio-op move` refuses that lane.
 9. **Write down why.** Every decision and every action goes into the operator
    log (`studio-op log append`), linked to its cards. The Owner reads it in the
    in-app chat. Read the log at each wake for `handoff` entries from the Owner.
@@ -101,6 +102,27 @@ whose evidence is not green). The authoritative list and the tiers are in the
 [operator agent setup](../../../docs/operations/setup/operator-agent.md).
 When a step needs one of these, stop and ask; exit 12 (`approval-required`)
 means Studio already opened an approval for the Owner.
+
+## Owner-confirmed override batches
+
+When the Owner asks for override acceptances or archive overrides, read
+[Confirm a batch in Needs you (ES-8)](../../../docs/operations/setup/operator-agent.md#confirm-a-batch-in-needs-you-es-8)
+for the item schema, qualification rules and results. The session must have the
+matching `cards.accept-override` or `cards.archive-override` class. Submit up to
+25 items with a written reason per card using
+`studio-op accept --batch items.json --source owner-chat` or
+`studio-op archive --batch items.json --source owner-chat`. Acceptances also
+carry the review's reservation in one line. Set `--source` to the actual
+instruction source.
+
+Give the Owner the confirmation link printed by the CLI. The Owner selects
+items in Needs you and confirms with one passkey or authenticator step-up;
+never confirm on their behalf. The CLI waits for Studio's per-item results.
+Read and log those results: deselected, changed and nonqualifying items do not
+execute, and rejection or the 30-minute lapse executes nothing. After an
+interruption, inspect the batch result and card timelines before submitting
+again; never replay moves yourself. Ordinary green acceptance keeps the
+existing `studio-op accept <card>` path.
 
 ## The watch loop
 

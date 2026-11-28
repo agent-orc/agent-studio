@@ -88,6 +88,8 @@ public sealed class RemoteRunnerDaemon
         shutdown = daemonStop.Token;
         var connectivity = new TaskServerConnectivityMonitor(_log);
         var state = new RunnerStateStore(_options.StateDir);
+        var preparationCopies = new RunnerPreparationCopies(_options, state, _log);
+        preparationCopies.Sweep(startup: true);
         Task<string> RegisterAsync(CancellationToken ct) => _client.RegisterAsync(
             _options.RunnerName,
             "service",
@@ -382,7 +384,7 @@ public sealed class RemoteRunnerDaemon
             }, shutdown);
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
-        var telemetry = new HostTelemetrySampler(_options);
+        var telemetry = new HostTelemetrySampler(_options, preparationCopyBytes: () => preparationCopies.Bytes);
         // Claim admission and salvage deletion share this gate. A claim is
         // protected from the server mutation until its card is visible here.
         var salvageAdmissionGate = new SemaphoreSlim(1, 1);
@@ -411,6 +413,7 @@ public sealed class RemoteRunnerDaemon
                 worktreeSweep: worktreeRetention.SweepOnceAsync)
             : null;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var preparationSweep = preparationCopies.MonitorAsync(auxiliaryStop.Token);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
         var postMergePoll = _options.Role == "coding"
             ? PostMergeHostScheduler.RunForHostAsync(_options, _client.ClientId, _log, auxiliaryStop.Token)
@@ -1055,6 +1058,7 @@ public sealed class RemoteRunnerDaemon
         await gitSetupPoll;
         await sourceFactsPoll;
         await quotaPoll;
+        await preparationSweep;
         await salvageSweep;
         await postMergePoll;
         try { await interactiveChat.DrainAsync(); }

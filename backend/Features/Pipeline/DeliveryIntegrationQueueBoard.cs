@@ -62,8 +62,16 @@ public sealed class DeliveryIntegrationQueueBoard
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _failures = new(StringComparer.OrdinalIgnoreCase);
 
+    public int WaitingCount => _queues.Values.Sum(rows => rows.Count(row => row.Activity == Waiting));
+
     public void Publish(string project, IReadOnlyList<DeliveryIntegrationQueueRow> rows)
         => _queues[project] = rows.ToArray();
+
+    /// <summary>A detached fleet snapshot, including current work and pending deliveries.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>> Read()
+        => _queues.ToDictionary(item => item.Key,
+            item => (IReadOnlyList<DeliveryIntegrationQueueRow>)item.Value.ToArray(),
+            StringComparer.OrdinalIgnoreCase);
 
     public void Clear(string project) => _queues.TryRemove(project, out _);
 

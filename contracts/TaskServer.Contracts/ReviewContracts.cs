@@ -443,9 +443,9 @@ public sealed record ReviewCommandEvidenceDto(
     int? BaselineExitCode = null,
     ReviewLibraryStepDto? LibraryStep = null,
     DeliveryFailureDiagnosisResult? Diagnosis = null,
-    /// <summary>Class-only filter applied to a clean repeat; Arguments retain the frozen plan.</summary>
+    /// <summary>Additional class or exact-test filter; Arguments retain the frozen plan.</summary>
     string? RepeatFilter = null,
-    /// <summary>Failed test names observed passing in a class-only clean repeat.</summary>
+    /// <summary>Failed test names observed passing in a narrowed repeat or base control.</summary>
     IReadOnlyList<string>? RepeatObservedTests = null,
     /// <summary>Original candidate failures, retained after a repeat clears comparison failures.</summary>
     IReadOnlyList<string>? InitialFailures = null,
@@ -479,6 +479,8 @@ public sealed record ReviewCommandEvidenceDto(
     public IReadOnlyList<ReviewModelUsageDto>? ModelUsage { get; init; }
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
     public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
+    /// <summary>Bounded exact-test controls for candidate-only assertions in a mixed failing run.</summary>
+    public IReadOnlyList<ReviewAssertionEvidenceDto> AssertionEvidence { get; init; } = [];
 }
 
 /// <summary>
@@ -678,7 +680,12 @@ public sealed record ReviewVerdictDto(
     string? EvidenceChecked = null,
     string? Missing = null,
     DeliveryFailureDiagnosisResult? Diagnosis = null,
-    string? CarriedOverFrom = null);
+    string? CarriedOverFrom = null)
+{
+    /// <summary>The executor supplied checkout access instructions, including when running an older frozen plan.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UsesDossierCheckout { get; init; }
+}
 
 /// <summary>
 /// Enforces the citation contract for semantic review blocks. A model may
@@ -857,3 +864,8 @@ public sealed record ReviewCleanupResponse(
     string AttemptId,
     DateTime CleanedAt,
     bool RetryScheduled);
+
+/// <summary>Original assertion identity and isolated measurements, retained through report grading.</summary>
+public sealed record ReviewAssertionEvidenceDto(
+    string Test, string? Filter, string? Fingerprint, string? RepeatFingerprint,
+    ReviewCommandEvidenceDto? Repeat, ReviewCommandEvidenceDto? Control, string? IncompleteReason);

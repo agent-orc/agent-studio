@@ -443,7 +443,6 @@ fixed-date backend.Tests/UpdateVersionTruthTests.cs
 fixed-date backend.Tests/UsageCockpitContractTests.cs
 fixed-date backend.Tests/WaitsOnEndpointsTests.cs
 fixed-date backend.Tests/WatcherFixtureReplayTests.cs
-fixed-date backend.Tests/WikiAgentReadServiceTests.cs
 fixed-date backend.Tests/WikiFolderViewTests.cs
 fixed-date backend.Tests/WikiGradingServiceTests.cs
 fixed-date backend.Tests/WikiLearningsPostStepRunnerTests.cs

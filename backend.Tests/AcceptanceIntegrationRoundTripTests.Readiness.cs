@@ -69,7 +69,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.Equal(CompletionAdmissionStages.IntegrationUnverified, item.Stage);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
         Assert.Equal(refused.Message, item.Refusal);
-        Assert.Contains("no gate passed on the merged tree", item.Reason);
+        Assert.Equal(item.Refusal, item.Reason);
+        Assert.Contains($"An owner can record a verification for develop tip {deliverySha}", item.Reason);
         Assert.NotNull(item.Round);
         Assert.Equal($"refs/heads/{DeliveryRef}", item.LatestResultRef);
         Assert.Equal(item.LatestResultRef, item.Round!.BaseRef);

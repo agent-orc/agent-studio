@@ -42,10 +42,16 @@ public sealed class ManagedDatabaseCredentials(ProjectEnvironmentService environ
         {
             foreach (var item in retiring)
             {
-                var scope = SecretScope.ForEnvironment(item.Project, item.EnvironmentId);
+                var scope = bindings.Scope(item.Project, item.EnvironmentId);
                 var name = ProjectDatabaseVocabulary.CredentialName(item.Database);
-                try { await provider.DeleteAsync(scope, name, Actor, ct); }
-                catch (SecretNotFoundException) { logger.LogInformation("Credential {Name} of {Scope} was already gone", name, scope); }
+                var aliases = bindings.ScopeAliases(item.Project, item.EnvironmentId);
+                var stored = (await provider.ListAsync(null, ct)).Records
+                    .Where(record => record.Name == name && aliases.Contains(record.ParsedScope)).ToArray();
+                foreach (var record in stored)
+                {
+                    try { await provider.DeleteAsync(record.ParsedScope, name, Actor, ct); }
+                    catch (SecretNotFoundException) { logger.LogInformation("Credential {Name} of {Scope} was already gone", name, scope); }
+                }
                 bindings.UnbindManagedDatabase(item.Project, item.EnvironmentId, name);
                 environments.MarkDatabaseCredentialRetired(item.Project, item.EnvironmentId, item.Database);
             }
@@ -56,10 +62,17 @@ public sealed class ManagedDatabaseCredentials(ProjectEnvironmentService environ
     private async Task EnsureAsync(ManagedDatabaseCredentialNeed need, CancellationToken ct)
     {
         var name = ProjectDatabaseVocabulary.CredentialName(need.Database);
-        if (bindings.List(need.Project, need.EnvironmentId).Any(item => item.Name == name)) return;
-        var scope = SecretScope.ForEnvironment(need.Project, need.EnvironmentId);
+        var scope = bindings.Scope(need.Project, need.EnvironmentId);
+        var reference = new SecretReference(scope, name).ToString();
+        var bound = bindings.List(need.Project, need.EnvironmentId).FirstOrDefault(item => item.Name == name);
+        if (bound is not null)
+        {
+            if (bound.Reference != reference) bindings.BindManagedDatabase(need.Project, need.EnvironmentId, name);
+            return;
+        }
         // An earlier generation may have stored the value before its binding was written.
-        if ((await provider.ListAsync(scope, ct)).Records.All(item => item.Name != name))
+        if ((await provider.ListAsync(null, ct)).Records.All(item => item.Name != name
+            || !bindings.ScopeAliases(need.Project, need.EnvironmentId).Contains(item.ParsedScope)))
             await provider.PutAsync(scope, name, NewPassword(), Actor, ct);
         bindings.BindManagedDatabase(need.Project, need.EnvironmentId, name);
         logger.LogInformation("Generated the credential {Reference} for managed database {Database}",

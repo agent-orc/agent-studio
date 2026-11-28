@@ -2374,8 +2374,10 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.Contains("brief version is unavailable", report.Summary);
     }
 
-    [Fact]
-    public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds(bool materialAvailable)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
@@ -2396,10 +2398,58 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
 
-        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId,
-            PassingReport(claim), "review-a", default);
+        var request = PassingReport(claim);
+        if (!materialAvailable)
+            request = request with
+            {
+                Outcome = "ReviewInfra", FailureClassification = ConceptRemoteReviewPolicy.MaterialUnavailable,
+                Summary = "Cannot read docs/persona-team/index.html.", Verdicts = [],
+            };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
 
-        Assert.Equal("Pass", report.Outcome);
+        Assert.Equal(materialAvailable ? "Pass" : "ReviewInfra", report.Outcome);
+        Assert.Equal(!materialAvailable, report.RetryScheduled);
+        if (!materialAvailable)
+            Assert.Equal(ConceptRemoteReviewPolicy.MaterialUnavailable, report.FailureClassification);
+    }
+
+    [Theory]
+    [InlineData("aspect-concept-fit", ConceptRemoteReviewPolicy.MaterialUnavailable)]
+    [InlineData("aspect-documentation", "IncompleteReviewReport")]
+    public async Task Interrupted_review_preserves_the_Dossier_read_failure_only_with_concept_fit_evidence(
+        string executedStep, string expectedClassification)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        const string brief = "Review the persona team Dossier.";
+        var conceptFit = new ReviewCommandDto("aspect-concept-fit", "concept-fit", "codex", [],
+            ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: brief, CliType: "codex", Model: "gpt-5.6-sol");
+        var documentation = conceptFit with { StepId = "aspect-documentation", Aspect = "documentation" };
+        var plan = new ReviewPlanDto([conceptFit, documentation], ["concept-fit", "documentation"],
+            IntegrationRef: "refs/heads/develop", BriefSha256: Hash(brief), TaskMode: "concept");
+        await SeedReviewSubjectAsync(store, plan: plan, fullPrompt: brief, authoredVersion: plan.BriefSha256);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var evidence = PassingReport(claim);
+        var request = evidence with
+        {
+            Outcome = "ReviewInfra",
+            FailureClassification = ConceptRemoteReviewPolicy.MaterialUnavailable,
+            Summary = "Cannot read docs/persona-team/index.html.",
+            Commands = [evidence.Commands.Single(command => command.StepId == executedStep)],
+            Artifacts = evidence.Artifacts.Where(artifact =>
+                artifact.Name.StartsWith(executedStep, StringComparison.Ordinal)).ToArray(),
+            Verdicts = [],
+        };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(expectedClassification, report.FailureClassification);
+        Assert.Equal(request.Summary, report.Summary);
+        Assert.True(report.RetryScheduled);
     }
 
     [Fact]

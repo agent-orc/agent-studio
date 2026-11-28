@@ -2,14 +2,8 @@
 
 Review the delivered Concept Dossier against the current task brief. This is a
 read-only content review. The brief below is `prompt.md` as frozen in the
-ReviewSubject. The published Dossier snapshot below contains the index and its
-linked files after delivery. Judge completeness against that snapshot. The
-executor also appends the exact Result-SHA diff for the current round. A
-follow-up diff may omit unchanged Dossier files. The diff is bounded per file:
-when the review input omissions name a cut Dossier diff, judge that file from
-the snapshot. The snapshot is complete unless it names a file as missing,
-binary, or over its budget. Do not infer the Dossier from the agent's status
-claim.
+ReviewSubject. Use read-only file tools in the delivery checkout. Read the
+Dossier files below, including sections outside the current round's diff.
 
 Check each requirement the brief actually makes:
 
@@ -31,8 +25,6 @@ Use `pass` only when these checks are supported by the delivered content. Use
 `concerns` for a narrow, named weakness. Use `block` when a required section,
 recommendation, or implementation card is absent, or a brief direction is
 contradicted. Cite the exact brief requirement and the Dossier file or section.
-If the exact Dossier content is absent or truncated so a required check cannot
-be made, return `concerns` and name the missing evidence. Do not claim a pass.
 
 ## Project and card
 
@@ -63,7 +55,7 @@ be made, return `concerns` and name the missing evidence. Do not claim a pass.
 {{results_inventory}}
 ```
 
-## Published Dossier
+## Dossier files
 
 {{dossier_material}}
 
@@ -82,4 +74,4 @@ Respond in under 150 words, then emit exactly one verdict sentinel:
 [[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>; evidence_checked=<brief and Dossier files or sections>; missing=<exact gap, or none>]]
 ```
 
-End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.
+End with `[[TASK_DONE]]` on its own line. Leave the workspace unchanged.

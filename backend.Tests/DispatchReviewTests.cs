@@ -1,4 +1,6 @@
 using AgentStudio.Dispatch;
+using System.Text.Json;
+using AgentStudio.Tests.Architecture;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Registry;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +23,41 @@ public sealed class DispatchReviewTests : IDisposable
             ["conflicts"] = conflicts, ["tokens"] = 1000, ["rework"] = .2, ["forecast"] = .52,
             ["parallelism"] = parallelism, ["lead"] = 2, ["ownCost"] = 0, ["explanation"] = .85,
         }, .7, true, []);
+
+    [Fact]
+    public void November_reference_replay_projects_the_four_published_gated_values()
+    {
+        var folder = Path.Combine(CSharpSourceScanner.RepoRoot(), "docs/dispatcher-personas/replay");
+        var wave = DispatchReplayCommand.ReadFixture(Path.Combine(folder, "wave-2026-11-17.json"), "project");
+        var cohort = wave.Cards.Select(c => c.Ready.Key).ToArray();
+        var raw = File.ReadLines(Path.Combine(folder, "output-4-slots.txt"))
+            .SkipWhile(line => !line.StartsWith("== durations: unit;", StringComparison.Ordinal)).Skip(1)
+            .TakeWhile(line => line.StartsWith('{')).Select(line =>
+            {
+                using var document = JsonDocument.Parse(line);
+                var row = document.RootElement;
+                var name = row.GetProperty("name").GetString()!;
+                double Field(string field) => row.GetProperty(field).GetDouble();
+                return new DispatchReviewRaw(name, name.StartsWith("Queue keeper", StringComparison.Ordinal)
+                    ? DispatchStrategies.LaneEntry : name, "replay", cohort.Length, cohort, new Dictionary<string, double?>
+                    {
+                        ["conflicts"] = Field("conflictsPer100"), ["tokens"] = Field("roundsPerCard"),
+                        ["rework"] = Field("reworkShare"), ["forecast"] = Field("forecastF1"),
+                        ["parallelism"] = Field("parallelism"), ["lead"] = Field("makespan"),
+                    }, null, true, []);
+            }).ToArray();
+        Assert.Equal(6, raw.Length);
+        var projection = DispatchReviewScoring.Score(new("project", wave.Start, wave.Start.AddDays(1), raw),
+            DispatchWeightRevision.Default, []);
+        foreach (var (name, expected) in new[] { ("Packer", 67), ("Area warden, forecast modules", 65),
+            ("Area warden, keyword areas", 45), ("Queue keeper (baseline)", 17) })
+        {
+            var row = projection.Personas.Single(r => r.Raw.Persona == name);
+            Assert.InRange(row.Value!.Value, expected - 2, expected + 2);
+            Assert.Null(row.Scores["ownCost"]);
+            Assert.Null(row.Scores["explanation"]);
+        }
+    }
 
     [Fact]
     public void MinMax_ratios_ties_and_gate_match_the_concept()

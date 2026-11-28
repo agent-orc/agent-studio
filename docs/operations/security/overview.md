@@ -581,9 +581,11 @@ account role and does not use human sign-in.
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
   under `/api/auth/api-tokens` with Operator agent (`operator`) or Viewer
-  bindings for the requested projects. They keep the API-token limits: no
-  installation-wide writes even with `*`, and no use once the creating user is
-  disabled.
+  bindings for the requested projects. Disabling the creating user disables use
+  of the token. Deployment history has one reporting exception. An operator
+  token with the workspace grant (`*`) may submit attempts and historical
+  imports to the [deploy record routes](../deploy-records.md). All other
+  installation-wide writes retain the API-token restriction.
 - The `operator-agent` role (Dossier operator-agent-level, OP-1, decision
   OA-D4 B) holds exactly the operator surface: `workspace.read`,
   `project.read`, `project.cards.write` (create, title, lane moves and
@@ -596,8 +598,8 @@ account role and does not use human sign-in.
   or approval, no access permission, no `workspace.settings.write` or
   `workspace.administer`, and no `project.settings.write`. Only service
   accounts take it. A principal whose strongest granting role is
-  `operator-agent` cannot make an installation-wide (unaddressed) write, so
-  `workspace.operate` stays read-only for it. Its card writes resolve the
+  `operator-agent` can use its workspace binding for installation-wide reads
+  and, with the operator API token described above, deploy history reporting. Its card writes resolve the
   card's project even through a workspace binding, so they are
   project-addressed and not refused as installation-wide. It does not hold
   operator authority: the operator decider of a decision card stays with Admin
@@ -1740,7 +1742,7 @@ secret, or recovery code. It has these fact sources:
 | Source | What it reads |
 |---|---|
 | Exposure | profile, HTTPS requirement, `Security:PublicCloudflareEdge`, trusted proxy count, the sign-in client address health, and every route open to anonymous callers. The edge access layer, origin-pull authentication, and host firewall are not visible to the API and are reported as such; `check-edge-config.sh` checks them on the host. |
-| Credentials | API tokens and Access-area service-account tokens (holder, role, scope, creation, expiry, last use, state), operator agents with live sessions, and the credential inventory (GitHub App, App installations, host tokens and keys, secrets, runner credentials, provider sign-ins). With a standalone Task Server the inventory comes from it. |
+| Credentials | API tokens and Access-area service-account tokens (holder, role, scope, creation, expiry, last use, state), operator agents with live sessions, and the credential inventory (GitHub App, App installations, host tokens and keys, secrets, runner credentials, provider sign-ins). With a standalone Task Server, Studio joins its host inventory with local secret-provider and IAM metadata. |
 | Second factor | each user's TOTP, passkey, and recovery code counts; Owner and Operator must have a factor. The local profile has no sign-in and raises no entry. |
 | Versions | the server build identity, and per runner host its operating system, agent host release against the server (`HostReleaseDriftPolicy`), installed CLIs against the required version, and the container images the host reports. |
 | Audit | chain verification, off-host forwarding, open audit alerts, refused bearer requests and refused secret writes of the last 7 days (grouped by actor), kill switch uses and drills, and break-glass windows. |
@@ -2057,6 +2059,12 @@ it restores the previous strategy from that immutable record, replans queued
 reviews, and writes an Owner audit entry referring to the original sequence.
 It can be used once. Operator sessions cannot invoke Undo.
 
+The header updates countdowns locally every 15 seconds. While the Owner's tab
+is visible, it refreshes session facts once per minute without resetting the
+Access loading state. It skips refreshes during agent reads or mutations and
+stops automatic retries after an access refusal. Explicit Access actions still
+reload their session facts immediately.
+
 The Studio header shows live elevation and opens the same controls as
 Settings > Access > Elevated sessions, including Re-arm with step-up, End
 elevation and End session. The list shows classes, rolling uses by project
@@ -2066,4 +2074,90 @@ On phones, authority and More navigation sit above the existing header actions
 so the elevated controls remain reachable without overlap.
 Operator activity can filter by agent, session and elevated actions, with
 reason, stated source, device and arming details.
+### Credential lifetimes and manual rotation plans (WI-1, 2026-11-28)
+
+Settings > Credentials classifies each inventory entry as `short-lived` or
+`long-lived`. A non-refreshable credential with a known issuer limit or recorded issuance
+window of at most 24 hours is short-lived; other entries are long-lived. A provider login
+stays long-lived when it can refresh an access token. Probe observations do not
+claim a creation date or a real credential use.
+A provider login is one entry per host and provider, whatever number of
+roles on that host advertise it, and it carries the same kind as the host
+registry's record for that login. An active registry record replaces the
+advertised entry, so each login produces one set of warnings; an inactive
+registry record does not hide a login the host still advertises.
+
+The installation inventory joins Task Server host registry and principal
+metadata with Studio's secret provider, external-store credential bindings and
+IAM service accounts and operator sessions. It never resolves a secret value.
+Rows show holder, target, creation date, recorded expiry (`none` when no expiry
+is recorded), last known use, rotation interval and next due date. Unknown
+creation and last-use dates remain unknown. A reported rotation due date wins;
+otherwise the inventory reminder interval defaults to 90 days, anchored to the
+last known rotation, creation, discovery, or a persisted first observation.
+A whole-day interval between a reported rotation due date and its known
+renewal, creation or discovery date is retained. Otherwise the interval remains
+the labelled inventory default. This reminder plan does not claim that the
+target has been rotated.
+
+An hourly Studio sweep, including startup, sends the Owner operator-feed
+warnings at 14 and 3 days before both expiry and due rotation. Persisted receipts
+de-duplicate each deadline and threshold; failures retry, and delivery state survives
+restart in the owner-only `.security/credential-lifecycle.json` metadata file.
+Late discovery emits the applicable threshold. Removed or revoked credentials
+and consumed enrolments do not raise lifecycle notices. The existing Task
+Server credential-view reminders keep their separate thresholds and behavior.
+
+This implements WI-D6 option A (`sichtbar-mit-ablauf`): stored credentials
+remain a marked fallback where the target has no federation. Classification
+changes no access grants. Federation, the issuer and automatic target rotation
+remain later slices. See the [host setup guide](../setup/linux-runner-host.md#credential-inventory-and-rotation-plans-wi-1)
+and [secret provider](secret-provider.md#credential-inventory-metadata-wi-1).
+
 <!-- append-only:security-overview:end -->
+
+## Operator batch confirmation (ES-8)
+
+ES-D9 A, ES-D10 A and ES-D11 A are implemented: a live operator session with
+`cards.accept-override` or `cards.archive-override` submits 1 to 25 typed items
+to `POST /api/auth/operator-session/batches`. Every item supplies a card, target
+lane, project and written reason; acceptance items supply a one-line review
+reservation. Studio displays the recorded review concerns when available.
+The instruction source is descriptive, never authority. Project bindings and
+the class are checked on submission and again at execution.
+
+Acceptances require Human review, an integrated delivery and a completed review.
+Archive overrides require a completed card and refuse a delivery on the integration or release branch, including
+partial per-commit membership, and fail closed on unavailable reachability.
+Existing move, completion and archive guards still apply. Nonqualifying items
+remain visible with a refusal and cannot be selected. Qualifying items start selected. Card links open in another tab so the selected set stays in the sheet. Each batch expires after
+30 minutes. Needs you class `operator-approval.pending` counts pending batches
+and pending single approvals, one row per request, and clears on decision,
+expiry or loss of the session's class. Feed and optional push links open the
+same confirmation sheet in Access.
+
+The Owner can deselect items and confirm the remainder with one fresh passkey
+or authenticator step-up. Studio records the single-use decision before running
+items sequentially through the guarded move path. A snapshot of the card,
+review and integration evidence is rechecked under the claim gate. Changed
+cards, deselections, refusals and execution failures carry individual results.
+Each executed item's timeline names the operator session, Owner approver,
+batch id and written reason. The elevated-only activity view includes each item's
+class, batch id, device thumbprint, reason and result. Class hourly limits count items (30 acceptances,
+10 archives). Revocation or ending elevation prevents later items from running.
+Rejected or expired batches execute nothing; confirmation cannot be replayed.
+After an interruption Studio does not replay a confirmed batch; inspect each
+recorded item result and its card timeline before submitting again.
+Studio persists each move result before appending its batch audit entries.
+An audit append failure is logged as an error and does not change an executed
+item to skipped or stop the remaining items. Inspect the card timeline and
+server error log when reconciling missing audit entries.
+
+Read results with `GET /api/auth/operator-session/batches/{id}` using the same
+session and device proof. Studio performs execution; the agent never receives
+an Owner credential or an approval it can replay against arbitrary routes.
+The single-request SM-5 approval path remains available for other T2 requests.
+
+Batch submission accepts at most 64 KiB and 20 pending batches per session.
+Stored batches older than 30 days are pruned when another batch is submitted;
+card timelines and security audit records retain their existing retention policy.

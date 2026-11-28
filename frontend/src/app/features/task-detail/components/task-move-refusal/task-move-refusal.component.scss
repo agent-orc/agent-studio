@@ -6,14 +6,14 @@
   @include m.deck-panel-attention(var(--studio-status-warning));
   display: grid;
   gap: var(--studio-spacing-2);
-  margin: var(--studio-spacing-2) 0;
+  margin: var(--studio-spacing-2) var(--studio-spacing-0);
   color: var(--studio-fg-strong);
   line-height: 1.45;
 }
 
 .task-move-refusal__message,
 .task-move-refusal__concern {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   overflow-wrap: anywhere;
 }
 
