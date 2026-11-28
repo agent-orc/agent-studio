@@ -34,11 +34,17 @@ names free space and the preparation footprint in the card and Operations.
 
 The coding daemon's startup and five-minute storage sweep inventories task
 homes under the host's clean-context root. The Task Server returns only matching
-hashes for completed or archived cards the runner has run. Idle homes expire
+hashes for completed or archived cards the runner has run through the
+[runner clean-context lifecycle lookup](../../concepts/platform-architecture/task-server-topology.md#runner-clean-context-lifecycle-lookup).
+Idle homes expire
 after two days, allowing an overnight continuation and a working-day delay.
 The sweep preserves reserved slots and checks Linux process bindings and worker
-launch locks before moving a home out of circulation. A later round can start
-from the durable worktree and the full card prompt. The host storage report
+launch locks before moving a home out of circulation. The detached worker
+checks the session under its clean-home lease before applying the compact
+resume prompt and resume limits. If eviction wins before that check, it starts
+a fresh session from the durable worktree with the full card prompt and normal
+run limits, and the runner records the fresh session in the continuation ledger.
+The host storage report
 shows the number of homes and their logical file size even on healthy disks.
 
 The same sweep checks the M1 pilot preparation cache in the user data directory.

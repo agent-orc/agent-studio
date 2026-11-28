@@ -29,7 +29,17 @@ internal sealed record DetachedJobSpec(
     // pre-TE-52 spec.json deserialises with null and simply binds nothing.
     IReadOnlyDictionary<string, string>? Environment = null,
     long? TokenCeiling = null,
-    long? TokenBaseline = null);
+    long? TokenBaseline = null,
+    DetachedMechanicalResume? MechanicalResume = null);
+
+internal sealed record DetachedMechanicalResume(string Prompt, int TimeoutSeconds);
+
+internal enum MechanicalContextFallback
+{
+    None,
+    FreshSession,
+    RequiresFreshClaim,
+}
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -40,7 +50,8 @@ internal sealed record DetachedJobResult(
     bool TimedOut,
     DateTime CompletedAtUtc,
     bool LaunchFailed = false,
-    int? Signal = null);
+    int? Signal = null,
+    MechanicalContextFallback ContextFallback = MechanicalContextFallback.None);
 
 internal sealed record DetachedJobProcessObservation(
     bool IsLive,
@@ -110,7 +121,8 @@ internal sealed class DurableAgentProcess
         Action<string>? log = null,
         long? tokenCeiling = null,
         int? timeoutSeconds = null,
-        long? tokenBaseline = null)
+        long? tokenBaseline = null,
+        DetachedMechanicalResume? mechanicalResume = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -126,7 +138,8 @@ internal sealed class DurableAgentProcess
             environment,
             tokenCeiling,
             timeoutSeconds,
-            tokenBaseline);
+            tokenBaseline,
+            mechanicalResume);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
         // DP-S3: shadow evidence only; the detached worker keeps the process executor.
         WorkContainers.WorkContainerShadow.Record(workerDirectory, "coding", options.StateDir, log);
@@ -203,7 +216,8 @@ internal sealed class DurableAgentProcess
         IReadOnlyDictionary<string, string>? environment = null,
         long? tokenCeiling = null,
         int? timeoutSeconds = null,
-        long? tokenBaseline = null)
+        long? tokenBaseline = null,
+        DetachedMechanicalResume? mechanicalResume = null)
     {
         var invocation = CliSelection.Resolve(options, runSpec);
         return new DetachedJobSpec(
@@ -224,7 +238,8 @@ internal sealed class DurableAgentProcess
             Environment: environment?.Where(entry => WorkerEdgeCredentialBoundary.IsCodingRuntimeName(entry.Key, invocation.CliType))
                 .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
             TokenCeiling: tokenCeiling,
-            TokenBaseline: tokenBaseline);
+            TokenBaseline: tokenBaseline,
+            MechanicalResume: mechanicalResume);
     }
 
     /// <summary>
@@ -479,9 +494,11 @@ internal sealed class DurableAgentProcess
         ProcessResult processResult;
         bool timedOut;
         bool launchFailed;
+        var contextFallback = MechanicalContextFallback.None;
         try
         {
-            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append);
+            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append,
+                onContextFallback: fallback => contextFallback = fallback);
         }
         catch (Exception ex)
         {
@@ -504,7 +521,8 @@ internal sealed class DurableAgentProcess
             timedOut,
             DateTime.UtcNow,
             launchFailed,
-            processResult.Signal);
+            processResult.Signal,
+            contextFallback);
         await WriteAtomicAsync(resultPath, JsonSerializer.Serialize(result, Json));
         return processResult.ExitCode;
     }

@@ -3608,6 +3608,13 @@
           <td>The coding runner retained task-stable session homes without a lifecycle sweep.</td>
           <td>The runner sweeps terminal and idle homes, protects live bindings and starts expired continuations with a fresh CLI session. The fixture round reaches <code>[[TASK_DONE]]</code>.</td>
         </tr>
+        <tr id="case-runner-clean-context-eviction-before-launch">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">clean-context-eviction-before-launch</span></td>
+          <td>Review found a window between resume approval and worker acquisition. No production CLI crash or terminal was observed for this window.</td>
+          <td>The worker cleared the stale session ID after eviction while retaining the prompt meant for that session.</td>
+          <td>The worker now checks the session under its lease. The regression fixture launches a fresh session with the full prompt and reaches <code>[[TASK_DONE]]</code>.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>

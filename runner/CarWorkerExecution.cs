@@ -68,7 +68,8 @@ internal static class CarWorkerExecution
         string? cleanContextRoot = null,
         IReadOnlyList<string>? extraCliArguments = null,
         CancellationToken stopToken = default,
-        string? cleanContextUserHome = null)
+        string? cleanContextUserHome = null,
+        Action<MechanicalContextFallback>? onContextFallback = null)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
@@ -110,6 +111,32 @@ internal static class CarWorkerExecution
             {
                 append("system", $"[runner] stable clean-context acquisition failed: {ex.Message}");
                 return (new ProcessResult(125, string.Empty, ex.Message), false, true);
+            }
+        }
+
+        if (spec.ResumeSessionId is not null && (spec.MechanicalResume is not null || spec.TokenCeiling is not null))
+        {
+            // The sweep may have won before Acquire. Check the session under the
+            // worker's lease, which now protects the home through provider exit.
+            if (cleanContext is { Reused: true }
+                && MechanicalSessionContinuation.SessionExists(cleanContext.HomePath, spec.ResumeSessionId))
+            {
+                if (spec.MechanicalResume is { } resume)
+                    spec = spec with { Prompt = resume.Prompt, TimeoutSeconds = resume.TimeoutSeconds };
+            }
+            else if (spec.MechanicalResume is not null)
+            {
+                spec = spec with { ResumeSessionId = null, TokenCeiling = null, TokenBaseline = null };
+                onContextFallback?.Invoke(MechanicalContextFallback.FreshSession);
+                append("system", $"[runner] mechanical-continuation decision=fresh-run reason={MechanicalSessionContinuation.SessionLostBeforeLaunch}");
+            }
+            else
+            {
+                // A spec from before the full prompt was persisted must ask the
+                // Task Server to issue a fresh claim with that prompt.
+                onContextFallback?.Invoke(MechanicalContextFallback.RequiresFreshClaim);
+                cleanContext?.Dispose();
+                return (new ProcessResult(125, string.Empty, "The planned mechanical session is unavailable."), false, true);
             }
         }
 

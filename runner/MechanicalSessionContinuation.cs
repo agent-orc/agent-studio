@@ -5,6 +5,8 @@ namespace AgentRunner;
 
 internal static class MechanicalSessionContinuation
 {
+    internal const string SessionLostBeforeLaunch = "clean-context-session-lost-before-launch";
+
     internal static async Task<(string? SessionId, string? Reason, string? DeltaPrompt)> DecideAsync(
         PersistedRunnerSlot slot,
         GitWorkspace workspace,
@@ -65,7 +67,7 @@ internal static class MechanicalSessionContinuation
         return (sessionId, null, prompt);
     }
 
-    private static bool SessionExists(string home, string? sessionId)
+    internal static bool SessionExists(string home, string? sessionId)
     {
         if (string.IsNullOrWhiteSpace(sessionId)
             || sessionId.Length > 128
