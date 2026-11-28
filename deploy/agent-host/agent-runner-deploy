@@ -11,6 +11,7 @@ readonly incoming_root="$deploy_root/incoming"
 readonly accepted_root="$deploy_root/accepted"
 readonly product_root="/opt/agent-host"
 readonly releases_root="$product_root/releases"
+readonly release_approvals_root="/etc/agent-host/release-approvals"
 readonly current_link="$product_root/current"
 readonly compatibility_link="/opt/agent-runner"
 readonly legacy_backup="/opt/agent-runner.pre-hardening"
@@ -61,6 +62,109 @@ review_guard_main_pid=""
 die() {
   printf 'agent-runner-deploy: %s\n' "$*" >&2
   exit 2
+}
+
+# Release authority is an out-of-band root-managed SHA-256 approval, not the
+# ownership assigned to uploaded bytes. The release operator must obtain the
+# digest from independently trusted publisher output, never from incoming.
+# Install <release-id>.sha256 (one lowercase digest line) under
+# /etc/agent-host/release-approvals, root:root 0644, with root-owned, non-writable
+# ancestors. --release-digest <trusted-output> prints the canonical digest to
+# approve. It includes every directory and file (including release-id); file
+# content hashes and relative POSIX names are JSON encoded in lexical order.
+# --verify-release is used by the root launcher on every invocation. Neither
+# command is sudo-allowlisted. Existing hosts need approvals before upgrading.
+release_provenance() {
+  /usr/bin/python3 -I - "$1" "$2" "$release_approvals_root" "${3:-verify}" <<'PYTHON'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+
+def refuse(message):
+    raise ValueError(message)
+
+
+def protected(path):
+    entry = path.lstat()
+    if entry.st_uid != 0 or entry.st_mode & 0o022 or stat.S_ISLNK(entry.st_mode):
+        refuse(f"release path must be root-owned, unlinked and non-writable: {path}")
+    return entry
+
+
+def protected_ancestors(path):
+    while path != Path("/"):
+        entry = protected(path)
+        if not stat.S_ISDIR(entry.st_mode):
+            refuse(f"release ancestor is not a directory: {path}")
+        path = path.parent
+
+
+try:
+    root = Path(sys.argv[1])
+    release_id, approvals, mode = sys.argv[2:]
+    if not root.is_absolute() or str(root) != os.path.normpath(str(root)):
+        refuse("release root must be a canonical absolute path")
+    expected = None
+    if mode == "verify":
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", release_id):
+            refuse("invalid release approval id")
+        approval = Path(approvals) / (release_id + ".sha256")
+        try:
+            protected_ancestors(approval.parent)
+            entry = protected(approval)
+            if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1 or entry.st_size > 65:
+                refuse("release approval must be a small regular file with one link")
+            expected = approval.read_text(encoding="ascii").strip()
+        except OSError as error:
+            refuse(f"release approval unavailable: {error}")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            refuse("invalid release approval digest")
+        protected_ancestors(root)
+    root_entry = root.lstat()
+    if not stat.S_ISDIR(root_entry.st_mode):
+        refuse("release root must be an unlinked directory")
+    device = root_entry.st_dev
+    entries = []
+    # walk does not follow links. Every encountered entry is checked before
+    # reading; the verified tree and ancestors are inaccessible to agent writes.
+    for directory, directories, files in os.walk(root, followlinks=False,
+                                                onerror=lambda error: refuse(str(error))):
+        for name in directories + files:
+            path = Path(directory) / name
+            entry = protected(path) if mode == "verify" else path.lstat()
+            relative = path.relative_to(root).as_posix()
+            if entry.st_dev != device or path.is_mount():
+                refuse(f"release contains a nested mount: {relative}")
+            if stat.S_ISDIR(entry.st_mode):
+                entries.append([relative, "directory"])
+            elif stat.S_ISREG(entry.st_mode) and entry.st_nlink == 1:
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                entries.append([relative, "file", digest.hexdigest()])
+            else:
+                refuse(f"release contains a link or non-regular entry: {relative}")
+    entries.sort(key=lambda entry: entry[0])
+    encoded = json.dumps(entries, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    actual = hashlib.sha256(encoded).hexdigest()
+    if expected is not None and actual != expected:
+        refuse("release digest does not match the publisher approval")
+    if mode == "digest":
+        print(actual)
+except (OSError, ValueError, UnicodeError) as error:
+    print(f"agent-runner-deploy: release provenance refused: {error}", file=sys.stderr)
+    sys.exit(2)
+PYTHON
+}
+
+verify_release_provenance() {
+  release_provenance "$1" "$2"
 }
 
 chown_results() {
@@ -180,7 +284,9 @@ installed_agent_host_binary() {
 # takes tens of minutes, so the sanctioned path is a drain; --force stays
 # available for a root operator who requires an immediate lease handoff.
 assert_review_restart_is_safe() {
-  local guard_binary="${1:-$agent_host_binary}"
+  # Never let a caller select uploaded code for the control operation.
+  local guard_binary
+  guard_binary="$(installed_agent_host_binary)"
   local guard_status=0
   local main_pid_after_state
   local state_dir
@@ -206,7 +312,7 @@ assert_review_restart_is_safe() {
     || die "review MainPID changed while resolving its state directory; retry the guarded operation"
   review_guard_state_dir="$state_dir"
 
-  env -i PATH="$PATH" \
+  runuser -u "$service_user" -- env -i PATH="$PATH" \
     "$guard_binary" --restart-guard --hold-admission --role review --state-dir "$state_dir" \
     || guard_status="$?"
   if ((guard_status == 0)); then
@@ -246,7 +352,7 @@ drain_review_unit() {
   state_dir="$(review_state_dir)" \
     || die "could not resolve the active review daemon's effective RUNNER_STATE_DIR"
 
-  env -i PATH="$PATH" \
+  runuser -u "$service_user" -- env -i PATH="$PATH" \
     "$agent_host_binary" --drain --role review --state-dir "$state_dir" \
     || drain_status="$?"
   if ((drain_status == 0)); then drain_result="drained"; else drain_result="incomplete"; fi
@@ -1133,13 +1239,24 @@ promote_release() {
 
   local staging_root="$releases_root/.staging.$release_id.$$"
   trap 'rm -rf --one-file-system -- "$staging_root"' EXIT
-  install -d -o root -g root -m 0755 "$staging_root"
-  cp -R --no-preserve=all "$incoming_root/." "$staging_root/"
-  rm -- "$staging_root/release-id"
+  # Keep agent processes from opening writable descriptors during the copy,
+  # even when the privileged caller has a permissive umask.
+  install -d -o root -g root -m 0700 "$staging_root"
+  (umask 077; cp -R --no-preserve=all "$incoming_root/." "$staging_root/")
+  # Incoming can change during the copy. Recheck the root-created snapshot
+  # before ownership/mode operations could follow an uploaded symbolic link.
+  invalid_entry="$(find "$staging_root" -xdev -mindepth 1 ! -type d ! -type f -print -quit)"
+  [[ -z "$invalid_entry" ]] || die "release snapshot contains a non-regular entry: $invalid_entry"
   chown -R root:root "$staging_root"
-  find "$staging_root" -type d -exec chmod 0755 {} +
+  find "$staging_root" -mindepth 1 -type d -exec chmod 0755 {} +
   find "$staging_root" -type f -exec chmod 0644 {} +
   chmod 0755 "$staging_root/agent-host"
+
+  # Authenticate the root-owned snapshot before any candidate code runs.
+  # Copying and chowning an agent upload does not establish its publisher.
+  verify_release_provenance "$staging_root" "$release_id" \
+    || die "staged release has no matching trusted publisher approval"
+  chmod 0755 "$staging_root"
 
   local closure_output
   local closure_status
@@ -1173,7 +1290,7 @@ promote_release() {
 
   # Refuse before any release path or upload ownership changes. A busy guard
   # must leave current and incoming exactly as the operator staged them.
-  assert_review_restart_is_safe "$staging_root/agent-host"
+  assert_review_restart_is_safe "$(installed_agent_host_binary)"
 
   mv -- "$staging_root" "$release_root"
   trap - EXIT
@@ -1211,6 +1328,19 @@ promote_release() {
 
 main() {
   [[ "$EUID" -eq 0 ]] || die "must run as root through the approved sudo rule"
+  # Launcher verification is read-only and must also work during promotion.
+  # Keep it outside the deployment lock and before creating any directories.
+  if [[ "$#:${1:-}" == "2:--verify-release" ]]; then
+    local release_root="$2" release_id="${2##*/}"
+    [[ "$release_root" == "$releases_root/$release_id" ]] \
+      || die "launcher release must be directly under $releases_root"
+    verify_release_provenance "$release_root" "$release_id"
+    return
+  fi
+  if [[ "$#:${1:-}" == "2:--release-digest" ]]; then
+    release_provenance "$2" "" digest
+    return
+  fi
   command -v flock >/dev/null || die "flock is required"
   command -v stat >/dev/null || die "stat is required"
   install -d -o root -g root -m 0755 "$deploy_root"
