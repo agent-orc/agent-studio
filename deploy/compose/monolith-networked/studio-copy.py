@@ -343,11 +343,19 @@ def disk_admission(path):
         raise Failure("Shadow requires at least 15 percent free on the scratch filesystem", 2)
 
 
+def inspect_shadow(*args):
+    try:
+        return command("docker", "inspect", *args)
+    except CommandFailure:
+        time.sleep(1)
+        return command("docker", "inspect", *args)
+
+
 def shadow_usage(run, session):
     # Allocated blocks in the three upperdirs plus Docker's writable rootfs bytes.
     dirs = [run / f"upper-{role}" for role in DATA]
     kib = command("du", "-skx", *dirs)
-    layers = command("docker", "inspect", "--size", "-f", "{{.SizeRw}}", session["api"], session["web"])
+    layers = inspect_shadow("--size", "-f", "{{.SizeRw}}", session["api"], session["web"])
     size = sum(int(line.split()[0]) * 1024 for line in kib.splitlines())
     size += sum(int(line) for line in layers.splitlines())
     return size, int(time.monotonic() - session["start"])
@@ -366,7 +374,7 @@ def shadow_limit(run, session, report=False):
 
 
 def shadow_address(api):
-    ip = command("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", api)
+    ip = inspect_shadow("-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", api)
     if not ip:
         raise Failure("Shadow API has no internal address")
     print(f"address {ip}:8080")

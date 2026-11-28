@@ -63,10 +63,18 @@ def fake(program, args, root):
         print("image-id")
     elif args[0] == "inspect":
         if "--size" in args:
+            if (root / "fail-size-once").exists():
+                (root / "fail-size-once").unlink()
+                return 1
+            if os.getenv("FAIL_SIZE"):
+                return 1
             print(os.getenv("ROOTFS_BYTES", "0"), 0, sep="\n")
         elif "{{.Image}}" in args:
             print("id-of-" + args[-1])
         elif "IPAddress" in args[-2]:
+            if (root / "fail-address-once").exists():
+                (root / "fail-address-once").unlink()
+                return 1
             print("192.0.2.10")
         elif (root / "fail-health-once").exists():
             (root / "fail-health-once").unlink()
@@ -204,12 +212,16 @@ def copies(root):
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network", "fail-rm-once"))
     call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
     call(*old_watch)
-    # The first web inspection fails. Only its next, confirmed exit can stop the copy.
+    # A missed size sample and a missed health check precede the confirmed exit.
+    (root / "fail-size-once").touch()
     (root / "fail-health-once").touch()
     (root / "first-web-check").write_text("false")
-    assert "container exited" in call(*json.loads((root / "watch").read_text()))
+    watchdog_output = call(*json.loads((root / "watch").read_text()))
+    assert "container exited" in watchdog_output, watchdog_output
     assert not (root / "first-web-check").exists()
-    call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
+    (root / "fail-size-once").touch()
+    (root / "fail-address-once").touch()
+    assert "address 192.0.2.10:8080" in call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
     run, = (root / "state").glob("shadow-*/run-*")
     with (run / "upper-home" / "growth").open("wb") as fd:
         fd.write(bytes(1024**2))
@@ -221,6 +233,9 @@ def copies(root):
     session["start"] -= 600
     receipt.write_text(json.dumps(session))
     assert "lifetime reached" in call(*json.loads((root / "watch").read_text()))
+    call(shadow, "start")
+    assert "could not read shadow state or usage" in call(*json.loads((root / "watch").read_text()), FAIL_SIZE="1")
+    assert "stopped" in call(shadow)
     call(shadow, "start", ROOTFS_BYTES=str(4096 * 1024**2), code=1)
     assert "stopped" in call(shadow)
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network"))
