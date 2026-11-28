@@ -41,16 +41,7 @@ trap cleanup EXIT
 # Click Counter: the small website the scenario evolves.
 site="${workspace}/click-counter"
 mkdir -p "${site}" "${workspace}/projects/click-counter" "${workspace}/config"
-cat > "${site}/index.html" <<'HTML'
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Click Counter</title></head>
-<body><h1>Click Counter</h1><p id="count">0</p>
-<button id="increment" type="button">Count</button> <button id="reset" type="button">Reset</button>
-<script>
-let count = 0; const view = document.getElementById('count');
-document.getElementById('increment').onclick = () => { view.textContent = String(++count); };
-document.getElementById('reset').onclick = () => { count = 0; view.textContent = '0'; };
-</script></body></html>
-HTML
+cp "${REPO_ROOT}/scenarios/application-lifecycle/click-counter.html" "${site}/index.html"
 git -C "${site}" init -q -b main
 git -C "${site}" -c user.name='Product Scenario' -c user.email='product-scenario@example.invalid' add .
 git -C "${site}" -c user.name='Product Scenario' -c user.email='product-scenario@example.invalid' commit -qm 'Click Counter'

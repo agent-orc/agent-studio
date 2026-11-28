@@ -28,6 +28,14 @@ playthrough passed, 1 that a step failed or was skipped, and 2 a usage error.
 cleans up what an earlier run left. A teardown-only run has no playthrough, so
 its cleanup steps decide the verdict and a clean teardown exits 0.
 
+### Local fixture playthroughs
+
+Run `scenarios/application-lifecycle/run.sh lifecycle` for the new-project journey or
+`scenarios/application-lifecycle/run.sh product` for the product team. Both use the
+AGT-4239 production startup fixture and the built Studio UI. The product team
+starts with its own deployed Click Counter. See the
+[fixture commands and evidence](../../../scenarios/application-lifecycle/README.md).
+
 ### Local demo installation
 
 `scripts/release/product-scenario/local-demo.sh [scenario options]` plays the
@@ -69,7 +77,7 @@ two make the same refused requests through the API.
 | Setup: project | Owner | Finds Click Counter and its cards | The project exists |
 | Setup: live | Owner | Reads stage and production. Adds a Project URL "Stage (product scenario)" at the stage address unless one exists | Production runs healthy |
 | Setup: leftovers | Owner | Disables enabled `<prefix>-*` users, removes their bindings, archives an open card with the wish title | |
-| 1 | Owner | `POST /api/auth/invitations` (role `contributor`, the project) for each person. Each person opens the `/?invite=` link and chooses a password ("Join project"). Then `PUT /api/auth/users/{id}` with `productionApprovalProjects` for the manager | `GET /api/auth/users` shows the role, the project, and the approval only on the manager |
+| 1 | Owner | `POST /api/auth/invitations` (role `contributor`, the project) for each person. Each person opens the `/?invite=` link and chooses a password ("Accept invitation") and continues to Studio. Then `PUT /api/auth/users/{id}` with `productionApprovalProjects` for the manager | `GET /api/auth/users` shows the role, the project, and the approval only on the manager |
 | 2 | Product manager | Opens the Project URL with the product controls and sends the wish to the product chat (`observedSurface: "URL preview"`). Answers both questions (where, example) and reviews the proposal. Confirms with "Create this change" | Two questions were asked, the proposal shows a token estimate, no card existed before the confirmation, and then the card exists |
 | 3 | Product manager | Waits for Human Review and for the card preview (`TaskInfo.preview`) to be `ready`. Reads the before and after screenshots and opens the preview | The preview answers 200 and the product controls show before and after |
 | 4 | Designer | Measures the reset button on the preview at the screenshot's size. Drags the same area on the screenshot, writes the feedback, enters the button's selector, and sends. Reads the card `prompt.md` and waits for a new green delivery | The fix-round prompt holds the comment, selector, crop and address. The preview has a new delivery. The reset button is smaller |

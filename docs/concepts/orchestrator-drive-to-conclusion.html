@@ -3587,6 +3587,20 @@
           <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
           <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
         </tr>
+        <tr id="case-nested-tap-summary">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">nested-tap-summary</span></td>
+          <td>Different children failed on successive post-merge lint attempts. The receipt showed a confirmed failure for their enclosing suite.</td>
+          <td>Each attempt counted the suite's TAP summary as another failing test.</td>
+          <td>The regression fixture ends with a red lint receipt. It records the first child's recovery and the second child's new failure. A suite hook with its own error retains its verdict.</td>
+        </tr>
+        <tr id="case-untyped-tap-teardown">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">untyped-tap-teardown</span></td>
+          <td>A post-merge lint receipt recorded the failed child but lost a separate suite teardown error on both attempts.</td>
+          <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
+          <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
@@ -3669,6 +3683,27 @@
             <code>IncompleteReviewReport</code> as the retry reason.</td>
           <td>When the report identifies a material failure and supplies the executed concept-fit command,
             Task Server validates the available evidence and schedules the <code>ReviewMaterialUnavailable</code> retry.</td>
+        </tr>
+        <tr id="case-mixed-review-assertion-hidden-by-base-failure">
+          <td>2026-11-28</td>
+          <td><code>AGT-4133</code><br><span class="small">mixed-review-assertion-hidden-by-base-failure (fix <code>AGT-4326</code>)</span></td>
+          <td>No CLI crashed in the named receipt. On 27 November, result <code>cb7c0030ed</code>, review <code>review_67986fdcb7e04f5592be22db7075bf25</code>, recorded a new durable-mutation assertion in <code>verify-8</code> while candidate, repeat and base exited 1 with different failure sets. Terminal: <code>Pass</code>.</td>
+          <td>Whole-run environment attribution hid the completed candidate-only assertion when another test failed on the base.</td>
+          <td>The repair collects at most three exact-test control pairs using each checkout's pinned envelope. A matching candidate assertion and an observed passing base control supply the existing <code>ProductFailure</code> decision. Aborted, missing or mismatched controls remain <code>ReviewInfra</code>; rejected proofs also lose their product verdict before grading. Shared base failures retain their disposition. No lane transition rule changes.</td>
+        </tr>
+        <tr id="case-review-assertion-fingerprint-collision">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-fingerprint-collision</span></td>
+          <td>No CLI crashed. A synthetic mixed-run regression changed an asserted duration from <code>1 ms</code> to <code>2 ms</code> in the exact candidate repeat. With a passing base control, the original fingerprint still charged <code>ProductFailure</code>.</td>
+          <td>Command-output normalization removed assertion values and whitespace before hashing. Substring test-name matching could also select a sibling method or parameterized case.</td>
+          <td>Assertion fingerprints preserve values and require an exact test heading. Changed assertions remain incomplete evidence and reach <code>ReviewInfra</code>; matching assertions retain the existing product-failure path. Repeat bounds, checkout envelopes and transition rules are unchanged.</td>
+        </tr>
+        <tr id="case-review-assertion-partial-diagnostic-and-lost-proof">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-partial-diagnostic-and-lost-proof</span></td>
+          <td>No CLI crashed. Synthetic regressions reproduced collisions when assertion messages resembled console metadata or identical messages came from different source lines. A mixed report could also reach <code>Pass</code> after its exact-test proof was removed and its diagnosis became environment or integration-branch debt.</td>
+          <td>Fingerprint extraction discarded message content and assertion locations. Grading required the control proof only for a product diagnosis and checked integration-branch debt earlier.</td>
+          <td>Complete diagnostic blocks retain message content and assertion source locations; ambiguous blocks remain incomplete. The proof check runs before disposition shortcuts and removes unsupported product verdicts. Missing or invalid controls reach <code>ReviewInfra</code>, while matching assertions retain <code>ProductFailure</code>. Repeat bounds, per-tree envelopes and lane transitions are unchanged.</td>
         </tr>
       </tbody>
     </table>

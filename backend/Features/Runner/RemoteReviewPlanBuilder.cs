@@ -340,7 +340,7 @@ public sealed partial class RemoteReviewPlanBuilder
                     LogReferenceSelection(task!, selection.Audit);
                     if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
                     {
-                        selection = FixedReviewSelection(task!, selectionRepo, verify, selection, changedPaths);
+                        selection = FixedReviewSelection(task!, selectionRepo, verify, selection, changedPaths, resultSha);
                         level = selection.Audit.Level;
                     }
                     var selected = selection.Commands.Where(command =>
@@ -423,7 +423,7 @@ public sealed partial class RemoteReviewPlanBuilder
                         });
                 }
                 if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
-                    selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths);
+                    selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
@@ -448,7 +448,7 @@ public sealed partial class RemoteReviewPlanBuilder
                 var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
                     repositoryPath, verify, changedPaths, projectSettings.TestExecution,
                     TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
-                selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths);
+                selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths, resultSha);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
@@ -898,16 +898,45 @@ public sealed partial class RemoteReviewPlanBuilder
         };
 
     private StagedVerifyPlan FixedReviewSelection(TaskInfo task, string repositoryPath, VerifyPlan verify,
-        StagedVerifyPlan selection, IReadOnlyList<string>? changedPaths)
+        StagedVerifyPlan selection, IReadOnlyList<string>? changedPaths, string? resultSha)
     {
-        var selected = PerCardVerifyPlanner.WithReviewBase(repositoryPath, verify, selection, changedPaths);
+        // The checkout may be the integration tip. Ownership and consumer
+        // bindings must come from the immutable result, including renamed files.
+        var frontendTree = FrontendWorkPackagePlanner.TouchesFrontend(changedPaths)
+            ? FrontendTree(repositoryPath, resultSha) : null;
+        var selected = PerCardVerifyPlanner.WithReviewBase(repositoryPath, verify, selection, changedPaths, frontendTree);
         if (selected.Commands.Any(command => command.TestScope == ReviewBaseChecks.Scope))
             _logger?.LogInformation(
                 "remote-review-fixed-checks task={TaskKey} selection={Digest} selected={Selected} attempted={Attempted} awaitingExecution={AwaitingExecution}",
                 task.TaskKey ?? task.Id, selected.Audit.Digest, string.Join(" | ", selected.Audit.SelectedCommands),
                 string.Join(" | ", selected.Audit.AttemptedTestCommands),
                 string.Join(" | ", selected.Audit.SelectedCommands.Except(selected.Audit.AttemptedTestCommands)));
+        if (frontendTree is not null)
+            _logger?.LogInformation(
+                "remote-review-angular-selection task={TaskKey} result={ResultSha} selection={Digest} reasons={Reasons} selected={Selected} attempted={Attempted}",
+                task.TaskKey ?? task.Id, resultSha, selected.Audit.Digest, string.Join(" | ", selected.Audit.Reasons),
+                string.Join(" | ", selected.Audit.SelectedCommands), string.Join(" | ", selected.Audit.AttemptedTestCommands));
         return selected;
+    }
+
+    private IReadOnlyDictionary<string, string> FrontendTree(string repositoryPath, string? resultSha)
+    {
+        if (_git is null || !ReviewSubjectStore.IsValidResultSha(resultSha))
+            throw new InvalidDataException("Angular review selection requires a readable pinned result tree.");
+        var listing = Git(repositoryPath, "ls-tree", "-r", "--name-only", "-z", resultSha!, "--", "frontend");
+        if (listing is null) throw new InvalidDataException("Cannot list the pinned Angular result tree.");
+        var paths = listing.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(FrontendWorkPackagePlanner.IsSourceTreePath).ToArray();
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var chunk in paths.Chunk(GitService.MaxRevisionFileReadPaths))
+        {
+            var read = _git.ReadFilesAtRevision(repositoryPath, resultSha!, chunk);
+            if (read.Failure is not null)
+                throw new InvalidDataException("Cannot read the pinned Angular result tree: " + read.Failure);
+            foreach (var (path, content) in read.Files)
+                if (content is not null) files[path] = content;
+        }
+        return files;
     }
 
     private void LogReferenceSelection(TaskInfo task, TestSelectionAudit audit)

@@ -17,6 +17,8 @@ internal sealed record CapacityHost(string Id, string Name, string HostId, int S
     public int SharedUsed { get; init; }
     public int AdmissibleSlots { get; init; } = Math.Max(0, Slots - Used);
     public IReadOnlyList<CapacityBlock> AdmissionBlocks { get; init; } = [];
+    /// <summary>Central policy limits that admit fewer slots than are free, without a hold.</summary>
+    public IReadOnlyList<string> AdmissionLimits { get; init; } = [];
     public CapacityAllocation? Allocation { get; init; }
     public DateTime? LastProgressAt { get; init; }
     public ClientIdentity? Identity { get; init; }
@@ -105,19 +107,13 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
         {
             var config = settings.Get(project);
             var assigned = hosts.Where(host => Assigned(config, host)).ToArray();
-            var (total, used, admissible) = Totals(assigned);
-            if (ExecutionLocations.RequiredClassCapability(ProjectExecutionPolicy.ResolveExecutionLocation(config)) is not null)
-            {
-                total = Math.Min(total, Math.Max(1, config.MaxParallelism));
-                var projectUsed = occupancy.GetValueOrDefault(project);
-                var available = Math.Min(Math.Max(0, total - projectUsed), assigned.Sum(host => Math.Max(0, host.Slots - host.Used)));
-                used = total - available;
-                admissible = Math.Min(admissible, available);
-            }
+            var watchPath = scanner.GetWatchPaths().FirstOrDefault(path => string.Equals(path.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
+            var registered = registry?.FindByStorageLocation(watchPath) ?? registry?.FindByIdOrDisplayName(project);
+            var slots = ProjectSlots(config, assigned, occupancy.GetValueOrDefault(project),
+                RemoteProjectRepositoryResolver.Resolve(registered, config.IntegrationBranch), now);
             return CodingCapacityProjection.Project(project, tasks.Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)).ToArray(),
-                references, total, used, Blocks, Waits, admissible,
-                assigned.SelectMany(host => host.AdmissionBlocks).Distinct().ToArray(),
-                assigned.Select(host => host.LastProgressAt).Max()) with
+                references, slots.Total, slots.Used, Blocks, Waits, slots.Admissible, slots.Blocks,
+                assigned.Select(host => host.LastProgressAt).Max(), assigned.SelectMany(host => host.AdmissionLimits).Distinct().ToArray()) with
                 { Allocations = assigned.Select(host => host.Allocation).OfType<CapacityAllocation>().ToArray() };
         }).ToArray();
         var fleetHosts = includeQuota ? hosts : hosts.Where(host => projects.Any(project => Assigned(settings.Get(project), host))).ToArray();
@@ -126,7 +122,7 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
         var fleet = CodingCapacityProjection.Project(null, tasks, references, fleetTotals.Total,
             fleetTotals.Used, task => byCard[CodingCapacityProjection.Key(task)].Blocks.Where(block => block.Class != "dependency").ToArray(), Waits,
             Math.Min(fleetTotals.Admissible, rows.Sum(row => row.AdmissibleSlots)), fleetHosts.SelectMany(host => host.AdmissionBlocks).Distinct().ToArray(),
-            fleetHosts.Select(host => host.LastProgressAt).Max()) with
+            fleetHosts.Select(host => host.LastProgressAt).Max(), fleetHosts.SelectMany(host => host.AdmissionLimits).Distinct().ToArray()) with
             { Allocations = fleetHosts.Select(host => host.Allocation).OfType<CapacityAllocation>().ToArray() };
         fleet = fleet with { MaxConcurrentCards = Math.Min(fleet.MaxConcurrentCards, rows.Sum(row => row.MaxConcurrentCards)) };
         var subscriptions = includeQuota ? CodingCapacityProjection.Subscriptions(quota.GetCached(), now) : [];
@@ -139,6 +135,33 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
         idle.Retain(report.Projects.Select(project => project.Project!).ToHashSet(StringComparer.OrdinalIgnoreCase));
         return report.Projects.Select(project => idle.Observe(project, [], nowUtc))
             .Append(idle.Observe(report.Fleet, report.Subscriptions, nowUtc)).OfType<OperatorDecisionFact>().ToArray();
+    }
+
+    internal sealed record ProjectCapacitySlots(int Total, int Used, int Admissible, IReadOnlyList<CapacityBlock> Blocks);
+
+    /// <summary>Slots of one project row on its assigned hosts.</summary>
+    internal static ProjectCapacitySlots ProjectSlots(ProjectSettings config, IReadOnlyList<CapacityHost> assigned,
+        int projectUsed, RemoteProjectRepository? repository, DateTime now)
+    {
+        // A host rejected by this project's repository preflight keeps its occupancy but adds no admissible slot.
+        var rejected = assigned.Select(host => (Host: host, Blocks: CapacityClaimability.PreflightBlocks(host, repository, now)))
+            .Where(row => row.Blocks.Count > 0).ToArray();
+        var rejectedIds = rejected.Select(row => row.Host.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var effective = assigned.Select(host => rejectedIds.Contains(host.Id) ? host with { AdmissibleSlots = 0 } : host).ToArray();
+        var (total, used, admissible) = Totals(effective);
+        if (ExecutionLocations.RequiredClassCapability(ProjectExecutionPolicy.ResolveExecutionLocation(config)) is not null)
+        {
+            // Shared occupancy by other projects, classes and draining peers is already in the host totals.
+            var hostFree = Math.Max(0, total - used);
+            total = Math.Min(total, Math.Max(1, config.MaxParallelism));
+            var available = Math.Min(Math.Max(0, total - projectUsed), hostFree);
+            used = total - available;
+            admissible = Math.Min(admissible, available);
+        }
+        var blocks = assigned.SelectMany(host => host.AdmissionBlocks)
+            .Concat(rejected.SelectMany(row => row.Blocks.Select(block => block with { Reason = $"{row.Host.Name}: {block.Reason}" })))
+            .Distinct().ToArray();
+        return new(total, used, admissible, blocks);
     }
 
     internal static (int Total, int Used, int Admissible) Totals(IEnumerable<CapacityHost> hosts)
@@ -229,12 +252,13 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
                         activeLeases?.Invoke(other.RunnerId) ?? 0)));
             var snapshot = snapshots.FirstOrDefault(row => row.RunnerId == host.Id);
             var centralBlocks = new List<CapacityBlock>();
+            var limits = new List<string>();
             var targets = new HostCapacityTargets(host.HostCeiling ?? host.Slots,
                 snapshot?.RuntimeCapacity?.TargetLoadPercent ?? host.Identity?.RunnerTargetLoadPercent ?? HostCapacityPolicy.DefaultTargetLoadPercent,
                 snapshot?.RuntimeCapacity?.RampStrategy ?? host.Identity?.RunnerRampStrategy ?? RunnerRampStrategies.Balanced);
             var admissible = CapacityClaimability.AdmissibleSlots(targets,
-                new(sharedUsed, now, peers.Select(peer => peer.LastProgressAt).Max(), snapshot?.Telemetry?.CpuPercent), targets.MaxParallelism, centralBlocks);
-            return host with { AdmissionBlocks = host.AdmissionBlocks.Concat(centralBlocks).ToArray(), SharedUsed = sharedUsed, SharedAdmissibleSlots = admissible,
+                new(sharedUsed, now, peers.Select(peer => peer.LastProgressAt).Max(), snapshot?.Telemetry?.CpuPercent), targets.MaxParallelism, centralBlocks, limits);
+            return host with { AdmissionBlocks = host.AdmissionBlocks.Concat(centralBlocks).ToArray(), SharedUsed = sharedUsed, SharedAdmissibleSlots = admissible, AdmissionLimits = limits,
                 AdmissibleSlots = host.AdmissionBlocks.Count > 0 ? 0 : Math.Min(host.AdmissibleSlots, admissible) };
         }).ToArray();
     }

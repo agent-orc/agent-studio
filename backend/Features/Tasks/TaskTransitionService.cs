@@ -2207,6 +2207,7 @@ public sealed class TaskTransitionService
                 actor,
                 // ES-2: an operator session's override names the approval and the approving Owner.
                 approvalId = OperatorActorScope.Current?.ApprovalId,
+                batchId = OperatorActorScope.Current?.BatchId,
                 approvedBy = OperatorActorScope.Current?.ApprovedBy is { } approvedBy ? TimelineActors.Human(approvedBy) : null,
                 at = _time.GetUtcNow(),
                 deliveryEpoch = subject?.RunAttemptId ?? card.CompletionClaim?.DeliveryEpoch,

@@ -35,7 +35,8 @@ public static class CodingCapacityProjection
         TaskReferenceIndex references, int totalSlots, int usedSlots,
         Func<TaskInfo, IReadOnlyList<CapacityBlock>> blocksOf,
         Func<TaskInfo, WaitsOnStatus>? waitsOf = null, int? admissibleSlots = null,
-        IReadOnlyList<CapacityBlock>? admissionBlocks = null, DateTime? lastProgressAt = null)
+        IReadOnlyList<CapacityBlock>? admissionBlocks = null, DateTime? lastProgressAt = null,
+        IReadOnlyList<string>? admissionLimits = null)
     {
         // Match reference resolution: the first occurrence owns a stable card key.
         tasks = tasks.DistinctBy(Key, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -82,6 +83,8 @@ public static class CodingCapacityProjection
         var cause = free == 0 && totalSlots > 0 ? "Coding capacity is full."
             : totalSlots == 0 ? "No fresh coding capacity is available; inspect execution hosts."
             : ready.Length == 0 ? "Ready is empty; plan more cards."
+            : holds.Length == 0 && admissionLimits is { Count: > 0 } && admissible < free && claimable >= admissible
+                ? $"{claimable} claimable cards for {admissible} admissible slots ({free} physical free slots): {string.Join("; ", admissionLimits)}; adding cards does not raise admission now."
             : runnable >= free || runnable > 0 && claimable < runnable
                 ? $"{runnable} runnable cards awaiting admission for {admissible} admissible slots ({free} physical free slots)"
                     + (holds.Length == 0 ? "; awaiting pickup progress." : $": {string.Join("; ", holds)}.")
