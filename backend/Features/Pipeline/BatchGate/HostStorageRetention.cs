@@ -68,6 +68,12 @@ public static partial class HostStorageRetention
             return 0;
         }
         using var pinnedInstances = anchor;
+        using var deletion = new InstanceDeletionWorker(pinnedInstances.AncestorDescriptors.ToArray());
+        if (!deletion.Available)
+        {
+            log($"instance-retention-skipped path={currentRoot} reason=unavailable-deletion-confinement");
+            return 0;
+        }
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var removed = 0;
         var reported = 0;
@@ -92,12 +98,16 @@ public static partial class HostStorageRetention
                         if (reason == "empty")
                         {
                             beforeDelete?.Invoke(candidate);
-                            // Every deletion is relative to the inspected parent handle.
-                            // No recursive delete can consume newly written evidence.
-                            for (var i = directories.Count - 1; i > 0; i--)
-                                directories[i].DeleteEmpty();
-                            if (hasOrigin) pinnedCandidate.DeleteOrigin();
-                            pinnedCandidate.DeleteEmpty();
+                            deletion.Run(() =>
+                            {
+                                // Check every location before the first mutation. Linux also
+                                // enforces the root in the kernel if a directory moves later.
+                                foreach (var directory in directories) directory.VerifyLocation();
+                                for (var i = directories.Count - 1; i > 0; i--)
+                                    directories[i].DeleteEmpty();
+                                if (hasOrigin) pinnedCandidate.DeleteOrigin();
+                                pinnedCandidate.DeleteEmpty();
+                            });
                             removed++;
                             reason = "deleted";
                         }
