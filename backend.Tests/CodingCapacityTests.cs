@@ -19,6 +19,31 @@ public sealed class CodingCapacityTests
             blocks ?? (_ => []));
 
     [Theory]
+    [InlineData(3, 0, "plan more")]
+    [InlineData(12, 0, "awaiting admission")]
+    [InlineData(20, 0, "awaiting admission")]
+    [InlineData(12, 12, "full")]
+    [InlineData(0, 0, "Ready is empty")]
+    public void Advice_matches_supply_and_available_capacity(int ready, int used, string expected)
+    {
+        var cards = Enumerable.Range(0, ready).Select(i => Card($"C-{i}")).ToArray();
+        var fact = CodingCapacityProjection.Project("studio", cards, TaskReferenceIndex.Build(cards), 12, used, _ => []);
+        Assert.Contains(expected, fact.Cause);
+        if (ready >= 12 || used == 12) Assert.DoesNotContain("plan more", fact.Cause);
+    }
+
+    [Fact]
+    public void Sufficient_backlog_without_admission_progress_alerts_but_progress_restarts_the_timer()
+    {
+        var fact = Project(Enumerable.Range(0, 12).Select(i => Card($"C-{i}")).ToArray());
+        var tracker = new CapacityIdleTracker();
+        Assert.Null(tracker.Observe(fact, [], Now));
+        Assert.Contains("awaiting admission", tracker.Observe(fact, [], Now.AddMinutes(21))!.Reason);
+        Assert.Null(tracker.Observe(fact with { LastProgressAt = Now.AddMinutes(22) }, [], Now.AddMinutes(22)));
+        Assert.Null(tracker.Observe(fact with { LastProgressAt = Now.AddMinutes(22) }, [], Now.AddMinutes(40)));
+    }
+
+    [Theory]
     [InlineData("A")]
     [InlineData("a")]
     public void Duplicate_card_keys_keep_the_first_card_without_inflating_capacity(string duplicateKey)
