@@ -3628,6 +3628,32 @@
           <td>The continuation retains every integration-side row and the delivery patch;
             focused classes, guards and lint verify a replacement delivery.</td>
         </tr>
+        <tr id="case-concept-review-material-unavailable">
+          <td>2026-11-27</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-material-unavailable</span></td>
+          <td>Seven concept-fit reviews returned concerns about unavailable Dossier files or cut diffs. The review CLIs completed.</td>
+          <td>The prompt used the plan host's checkout before publication and prohibited file reads on the review host.</td>
+          <td>The operator accepted the seven by override. Concept-fit now reads the verified delivery checkout.
+            A material-access failure reaches <code>ReviewInfra / ReviewMaterialUnavailable</code> for the existing retry or escalation.</td>
+        </tr>
+        <tr id="case-concept-review-content-finding">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-content-finding</span></td>
+          <td>Code review reproduced a runner returning <code>ReviewInfra</code> for a finding that a Dossier lacked
+            a retry policy for unavailable inputs. The review CLI produced a verdict.</td>
+          <td>The legacy access-failure text matcher also ran on verdicts from checkout reviews.</td>
+          <td>Checkout reviews now use the explicit access-failure classification. The reproduced concern survives
+            execution and settlement for normal content admission.</td>
+        </tr>
+        <tr id="case-concept-review-frozen-prompt">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-frozen-prompt</span></td>
+          <td>A frozen snapshot prompt could produce a content concern for a checkout read failure.</td>
+          <td>The executor appended checkout instructions while the stock prompt still prohibited tools and
+            directed the CLI to report truncated evidence as a concern.</td>
+          <td>The executor replaces the obsolete instructions before the CLI runs. An inaccessible file
+            reaches <code>ReviewInfra / ReviewMaterialUnavailable</code>. A cited content finding keeps its verdict.</td>
+        </tr>
       </tbody>
     </table>
 

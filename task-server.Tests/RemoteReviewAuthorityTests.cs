@@ -2374,8 +2374,10 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.Contains("brief version is unavailable", report.Summary);
     }
 
-    [Fact]
-    public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds(bool materialAvailable)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
@@ -2396,10 +2398,19 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
 
-        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId,
-            PassingReport(claim), "review-a", default);
+        var request = PassingReport(claim);
+        if (!materialAvailable)
+            request = request with
+            {
+                Outcome = "ReviewInfra", FailureClassification = ConceptRemoteReviewPolicy.MaterialUnavailable,
+                Summary = "Cannot read docs/persona-team/index.html.", Verdicts = [],
+            };
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
 
-        Assert.Equal("Pass", report.Outcome);
+        Assert.Equal(materialAvailable ? "Pass" : "ReviewInfra", report.Outcome);
+        Assert.Equal(!materialAvailable, report.RetryScheduled);
+        if (!materialAvailable)
+            Assert.Equal(ConceptRemoteReviewPolicy.MaterialUnavailable, report.FailureClassification);
     }
 
     [Fact]

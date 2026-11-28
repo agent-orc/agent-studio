@@ -336,6 +336,32 @@ public sealed class CompletionContentAdmissionTests : IDisposable
         Assert.Contains("content verdict was for brief", stale.Message);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Historical_material_concern_requires_review_recovery_only_for_snapshot_review(bool checkoutVerdict)
+    {
+        var legacyPlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [new("aspect-concept-fit", "concept-fit", "codex", [], ExecutionKind: "agent-aspect",
+                Prompt: "End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.")], ["concept-fit"]);
+        Settle("concerns", "The published Dossier snapshot is incomplete.", aspect: "concept-fit",
+            plan: legacyPlan, checkoutVerdict: checkoutVerdict);
+        var card = _task with { Mode = TaskModes.Concept };
+        var facts = CompletionContentEvidence.Read(card, _authority);
+        var refusal = CompletionContentPolicy.Decide(facts);
+
+        if (checkoutVerdict)
+        {
+            Assert.Contains("The published Dossier snapshot is incomplete.", facts.ContentSummary);
+            Assert.Null(facts.AdmissionProblem);
+            return;
+        }
+        Assert.Null(facts.ContentStatus);
+        Assert.False(refusal.Accepted);
+        Assert.Contains("review infrastructure", refusal.Message);
+        Assert.DoesNotContain("verdict was concerns", refusal.Message);
+    }
+
     [Fact]
     public void Wrong_content_aspect_in_settled_report_is_not_admitted()
     {
@@ -415,7 +441,8 @@ public sealed class CompletionContentAdmissionTests : IDisposable
     private (string AttemptId, AgentStudio.TaskServer.Contracts.ReviewReportRequest Report,
         AgentStudio.OrchestrationDecisions.ReviewBudgetDecision Decision) Settle(string status, string summary,
         int used = 0, int maximum = 0, bool qualityBlock = false, string aspect = "requirement-fit",
-        string? orchestrationRunId = null)
+        string? orchestrationRunId = null, AgentStudio.TaskServer.Contracts.ReviewPlanDto? plan = null,
+        bool checkoutVerdict = false)
     {
         var key = Guid.NewGuid().ToString("N");
         var taskKey = TaskIdentity.AuthorityKey(_task);
@@ -425,11 +452,11 @@ public sealed class CompletionContentAdmissionTests : IDisposable
             Write = new(run.AttemptId, run.LastFence, run.AuthorityEpoch, "settle-" + key), Outcome = "done", ResultSha = sha,
         }).Accepted);
         var created = _authority.CreateReviewAttempt(new(taskKey, "demo", sha, run.AttemptId,
-            _brief, AttemptAuthorityService.Hash("policy"), [], "review-" + key));
+            _brief, AttemptAuthorityService.Hash("policy"), [], "review-" + key, Plan: plan));
         var review = _authority.ClaimReview(created.AttemptId, "reviewer", "host", 60, "claim-" + key).ReviewAttempt!;
         AgentStudio.TaskServer.Contracts.ReviewVerdictDto[] verdicts = qualityBlock
             ? [new(aspect, status, "Product", summary), new("code-quality", "block", "Product", "backend/Quality.cs fails an optional diagnostic.")]
-            : [new(aspect, status, "Product", summary)];
+            : [new(aspect, status, "Product", summary) { UsesDossierCheckout = checkoutVerdict }];
         var outcome = qualityBlock || status == "block" ? "ProductFailure" : "Pass";
         var budget = AgentStudio.OrchestrationDecisions.ReviewBudgetPolicy.Decide(new(outcome,
             verdicts.Select(item => new AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding(item.Aspect,

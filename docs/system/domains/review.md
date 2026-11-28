@@ -127,16 +127,27 @@ The review subject's `TaskRequirementsHash` still hashes the complete prompt:
 it identifies the exact instructions for that review attempt, including
 follow-up notes, and is distinct from the authored brief version.
 
-Concept-fit receives a bounded snapshot of the published Dossier index,
-`workbench.json`, and local files linked from them. Its round diff shows what
-changed, while the snapshot supplies unchanged Dossier content. A missing,
-unreadable, or over-budget file is named in the prompt so the aspect cannot
-infer completeness from a truncated excerpt. The plan builder wraps the
-snapshot in `ConceptDossierSnapshotSpan` markers. The review runner keeps that
-span whole: its 120,000-character authored-context cap applies only to the
-brief and instructions around it. The span counts against the diff budget, so
-on a large Dossier the diff is cut (and named) instead of the snapshot
-(AGT-3881, after the AGT-3876 Dossier lost its middle).
+Concept-fit opens the delivered index, `workbench.json`, local includes and
+other changed Dossier files in the review CLI's read-only checkout of the
+verified Result-SHA. This includes unchanged files on a follow-up round.
+The plan names the Dossier entrypoint when known. Reviewers can locate it from
+the brief and changed paths when metadata is unavailable. Prompt budgets still
+apply to the diff. The review host reports omitted diff material and the
+reviewer can read the full files in chunks.
+
+An inaccessible review input carries the marker classification
+`ReviewMaterialUnavailable` and the affected paths. The review settles
+`ReviewInfra` for bounded infrastructure retry or escalation. A confirmed
+omission in the delivered tree is a content finding. Earlier concerns that
+identify incomplete review inputs require a fresh review before completion.
+The legacy text check applies only to verdicts from the frozen snapshot-only
+prompt. A runner that supplies checkout instructions records that fact on its
+verdict, including when it executes an older plan. Before executing a frozen
+stock snapshot prompt, the runner replaces its snapshot grading and tool-use
+directions with checkout reads and the typed read-failure response. It keeps
+the frozen brief, content checks and evidence. In checkout reviews, only
+the explicit material-access classification triggers this recovery. A finding
+about how the concept handles unavailable inputs keeps its content verdict.
 
 For older settled concept reviews, completion accepts a whole-prompt review
 hash as current only while the current authored version equals the delivery
@@ -730,7 +741,7 @@ an empty dependency tree or a red integration branch must not block it. Any
 other concept diff (unknown, several topics, or paths outside `docs/<topic>/`)
 keeps the build and lint commands next to `concept-fit`. The aspect uses the shared aspect
 runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
-compares the delivered Dossier in the Result-SHA diff with the current
+compares the delivered Dossier in the Result-SHA checkout with the current
 `prompt.md` (bounded to 64,000 characters in the rendered prompt): required
 sections, operator directions, recommendations for open
 decisions, and implementation-card source data. A contradiction is a blocking

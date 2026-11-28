@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgentStudio.Runner;
 using AgentStudio.OrchestrationDecisions;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tasks;
 
@@ -115,6 +116,15 @@ public static class CompletionContentEvidence
                     Settlement: review is null && TaskModes.IsReportOnly(task.Mode)
                         ? new(null, CompletionSettlementProblem.NoReportReview, null)
                         : Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
+                // Historic settlements can still contain the material-access concern.
+                if (required == "concept-fit" && (report?.FailureClassification == Contract.ConceptRemoteReviewPolicy.MaterialUnavailable
+                    || content is not null && Contract.ConceptRemoteReviewPolicy.IsMaterialUnavailable(content, review?.Subject.Plan)))
+                    return facts with
+                    {
+                        ContentStatus = null,
+                        AdmissionProblem = "Concept-fit review infrastructure could not read the Dossier. Rerun the review. "
+                            + (content is null ? report!.Summary : Contract.ConceptRemoteReviewPolicy.MaterialFailureSummary(content)),
+                    };
                 return ApplyAdmission(task.FolderPath, facts, run, review, read?.Entry);
             }
         }

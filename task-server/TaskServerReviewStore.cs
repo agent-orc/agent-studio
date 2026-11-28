@@ -1412,6 +1412,11 @@ public sealed partial class TaskServerStore
             && request.FailureClassification is "PreparationFailed")
             return ClassifyPreparationFailure(subject, request);
         var verdictAspects = request.Verdicts.Select(verdict => verdict.Aspect).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // An inaccessible Dossier produces command evidence without a content verdict.
+        if (request.Outcome == "ReviewInfra"
+            && request.FailureClassification == ConceptRemoteReviewPolicy.MaterialUnavailable
+            && subject.Plan.Commands.Any(command => command.Aspect == "concept-fit" && ReviewCommandKinds.IsAgent(command.ExecutionKind)))
+            verdictAspects.Add("concept-fit");
         if (subject.Plan.RequiredAspects.Any(aspect => !verdictAspects.Contains(aspect)))
             return ("ReviewInfra", "IncompleteReviewReport");
         var commandKeys = request.Commands
