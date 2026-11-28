@@ -359,9 +359,26 @@ public sealed class CarWorkerExecutionTests : IDisposable
         Assert.Equal("exec", run.SpawnedArgv![0]);
         Assert.DoesNotContain(run.SpawnedArgv!, arg => arg.StartsWith("developer_instructions=", StringComparison.Ordinal));
         Assert.DoesNotContain("background_terminal_max_timeout=300000", run.SpawnedArgv!);
+        Assert.DoesNotContain("features.image_generation=false", run.SpawnedArgv!);
+        Assert.DoesNotContain("web_search=\"disabled\"", run.SpawnedArgv!);
     }
 
-    private static void AssertUnattendedCodexArguments(IReadOnlyList<string> argv)
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Unattended_Codex_restores_only_the_opted_in_tool_groups(bool image, bool web)
+    {
+        if (NodeMissing()) return;
+        var run = await RunFixtureAsync(Fixture.Load("p1-happy-done.codex.fixture"),
+            codexImageEnabled: image, codexWebEnabled: web);
+
+        AssertUnattendedCodexArguments(run.SpawnedArgv!, image, web);
+        Assert.Equal(0, run.Result.ExitCode);
+    }
+
+    private static void AssertUnattendedCodexArguments(
+        IReadOnlyList<string> argv, bool image = false, bool web = false)
     {
         Assert.Equal("-c", argv[0]);
         Assert.StartsWith("developer_instructions=\"This coding session runs unattended.", argv[1]);
@@ -370,7 +387,11 @@ public sealed class CarWorkerExecutionTests : IDisposable
         Assert.Contains("Do not use separate sleep, wait, or empty write_stdin calls", argv[1]);
         Assert.Equal("-c", argv[2]);
         Assert.Equal("background_terminal_max_timeout=300000", argv[3]);
-        Assert.Equal("exec", argv[4]);
+        var expectedOverrides = new List<string>();
+        if (!image) expectedOverrides.AddRange(["-c", "features.image_generation=false"]);
+        if (!web) expectedOverrides.AddRange(["-c", "web_search=\"disabled\""]);
+        Assert.Equal(expectedOverrides, argv.Skip(4).TakeWhile(arg => arg != "exec"));
+        Assert.Equal("exec", argv[4 + expectedOverrides.Count]);
         Assert.DoesNotContain(argv, arg => arg.StartsWith("model_instructions_file=", StringComparison.Ordinal));
     }
 
@@ -770,7 +791,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
         string? model = null, string? thinkingLevel = null,
         string? resumeSessionId = null, string? workingDirectory = null,
         bool unattendedCoding = true,
-        DetachedMechanicalResume? mechanicalResume = null, long? tokenCeiling = null)
+        DetachedMechanicalResume? mechanicalResume = null, long? tokenCeiling = null,
+        bool codexImageEnabled = false, bool codexWebEnabled = false)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         workingDirectory ??= Path.Combine(workerDirectory, "worktree");
@@ -794,7 +816,9 @@ public sealed class CarWorkerExecutionTests : IDisposable
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
             TokenCeiling: tokenCeiling,
-            MechanicalResume: mechanicalResume);
+            MechanicalResume: mechanicalResume,
+            CodexImageEnabled: codexImageEnabled,
+            CodexWebEnabled: codexWebEnabled);
 
         var spawner = new FixtureSpawner(fixture.Path);
         var shipped = new List<(string, string)>();

@@ -71,6 +71,29 @@ reset parsing and capability admission; see the
   `frontend/src/app/components/cli-model-selector/`: CLI status, usage, quota,
   and model UI.
 
+## Tool groups in detached Codex coding runs
+
+Detached Codex coding launches omit image generation and web search by default.
+Codex applies the launch overrides `features.image_generation=false` and
+`web_search="disabled"` before constructing the Code Mode host schema. The web
+setting also suppresses the hosted web search declaration. Shell execution and
+viewing existing images remain available subject to the usual CLI settings.
+
+On the coding runner, set either environment variable independently in its
+service environment. Each takes a comma-separated list of task keys or `*` for
+all tasks. For example, set `RUNNER_CODEX_IMAGE_TASKS=AGT-123,AGT-124` for
+image generation on those two cards and `RUNNER_CODEX_WEB_TASKS=AGT-124` for web
+search on the second card. The Studio `/api/runner/claim` route also carries
+the card's `allowWebAccess` opt-in. Runners claiming directly from Task Server
+use the service environment lists. An opted-in group uses the runner account's normal
+Codex settings and provider capabilities. Set both variables to `*` to use the
+normal tool configuration for all detached Codex coding launches.
+
+The runner resolves the switches at launch and stores them in the detached
+worker specification. Fresh runs and `exec resume` both apply them.
+Interactive Codex sessions, project chat, and review launches use their normal
+tool configuration.
+
 ## Waiting for commands in detached Codex coding runs
 
 The runner passes `-c developer_instructions="…"` before `exec` on fresh and

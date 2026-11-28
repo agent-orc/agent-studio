@@ -278,7 +278,8 @@ public sealed record RunSpecDto(
     string? BriefVersion = null,
     int? RunTimeoutSeconds = null,
     string? RunTimeoutSource = null,
-    string? TaskTitle = null);
+    string? TaskTitle = null,
+    bool AllowWebAccess = false);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,

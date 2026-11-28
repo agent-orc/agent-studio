@@ -12,6 +12,9 @@ public sealed class RunnerOptions
 {
     public const int ProtocolVersion = AgentStudio.TaskServer.Contracts.TaskServerProtocol.Current;
 
+    internal IReadOnlySet<string> CodexImageTasks { get; private init; } = new HashSet<string>();
+    internal IReadOnlySet<string> CodexWebTasks { get; private init; } = new HashSet<string>();
+
     /// <summary>Central Task Server base URL, e.g. http://127.0.0.1:5030 or the reverse-proxied central URL.</summary>
     public required string ServerUrl { get; init; }
 
@@ -629,6 +632,8 @@ public sealed class RunnerOptions
             BaseBranch = Val("base-branch", "RUNNER_BASE_BRANCH", "main"),
             CliType = Val("cli-type", "RUNNER_CLI_TYPE", CliSelection.ClaudeCli).Trim().ToLowerInvariant(),
             CodexCliBin = Val("codex-cli", "RUNNER_CODEX_CLI_BIN", "codex"),
+            CodexImageTasks = ParseToolTasks(Variable("RUNNER_CODEX_IMAGE_TASKS")),
+            CodexWebTasks = ParseToolTasks(Variable("RUNNER_CODEX_WEB_TASKS")),
             ClaudeCliBin = Val("claude-cli", "RUNNER_CLAUDE_CLI_BIN", "claude"),
             TtlSeconds = overrides.TryGetValue("ttl", out var ttl) && int.TryParse(ttl, out var ttlV) ? ttlV : EnvInt("RUNNER_TTL_SECONDS", 900),
             HeartbeatSeconds = EnvInt("RUNNER_HEARTBEAT_SECONDS", 30),
@@ -754,6 +759,11 @@ public sealed class RunnerOptions
         var taskKey = positional ?? (overrides.TryGetValue("task", out var tk) ? tk : null);
         return (options, string.IsNullOrWhiteSpace(taskKey) ? null : taskKey.Trim(), once, help);
     }
+
+    private static IReadOnlySet<string> ParseToolTasks(string? value)
+        => (value ?? string.Empty)
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     internal static string ReadAuthTokenFile(string path)
         => ReadOwnerOnlySecretFile(path, "RUNNER_AUTH_TOKEN_FILE");

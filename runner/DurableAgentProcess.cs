@@ -30,7 +30,9 @@ internal sealed record DetachedJobSpec(
     IReadOnlyDictionary<string, string>? Environment = null,
     long? TokenCeiling = null,
     long? TokenBaseline = null,
-    DetachedMechanicalResume? MechanicalResume = null);
+    DetachedMechanicalResume? MechanicalResume = null,
+    bool CodexImageEnabled = false,
+    bool CodexWebEnabled = false);
 
 internal sealed record DetachedMechanicalResume(string Prompt, int TimeoutSeconds);
 
@@ -239,8 +241,13 @@ internal sealed class DurableAgentProcess
                 .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
             TokenCeiling: tokenCeiling,
             TokenBaseline: tokenBaseline,
-            MechanicalResume: mechanicalResume);
+            MechanicalResume: mechanicalResume,
+            CodexImageEnabled: IncludesTask(options.CodexImageTasks, cleanContextKey),
+            CodexWebEnabled: runSpec?.AllowWebAccess == true || IncludesTask(options.CodexWebTasks, cleanContextKey));
     }
+
+    private static bool IncludesTask(IReadOnlySet<string> taskKeys, string? taskKey)
+        => taskKeys.Contains("*") || (taskKey is not null && taskKeys.Contains(taskKey));
 
     /// <summary>
     /// The preparation cache binding a worker was started with, or null when the

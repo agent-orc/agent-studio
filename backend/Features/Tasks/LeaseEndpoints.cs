@@ -3666,7 +3666,8 @@ public static class LeaseEndpoints
             modeFraming,
             RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
             RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator",
-            TaskTitle: task.Title);
+            TaskTitle: task.Title,
+            AllowWebAccess: task.AllowWebAccess);
     }
 
     internal static string? BuildModeFraming(

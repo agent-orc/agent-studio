@@ -138,7 +138,7 @@ public sealed partial class LeasePlacementEndpointsTests : IDisposable
     [Fact]
     public async Task Claim_keeps_a_class_project_sequential_until_parallelism_is_configured()
     {
-        SeedTask(TaskStates.Ready, "LP-SEQ-1", order: 1);
+        SeedTask(TaskStates.Ready, "LP-SEQ-1", order: 1, allowWebAccess: true);
         SeedTask(TaskStates.Ready, "LP-SEQ-2", order: 2);
         using var factory = BuildFactory();
         using var http = factory.CreateClient();
@@ -148,6 +148,7 @@ public sealed partial class LeasePlacementEndpointsTests : IDisposable
         await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
         var first = await ClaimWithSuccessfulPreflightAsync(client, Claim("sequential-1"));
         Assert.Equal(RClaimStatus.Claimed, first.Status);
+        Assert.True(first.RunSpec?.AllowWebAccess);
 
         var held = await client.ClaimAsync(Claim("sequential-2"), CancellationToken.None);
         Assert.Equal(RClaimStatus.Empty, held.Status);
@@ -393,7 +394,8 @@ public sealed partial class LeasePlacementEndpointsTests : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    private void SeedTask(string state, string key, int order = 1, string prompt = "Do the placed work.")
+    private void SeedTask(
+        string state, string key, int order = 1, string prompt = "Do the placed work.", bool allowWebAccess = false)
     {
         var dir = Path.Combine(_watchPath, state, key);
         Directory.CreateDirectory(dir);
@@ -406,6 +408,7 @@ public sealed partial class LeasePlacementEndpointsTests : IDisposable
             agent = "claude",
             kind = TaskKinds.Task,
             cliType = CliTypes.Claude,
+            allowWebAccess,
         }));
         File.WriteAllText(Path.Combine(dir, "prompt.md"), prompt);
         File.WriteAllText(Path.Combine(dir, "status.md"), "Result: pending.");

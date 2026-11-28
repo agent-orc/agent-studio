@@ -208,7 +208,8 @@ public sealed record RunSpecDto(
     string? BriefVersion = null,
     int? RunTimeoutSeconds = null,
     string? RunTimeoutSource = null,
-    string? TaskTitle = null);
+    string? TaskTitle = null,
+    bool AllowWebAccess = false);
 
 /// <summary>Result of one daemon pickup poll.</summary>
 public sealed record RunnerClaimResponse(

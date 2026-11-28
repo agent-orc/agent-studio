@@ -6,6 +6,28 @@ namespace AgentRunner.Tests;
 
 public sealed class DurableAgentProcessTests
 {
+    [Theory]
+    [InlineData(null, null, false, false, false)]
+    [InlineData(" AGT-12 , agt-34 ", "AGT-12", false, true, false)]
+    [InlineData("AGT-12", "*", false, false, true)]
+    [InlineData(null, null, true, false, true)]
+    public void Coding_worker_spec_carries_tool_opt_ins(
+        string? imageTasks, string? webTasks, bool allowWebAccess, bool image, bool web)
+    {
+        var (options, _, _, _) = RunnerOptions.Parse([], name => name switch
+        {
+            "RUNNER_CODEX_IMAGE_TASKS" => imageTasks,
+            "RUNNER_CODEX_WEB_TASKS" => webTasks,
+            _ => null,
+        });
+
+        var spec = DurableAgentProcess.BuildSpec(options, Path.GetTempPath(), "fixture", Path.GetTempPath(),
+            new RunSpecDto(CliType: "codex", AllowWebAccess: allowWebAccess), cleanContextKey: "AGT-34");
+
+        Assert.Equal(image, spec.CodexImageEnabled);
+        Assert.Equal(web, spec.CodexWebEnabled);
+    }
+
     private static readonly string[] CredentialNames =
     [
         "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY",

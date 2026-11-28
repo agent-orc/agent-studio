@@ -96,7 +96,8 @@ internal static class CarWorkerExecution
         options = options with
         {
             Spawner = new CodingWorkerSpawner(cliType, options.Spawner,
-                optionsCustomizer is null ? null : options.EnvironmentOverrides, unattendedCoding),
+                optionsCustomizer is null ? null : options.EnvironmentOverrides, unattendedCoding,
+                spec.CodexImageEnabled, spec.CodexWebEnabled),
         };
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
@@ -414,7 +415,9 @@ internal static class CarWorkerExecution
         string cliType,
         ICliProcessSpawner? inner = null,
         IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null,
-        bool unattendedCoding = false) : ICliProcessSpawner
+        bool unattendedCoding = false,
+        bool codexImageEnabled = false,
+        bool codexWebEnabled = false) : ICliProcessSpawner
     {
         public CliSpawn Spawn(ProcessStartInfo startInfo)
         {
@@ -425,6 +428,18 @@ internal static class CarWorkerExecution
                 startInfo.ArgumentList.Insert(1, $"developer_instructions=\"{CodexUnattendedInstructions}\"");
                 startInfo.ArgumentList.Insert(2, "-c");
                 startInfo.ArgumentList.Insert(3, "background_terminal_max_timeout=300000");
+                // These gates apply before Codex builds the Code Mode host schema.
+                var nextOverride = 4;
+                if (!codexImageEnabled)
+                {
+                    startInfo.ArgumentList.Insert(nextOverride++, "-c");
+                    startInfo.ArgumentList.Insert(nextOverride++, "features.image_generation=false");
+                }
+                if (!codexWebEnabled)
+                {
+                    startInfo.ArgumentList.Insert(nextOverride, "-c");
+                    startInfo.ArgumentList.Insert(nextOverride + 1, "web_search=\"disabled\"");
+                }
             }
             WorkerEdgeCredentialBoundary.ApplyCodingEnvironment(startInfo.Environment, cliType);
             if (testEnvironmentOverrides is not null)
