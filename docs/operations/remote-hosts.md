@@ -34,6 +34,205 @@ in the `networked` profile it must still send its scoped Runner bearer credentia
 Do not expose that listener on a public interface or use the `local` profile's
 unauthenticated loopback management rule as a substitute for Runner identity.
 
+## Enrol a gate adapter and run a merge canary
+
+Use a Linux host with a current `agent-host host-agent run` service and the
+build and test tools required by the selected project. Use the same standalone
+Task Server that owns the Studio API's gate subjects. Keep the working bridge
+configuration available while testing.
+
+### Upgrade an existing claimed gate worker
+
+After the Task Server upgrade, `POST /api/v1/gates/claims` returns HTTP 403
+with `runner-role-mismatch` for credentials bound to `coding` or `review`,
+even if the runner advertises `gate-executor`. This applies to standalone
+workers as well as host-agent adapters and to post-merge and batch claims as
+well as merge and promotion claims. A legacy credential whose effective role
+is unset can still claim for its own executor ID within its host's project
+policy, subject to the existing scope and admission checks.
+
+Before upgrading Task Server, check the credential used by each existing
+claimed gate worker. If it is bound to coding or review, use the bridge
+switch below for new merge and promotion gates during the upgrade. A batch
+deployment using claimed execution has its own switch,
+`BatchGate__Execution=bridge`, for new batch gates. Let queued and active
+claimed work settle before upgrading if these workers are its only executors.
+Existing claimed subjects stay on the claim path.
+
+After upgrading Task Server, the owner can enrol a dedicated gate identity
+using steps 1–4 below. For a standalone worker, set the new runner ID and
+credential in its service environment with `RUNNER_ROLE=gate`. For a
+host-agent adapter, follow step 5. Confirm readiness and a successful claim
+under the gate credential before restoring claimed routing for other work.
+
+### Enrol and enable the role
+
+1. Through the Studio edge, use an authenticated owner session to send
+   `POST /api/v1/management/host-join-tokens` with the following JSON. For a
+   browser request, use the session's CSRF header as for other management
+   writes.
+
+   ```json
+   {"serverUrl":"https://tasks.example.com","runnerName":"build-host-02","role":"gate"}
+   ```
+
+   Use the HTTPS Task Server route that the host will use for registration and
+   claims. Save the returned `joinToken` to `join.token` on the host with
+   mode 0600. The runner ID in the response is `build-host-02-gate` in this
+   example. The one-time code expires after 15 minutes.
+2. Run the following as the host-agent service user from a checkout containing
+   the enrollment script. Use a private directory owned by that user. The
+   token envelope supplies the URL, installation ID, runner ID and code.
+
+   ```bash
+   (
+   set -e
+   umask 077
+   gate_dir=/var/lib/agent-runner/gate
+   mkdir -p "$gate_dir"
+   python3 - "$gate_dir" <<'PY'
+   import base64, hashlib, json, pathlib, sys
+
+   directory = pathlib.Path(sys.argv[1])
+   token = directory / "join.token"
+   prefix, body, checksum = token.read_text().strip().split(".")
+   if prefix != "aosj2" or hashlib.sha256(f"{prefix}.{body}".encode()).hexdigest()[:16] != checksum:
+       raise SystemExit("Invalid join token")
+   payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+   (directory / "enrolment.code").write_text(payload["enrolmentCode"])
+   (directory / "installation-id").write_text(payload["installationId"])
+   (directory / "server-url").write_text(payload["serverUrl"])
+   PY
+   bash scripts/enrol-host-principal.sh "$(cat "$gate_dir/server-url")" \
+     "$(cat "$gate_dir/installation-id")" "$gate_dir/enrolment.code" "$gate_dir/runner.token"
+   rm "$gate_dir/join.token"
+   )
+   ```
+
+3. Write the following literal assignments to `/etc/agent-runner/gate.env`.
+   Use the issued runner ID and the same hostname and Task Server URL as the
+   existing adapters. Create the gate home and make the work and state paths
+   writable by the service user. Use a distinct state directory. A symlink or
+   bind mount of the host agent's or another adapter's state directory is
+   still shared state.
+
+   ```dotenv
+   RUNNER_SERVER_URL=https://tasks.example.com
+   RUNNER_ID=build-host-02-gate
+   RUNNER_NAME=build-host-02-gate
+   RUNNER_HOSTNAME=build-host-02
+   RUNNER_AUTH_TOKEN_FILE=/var/lib/agent-runner/gate/runner.token
+   RUNNER_WORKDIR=/var/lib/agent-runner/gate/work
+   RUNNER_REVIEW_WORKDIR=/var/lib/agent-runner/gate/verification
+   RUNNER_STATE_DIR=/var/lib/agent-runner/gate/state
+   ```
+
+   Add this `gate` property to the existing `/etc/agent-runner/host-agent.json`.
+
+   ```json
+   "gate": {
+     "environmentFile": "/etc/agent-runner/gate.env",
+     "homeDirectory": "/var/lib/agent-runner/gate/home"
+   }
+   ```
+
+4. Give the host access to the canary project using the
+   [host project policy under Connect the daemon](#connect-the-daemon) before enabling the role.
+   Preserve the existing policy of any coding or review adapters on that host.
+   The Task Server must be able to resolve the repository identity in the
+   merge subject to the allowed project. The claimed merge transport sends the
+   Studio project name as that identity. Check that this value matches the
+   registered Task Server project ID or repository ID before cutover. For a
+   new canary project, use the Studio project name as the stable project ID
+   when [registering the project](setup/identity-and-project-bootstrap.md#register-a-project).
+5. The supervisor reads the role configuration at startup. Load the updated
+   file through the normal [host-agent service procedure](setup/linux-runner-host.md#host-agent-role-migration)
+   during a maintenance window after draining active adapters. After the
+   supervisor starts with the new configuration, re-enable any adapters you
+   drained for the restart. As the service user, enable the gate role.
+
+   ```bash
+   agent-host host-agent enable-role /etc/agent-runner/host-agent.json gate
+   agent-host host-agent inventory /etc/agent-runner/host-agent.json
+   ```
+
+   Check the supervisor journal for `role=gate adapter started`. Read the
+   gate runner's capability detail from the shared host registry
+   (`GET /api/v1/management/remote-hosts`). Confirm that `gate-executor`,
+   `gate:post-merge`, `gate:git`, and `gate:source-bundle` are fresh and ready.
+
+### Switch one project, record the pass, and roll back
+
+1. On the Studio API, apply `RemoteGate__Transport=canary` and
+   `RemoteGate__ClaimedCanaryProjects=<Studio project name>`. Set only that
+   project. Apply the deployment configuration through the usual service
+   rollout. A project name containing spaces cannot be expressed in this list,
+   which splits on commas, semicolons and spaces. Use a project whose configured
+   name can be represented exactly.
+2. Run the project's normal merge into its integration branch with a
+   build/test gate that executes verification. In the Studio API log, look for
+   `gate_transport_selected` with `mode=canary route=Claimed reason=claimed-canary`,
+   followed by `claimed_gate_subject_created`. Use its subject ID to read
+   `GET /api/v1/gates/subjects/{subjectId}` with the installation's authorized
+   service access. Confirm the terminal phase is `passed`, the tested SHA
+   equals the expected SHA, the attempt names the intended executor, and the
+   report proves the plan, policy, HEAD and downloaded bundle. A cached verdict
+   or skipped gate supplies no new claimed pass.
+3. Read the Studio API's durable
+   `<local-state-root>/agentstudio/instances/<instance-key>/claimed-gate-canary/claimed-gate-canary.jsonl`.
+   Match the project, gate ID, subject ID, tested SHA, executor and time. A row
+   is written only for an OK claimed verdict with complete receipt evidence,
+   including start and completion times, expected and tested SHAs, executor,
+   gate and run IDs, profile digest, pipeline definition version and toolchain.
+   The pass count is installation-wide and includes existing rows. Confirm the
+   configured count has been met and verify a new row for this cohort before
+   promoting.
+4. Apply `RemoteGate__Transport=claimed` when ready to route all supported
+   verification gates through the selector. Check for `mode=claimed route=Claimed
+   reason=claimed`. `bridge_retirement_ready=true` also requires zero bridge
+   invocations in flight. Before this promotion, verify project policy and
+   executor readiness for every project that will use the selector.
+5. To roll back, apply `RemoteGate__Transport=bridge` and check that the next
+   gate logs `route=Bridge`. Gates dispatched before a switch finish through
+   their original path. If removing the adapter from service as well, allow
+   already queued claimed work to settle before running
+   `agent-host host-agent drain-role /etc/agent-runner/host-agent.json gate`
+   as the service user. Exit 0 means the role is disabled. Exit 3 leaves the
+   claim barrier in place while reconciliation or execution is pending. Run
+   `enable-role` after a successful drain to return the adapter to service.
+   The post-merge scheduler can choose a connected gate host even in bridge
+   mode. After drain its last registration can remain fresh for up to three
+   minutes.
+
+### Settings for the gate rollout
+
+| Setting | Default | Who changes it |
+|---|---|---|
+| Join request `serverUrl`, `runnerName`, `role` | Required. Use `role=gate`. | Installation owner. |
+| `host-agent.json` `gate` | Absent. A configured role remains disabled until explicitly enabled. | Host administrator configures it. The host service user runs the role commands. |
+| `gate.environmentFile`, `gate.homeDirectory`, `gate.additionalEnvironmentFiles` | First two required when configured. Additional files default to none. | Host administrator. |
+| `RUNNER_ID`, `RUNNER_NAME`, `RUNNER_HOSTNAME` | Machine-derived runner ID, `agent-runner-01`, machine name. Set the issued ID and the existing host identity explicitly. | Host administrator. |
+| `RUNNER_ROLE` | `coding` for a standalone runner. The supervisor sets `gate` for this child. | Set by the supervisor for managed adapters. |
+| `RUNNER_SERVER_URL`, `RUNNER_AUTH_TOKEN_FILE` | `http://127.0.0.1:5030`, unset. Use the installation URL and protected role credential. | Host administrator. |
+| `RUNNER_WORKDIR`, `RUNNER_REVIEW_WORKDIR`, `RUNNER_STATE_DIR` | `agent-runner-work` and `agent-review-work` under the temporary directory, and `.runner-state` in the work directory. Set dedicated persistent paths for the adapter. | Host administrator. |
+| `RUNNER_DRAIN_TIMEOUT_SECONDS` | 3600 seconds. | Host administrator. |
+| Host project policy | No project on a newly authenticated host. | Owner in Execution Hosts. |
+| `TaskServer:BaseUrl` | Unset. Required on the Studio API for either claimed transport mode. | Studio API deployment administrator. |
+| `RemoteGate:Transport` | `bridge`. Accepts `bridge`, `canary`, `claimed`. | Studio API deployment administrator. |
+| `RemoteGate:ClaimedCanaryProjects` | Empty. Only matching projects enter the canary. | Studio API deployment administrator. |
+| `RemoteGate:ClaimedCanaryRequiredPasses` | 1. Clamped to 1–100. | Studio API deployment administrator. |
+| `BatchGate:Execution` | `bridge`. Separate `bridge` or `claimed` switch. Leave it at its existing value for the merge canary. | Studio API deployment administrator. |
+| `TaskServer:GateAdmissionMode` | `slot`. The separate `canary` and `grant` modes use host grants. Leave the installed mode in place for the merge canary. | Task Server deployment administrator. |
+| `RemoteGate:SshHost`, `RemoteGate:WorkerPath` | Unset. Both must be configured for SSH bridge fallback. | Studio API deployment administrator. |
+| `RUNNER_POST_MERGE_STATE_URL` | Unset. The role uses `RUNNER_SERVER_URL` for post-merge state unless a separate Studio API URL is configured here. | Host administrator. |
+
+For ASP.NET environment configuration, replace colons in setting names with
+double underscores. The local state root defaults to the Studio API process's
+per-user local application data directory. The deployment administrator can
+override it with the absolute path `AGENT_STUDIO_LOCAL_STATE_ROOT`. Look up
+`<instance-key>` using the effective workspace and content root described by
+[`BatchGateStorageRoot`](../../backend/Features/Pipeline/BatchGate/BatchGateStorageRoot.cs).
+
 ## Remote build/test gate capacity
 
 The SSH gate worker uses `RemoteGate:GateSlots` numbered file locks on the gate

@@ -117,7 +117,7 @@ public static class RunnerRouteAuthorization
 
     public static TaskDto LifecycleOnly(TaskDto task) => task with { Title = string.Empty, Body = null };
 
-    /// <summary>The claim role check of a coding or review claim route, or null when admitted.</summary>
+    /// <summary>The credential role check of a claim route, or null when admitted.</summary>
     public static async Task<IResult?> ClaimRefusalAsync(HttpContext context, TaskServerStore store, string claimRole)
     {
         if (await RunnerBindingAsync(context, store) is not { } binding) return null;

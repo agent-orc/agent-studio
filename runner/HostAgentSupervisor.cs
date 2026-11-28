@@ -1,6 +1,8 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -12,7 +14,8 @@ public sealed record HostAgentConfiguration(
     string StateDirectory,
     HostAgentRoleConfiguration Coding,
     HostAgentRoleConfiguration Review,
-    HostAgentRoleConfiguration? Post = null);
+    HostAgentRoleConfiguration? Post = null,
+    HostAgentRoleConfiguration? Gate = null);
 public sealed record HostAgentRoleState(
     bool Enabled,
     string RunnerId,
@@ -32,8 +35,8 @@ public sealed record HostAttemptInventoryEntry(
 public sealed record HostAttemptInventory(DateTime ObservedAtUtc, IReadOnlyList<HostAttemptInventoryEntry> Attempts);
 
 /// <summary>
-/// One OS-supervised host service owns the coding and review adapters and,
-/// when configured, the DP-S8 post adapter. Each
+/// One OS-supervised host service owns the coding and review adapters and
+/// the optional post and gate adapters. Each
 /// adapter runs in a child process to preserve its own CLI home and existing
 /// Task Server registration, renewal, report, and crash recovery semantics.
 /// The host inventory is a projection of those durable role records, never a
@@ -42,26 +45,31 @@ public sealed record HostAttemptInventory(DateTime ObservedAtUtc, IReadOnlyList<
 public static class HostAgentSupervisor
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private static readonly string[] BaseRoles = ["coding", "review"];
-
-    private static string[] RolesOf(HostAgentConfiguration config)
-        => config.Post is null ? BaseRoles : [.. BaseRoles, "post"];
+    private static IEnumerable<string> RolesOf(HostAgentConfiguration config)
+    {
+        yield return "coding";
+        yield return "review";
+        if (config.Post is not null) yield return "post";
+        if (config.Gate is not null) yield return "gate";
+    }
     [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static extern int SendUnixSignal(int pid, int signal);
 
     public static async Task<int> ExecuteAsync(string[] args, Action<string> log, CancellationToken ct)
     {
         if (args.Length < 2 || args[0] is not ("run" or "migrate-role" or "drain-role" or "enable-role" or "rollback-role" or "inventory"))
-            throw new ArgumentException("Usage: agent-host host-agent <run|migrate-role|drain-role|enable-role|rollback-role|inventory> <config.json> [coding|review|post]");
+            throw new ArgumentException("Usage: agent-host host-agent <run|migrate-role|drain-role|enable-role|rollback-role|inventory> <config.json> [coding|review|post|gate]");
         var operation = args[0];
         var config = JsonSerializer.Deserialize<HostAgentConfiguration>(File.ReadAllText(args[1]), Json)
                      ?? throw new InvalidDataException("Host agent configuration is empty.");
         var role = args.Length > 2 ? args[2] : null;
-        var roles = RolesOf(config);
+        var roles = RolesOf(config).ToArray();
         if (operation is not ("run" or "inventory") && !roles.Contains(role, StringComparer.Ordinal))
-            throw new ArgumentException("A configured coding, review or post role is required.");
+            throw new ArgumentException("A configured coding, review, post or gate role is required.");
         Directory.CreateDirectory(config.StateDirectory);
         var options = roles.ToDictionary(item => item, item => ParseRole(config, item), StringComparer.Ordinal);
+        if (options.TryGetValue("gate", out var gate))
+            ValidateGateIsolation(config, options, gate);
         if (options.TryGetValue("post", out var post)
             && (options.Values.Count(item => item.RunnerId == post.RunnerId) > 1
                 || options.Values.Count(item => Path.GetFullPath(item.StateDir) == Path.GetFullPath(post.StateDir)) > 1
@@ -86,6 +94,8 @@ public static class HostAgentSupervisor
             Path.Combine(config.StateDirectory, $"{role}.control.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var chosen = options[role!];
+        if (operation == "migrate-role" && role == "gate")
+            throw new ArgumentException("Use enable-role to start a newly enrolled gate adapter.");
         if (operation == "migrate-role" && role == "post")
             return EnablePostRole(config, chosen, log);
         if (operation == "migrate-role")
@@ -96,12 +106,87 @@ public static class HostAgentSupervisor
             if (drained != 0 || operation == "drain-role") return drained;
             // Only after the host adapter is gone may the legacy service claim again.
             if (role == "review") ReviewDrainGuard.ClearDrainState(chosen.StateDir);
-            else if (role == "post") HostRoleDrainControl.Clear(chosen.StateDir, role);
+            else if (role is "post" or "gate") HostRoleDrainControl.Clear(chosen.StateDir, role);
             else CodingDrainGuard.Clear(chosen.StateDir);
-            log($"role={role} rollback ready; start the old role service explicitly");
+            log(role == "gate"
+                ? "role=gate rollback ready"
+                : $"role={role} rollback ready; start the old role service explicitly");
             return 0;
         }
         return EnableRole(config, role!, chosen, log);
+    }
+
+    private static void ValidateGateIsolation(HostAgentConfiguration config,
+        IReadOnlyDictionary<string, RunnerOptions> options, RunnerOptions gate)
+    {
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var gateState = ResolveStateDirectory(gate.StateDir);
+        var gateIdentity = OperatingSystem.IsLinux() ? ReadLinuxStateDirectoryIdentity(gateState) : default;
+        bool SharesGateState(string path)
+        {
+            var resolved = ResolveStateDirectory(path);
+            return pathComparer.Equals(gateState, resolved)
+                || OperatingSystem.IsLinux() && gateIdentity == ReadLinuxStateDirectoryIdentity(resolved);
+        }
+
+        if (SharesGateState(config.StateDirectory)
+            || options.Any(item => item.Key != "gate" && (item.Value.RunnerId == gate.RunnerId
+                || SharesGateState(item.Value.StateDir)))
+            || !string.Equals(gate.Hostname, options["coding"].Hostname, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(gate.ServerUrl, options["coding"].ServerUrl, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The gate adapter needs its own runner identity and state directory on the same host and Task Server.");
+    }
+
+    private static (uint Major, uint Minor, ulong Inode, string Suffix) ReadLinuxStateDirectoryIdentity(string path)
+    {
+        const int currentDirectory = -100; // AT_FDCWD
+        const int noEntry = 2; // ENOENT
+        const uint inodeAndType = 0x101; // STATX_INO | STATX_TYPE
+        var missing = new Stack<string>();
+        var candidate = path;
+        while (true)
+        {
+            if (LinuxFileMetadata.Read(currentDirectory, candidate, 0, inodeAndType, out var metadata) == 0)
+            {
+                if ((metadata.Mask & inodeAndType) != inodeAndType || (metadata.Mode & 0xf000) != 0x4000)
+                    throw new IOException($"Could not establish the identity of state directory '{path}'.");
+                // Bind mounts share a device and inode even when their mount IDs differ.
+                return (metadata.DeviceMajor, metadata.DeviceMinor, metadata.Inode, string.Join('/', missing));
+            }
+
+            var error = Marshal.GetLastPInvokeError();
+            var parent = Path.GetDirectoryName(candidate);
+            if (error != noEntry || parent is null)
+                throw new IOException($"Could not inspect state directory '{path}'.", new Win32Exception(error));
+            // New state directories share an identity if the same path would be
+            // created under two names for an existing ancestor.
+            missing.Push(Path.GetFileName(candidate));
+            candidate = parent;
+        }
+    }
+
+    private static string ResolveStateDirectory(string path, int linksRemaining = 40)
+    {
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var parent = Path.GetDirectoryName(fullPath);
+        if (parent is null) return fullPath;
+
+        // Resolve the parent first so aliases compare equal even before the state directory exists.
+        var candidate = Path.Combine(ResolveStateDirectory(parent, linksRemaining), Path.GetFileName(fullPath));
+        FileSystemInfo? target;
+        try
+        {
+            target = Directory.ResolveLinkTarget(candidate, returnFinalTarget: false);
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return candidate;
+        }
+
+        if (target is null) return candidate;
+        if (linksRemaining == 0)
+            throw new IOException($"Too many symbolic links in state directory '{path}'.");
+        return ResolveStateDirectory(target.FullName, linksRemaining - 1);
     }
 
     private static RunnerOptions ParseRole(HostAgentConfiguration config, string role)
@@ -119,7 +204,9 @@ public static class HostAgentSupervisor
         {
             "coding" => config.Coding,
             "review" => config.Review,
-            _ => config.Post ?? throw new InvalidOperationException("The post role is not configured."),
+            "post" when config.Post is not null => config.Post,
+            "gate" when config.Gate is not null => config.Gate,
+            _ => throw new InvalidOperationException($"The {role} role is not configured."),
         };
         if (!Path.IsPathFullyQualified(roleConfig.HomeDirectory))
             throw new InvalidDataException($"{role} home directory must be absolute.");
@@ -167,13 +254,16 @@ public static class HostAgentSupervisor
             while (!ct.IsCancellationRequested)
             {
                 var state = ReadState(config);
-                foreach (var role in RolesOf(config))
+                foreach (var role in options.Keys)
                 {
                     var enabled = state.Roles.GetValueOrDefault(role);
                     if (enabled is null || !enabled.Enabled) continue;
                     ValidateRoleState(role, enabled, options[role]);
-                    if (HostRoleDrainControl.ReadRequest(options[role].StateDir, role) is not null
-                        || releaseHeld.Contains(role)
+                    if (HostRoleDrainControl.ReadRequest(options[role].StateDir, role) is { } drain
+                        && (role != "gate" || HostRoleDrainControl.ReadAcknowledgement(options[role].StateDir, role)
+                            is { ActiveSlots: 0 } ack && ack.Id == drain.Id))
+                        continue;
+                    if (releaseHeld.Contains(role)
                         || retryAfter.GetValueOrDefault(role) > DateTime.UtcNow)
                         continue;
                     if (children.TryGetValue(role, out var existing) && !existing.HasExited) continue;
@@ -309,11 +399,19 @@ public static class HostAgentSupervisor
     private static int EnableRole(HostAgentConfiguration config, string role, RunnerOptions options, Action<string> log)
     {
         var state = ReadState(config);
-        if (!state.Roles.TryGetValue(role, out var disabled))
+        if (!state.Roles.TryGetValue(role, out var disabled) && role != "gate")
             throw new InvalidOperationException($"{role} has not completed old-daemon migration.");
+        disabled ??= new HostAgentRoleState(false, options.RunnerId, options.StateDir, null, null, DateTime.UtcNow);
         ValidateRoleState(role, disabled, options);
+        if (role == "gate" && disabled.Enabled)
+        {
+            if (HostRoleDrainControl.ReadRequest(options.StateDir, role) is not null)
+                throw new InvalidOperationException("Finish the gate drain before enabling the adapter again.");
+            return 0;
+        }
         if (CaptureRoleInventory(role, options).Count != 0)
             throw new InvalidOperationException($"{role} still has persisted attempts; reconcile before enabling.");
+        if (role == "gate") Directory.CreateDirectory(options.StateDir);
         HostRoleDrainControl.Clear(options.StateDir, role);
         UpdateState(config, current => current.Roles[role] = disabled with
         {
@@ -340,7 +438,7 @@ public static class HostAgentSupervisor
 
     private static (string? Id, int? Pid, int Active) LegacyAcknowledgement(string role, string stateDir)
     {
-        if (role == "post") return (null, null, 0);
+        if (role is "post" or "gate") return (null, null, 0);
         if (role == "review")
         {
             var ack = ReviewDrainGuard.ReadDrainAcknowledgement(stateDir);
@@ -362,6 +460,12 @@ public static class HostAgentSupervisor
 
     private static IReadOnlyList<HostAttemptInventoryEntry> CaptureRoleInventory(string role, RunnerOptions options)
     {
+        if (role == "gate")
+            return RemoteGateDaemon.ClaimPaths(options.StateDir)
+                .Select(RemoteGateDaemon.ReadPersistedClaim).OfType<GateClaimResponse>()
+                .Select(claim => new HostAttemptInventoryEntry(role, claim.Attempt!.AttemptId,
+                    claim.Lease!.LeaseId, claim.Lease.Fence, claim.Lease.AuthorityEpoch, claim.Attempt.State, null))
+                .ToArray();
         if (role == "post")
             return PostWorkDaemon.ReadPersistedClaim(options.StateDir) is { } post
                 ? [new HostAttemptInventoryEntry(role, post.AttemptId, post.LeaseId, post.Fence,

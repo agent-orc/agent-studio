@@ -94,7 +94,86 @@ public sealed class HostAgentSupervisorTests : IDisposable
         Assert.False(state.Roles.ContainsKey("coding"));
     }
 
-    private string CreateConfiguration(bool withPost = false)
+    [Theory]
+    [InlineData("RUNNER_ID=coding-id")]
+    [InlineData("RUNNER_STATE_DIR=coding-state")]
+    [InlineData("RUNNER_HOSTNAME=another-host")]
+    [InlineData("RUNNER_SERVER_URL=http://127.0.0.1:5031")]
+    public async Task Gate_requires_a_distinct_identity_and_state_on_the_same_host_and_server(string overrideSetting)
+    {
+        var config = CreateConfiguration(withGate: true);
+        if (overrideSetting.StartsWith("RUNNER_STATE_DIR=", StringComparison.Ordinal))
+            overrideSetting = $"RUNNER_STATE_DIR={Path.Combine(_root, "coding-state")}";
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [overrideSetting]);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["enable-role", config, "gate"], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "host-state", "roles.json")));
+    }
+
+    [Theory]
+    [InlineData("coding-state")]
+    [InlineData("review-state")]
+    [InlineData("post-state")]
+    [InlineData("host-state")]
+    public async Task Gate_rejects_shared_state_with_a_trailing_directory_separator(string sharedDirectory)
+    {
+        var config = CreateConfiguration(withPost: true, withGate: true);
+        var alias = Path.Combine(_root, sharedDirectory) + Path.DirectorySeparatorChar;
+
+        await AssertGateStateAliasRejectedAsync(config, alias);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gate_rejects_state_shared_through_a_symbolic_link(bool linkIsParent)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var config = CreateConfiguration(withGate: true);
+        var codingState = Path.Combine(_root, "coding-state");
+        var link = Path.Combine(_root, "alias");
+        // The coding state may not have been created yet, even when its parent is linked.
+        Directory.CreateSymbolicLink(link, linkIsParent ? _root : "coding-state");
+
+        await AssertGateStateAliasRejectedAsync(config, linkIsParent ? Path.Combine(link, "coding-state") : link);
+        Assert.False(Directory.Exists(codingState));
+    }
+
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    public async Task Gate_rejects_state_shared_through_a_linux_bind_mount()
+    {
+        const string source = "/run/systemd/inaccessible/dir";
+        const string alias = "/run/credentials";
+        Skip.IfNot(OperatingSystem.IsLinux()
+            && Directory.Exists(source)
+            && File.ReadLines("/proc/self/mountinfo").Any(line =>
+                line.Contains(" /systemd/inaccessible/dir /run/credentials ", StringComparison.Ordinal)),
+            "Requires the systemd credentials bind mount.");
+
+        var config = CreateConfiguration(withGate: true);
+        await File.AppendAllLinesAsync(Path.Combine(_root, "coding.env"), [$"RUNNER_STATE_DIR={source}"]);
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [$"RUNNER_STATE_DIR={alias}"]);
+
+        // Inventory exercises the same validation as enable without writing to either mount path.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["inventory", config], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+    }
+
+    private async Task AssertGateStateAliasRejectedAsync(string config, string alias)
+    {
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [$"RUNNER_STATE_DIR={alias}"]);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["enable-role", config, "gate"], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "host-state", "roles.json")));
+    }
+
+    private string CreateConfiguration(bool withPost = false, bool withGate = false)
     {
         Directory.CreateDirectory(_root);
         var codingFile = Path.Combine(_root, "coding.env");
@@ -128,11 +207,23 @@ public sealed class HostAgentSupervisorTests : IDisposable
             $"RUNNER_STATE_DIR={Path.Combine(_root, "post-state")}",
         ]);
         var config = Path.Combine(_root, "host-agent.json");
+        var gateFile = Path.Combine(_root, "gate.env");
+        if (withGate)
+            File.WriteAllLines(gateFile,
+            [
+                "RUNNER_SERVER_URL=http://127.0.0.1:5030",
+                "RUNNER_ID=gate-id",
+                "RUNNER_HOSTNAME=one-host",
+                $"RUNNER_WORKDIR={Path.Combine(_root, "gate-work")}",
+                $"RUNNER_REVIEW_WORKDIR={Path.Combine(_root, "gate-review-work")}",
+                $"RUNNER_STATE_DIR={Path.Combine(_root, "gate-state")}",
+            ]);
         File.WriteAllText(config, JsonSerializer.Serialize(new HostAgentConfiguration(
             Path.Combine(_root, "host-state"),
             new HostAgentRoleConfiguration(codingFile, Path.Combine(_root, "coding-home")),
             new HostAgentRoleConfiguration(reviewFile, Path.Combine(_root, "review-home")),
-            withPost ? new HostAgentRoleConfiguration(postFile, Path.Combine(_root, "post-home")) : null)));
+            withPost ? new HostAgentRoleConfiguration(postFile, Path.Combine(_root, "post-home")) : null,
+            withGate ? new HostAgentRoleConfiguration(gateFile, Path.Combine(_root, "gate-home")) : null)));
         return config;
     }
 }
