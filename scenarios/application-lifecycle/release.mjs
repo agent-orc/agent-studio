@@ -3,13 +3,21 @@ import { StepFailure } from '../../scripts/release/product-scenario/runner.mjs';
 export async function runFixtureRelease(step, ctx, record, site) {
   const readEnvironments = () => ctx.owner.environments(ctx.state.project.name);
   async function deploymentView(kind, artifacts) {
-    const view = await readEnvironments();
+    let view = await readEnvironments();
     const target = view.environments.find(item => item.declaration.kind === kind);
     const job = view.jobs.find(item => item.status === 'queued' && item.environmentId === target?.declaration.id
       && artifacts.includes(item.artifact));
     if (!job) return view;
-    record.note(kind + 'Job', await site.deploy(job.environmentId, job.artifact));
-    return readEnvironments();
+    do {
+      const result = await site.deployNext();
+      view = await readEnvironments();
+      if (!result) break;
+      if (result.job === job.id) {
+        record.note(kind + 'Job', result);
+        break;
+      }
+    } while (view.jobs.some(item => item.id === job.id && item.status === 'queued'));
+    return view;
   }
 
   if (ctx.state.preview) return step.run(ctx, record, { deploymentView });
