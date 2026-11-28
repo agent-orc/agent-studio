@@ -421,6 +421,54 @@ public sealed class PerCardReviewPlanTests : IDisposable
     }
 
     [Theory]
+    [InlineData("FullyQualifiedName~Example.SelectedTests")]
+    [InlineData("Category=Selected")]
+    [InlineData("(Category!=MachineBound)&(FullyQualifiedName~Example.SelectedTests)")]
+    [InlineData("Category!=ReviewFlaky")]
+    public void Fixed_checks_preserve_explicitly_filtered_declared_commands(string filter)
+    {
+        ReviewBaseInventory(mapped: false);
+        var declaredCommand = BackendTest.Replace("Category!=MachineBound", $"\"{filter}\"", StringComparison.Ordinal);
+        var definition = File.ReadAllText(Path.Combine(_repo, ".agent-studio/project.yml"));
+        Write(".agent-studio/project.yml", definition.Replace(BackendTest, declaredCommand, StringComparison.Ordinal));
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var retained = verify.Commands.Single(command => command.Command == declaredCommand);
+
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([retained], new TestSelectionAudit()), ["backend/Changed.cs"]);
+
+        var remaining = Assert.Single(selected.Commands, command => command.Kind == VerifyCommandKind.Test
+            && command.TestScope != ReviewBaseChecks.Scope);
+        Assert.Contains($"({filter})", remaining.Command);
+        Assert.Contains("Category!=Guard", remaining.Command);
+        Assert.Contains("Category!=ReviewBase", remaining.Command);
+        Assert.Contains(TestSelectionPlanner.Describe(remaining), selected.Audit.SelectedCommands);
+        Assert.Empty(selected.Audit.AttemptedTestCommands);
+    }
+
+    [Theory]
+    [InlineData("FullyQualifiedName~Example.SelectedTests")]
+    [InlineData("Category=Selected")]
+    public void Fast_mapped_review_preserves_explicitly_filtered_declared_commands(string filter)
+    {
+        ReviewBaseInventory(mapped: true);
+        var declaredCommand = BackendTest.Replace("Category!=MachineBound", $"\"{filter}\"", StringComparison.Ordinal);
+        var definition = File.ReadAllText(Path.Combine(_repo, ".agent-studio/project.yml"));
+        Write(".agent-studio/project.yml", definition.Replace(BackendTest, declaredCommand, StringComparison.Ordinal));
+        Git("add", ".");
+        Git("commit", "-qm", "filtered review routine");
+        var sha = Commit("backend/FooService.cs");
+
+        var plan = Build(Settings(TestingStrategies.Fast), sha, "backend/FooService.cs");
+
+        var shells = plan.Commands.SelectMany(command => command.Arguments).ToArray();
+        Assert.Contains(shells, command => command.Contains($"({filter})", StringComparison.Ordinal)
+            && command.Contains("Category!=Guard", StringComparison.Ordinal)
+            && command.Contains("Category!=ReviewBase", StringComparison.Ordinal));
+        Assert.Single(shells, command => command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void Same_project_declared_filter_variants_do_not_overwrite_replacement_coverage(bool reverse)
