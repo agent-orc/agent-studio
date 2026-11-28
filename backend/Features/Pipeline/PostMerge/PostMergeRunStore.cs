@@ -125,12 +125,14 @@ public sealed class PostMergeRunStore
         lock (_gate)
         {
             if (run.Commands is null || run.Verdicts is null
-                || run.Commands.Any(string.IsNullOrWhiteSpace)
-                || run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count)
+                || run.Commands.Any(string.IsNullOrWhiteSpace))
                 return null;
             var state = ReadLocked(projectId);
             if (state.Runs.FirstOrDefault(item => item.Id == run.Id) is { } recorded)
                 return JsonSerializer.Serialize(recorded, Json) == JsonSerializer.Serialize(run, Json) ? state : null;
+            // Preserve exact replay of receipts accepted before distinct-plan validation.
+            if (run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count)
+                return null;
             var active = state.ActiveRun;
             var custody = ReadCustodyLocked(projectId);
             var now = observedAt ?? run.StartedAtUtc;
@@ -248,6 +250,7 @@ public sealed class PostMergeRunStore
             if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
                 || !int.TryParse(settings[(markerIndex + marker.Length)..^12], out var index)
                 || index < 0 || index >= count
+                || settings[(markerIndex + marker.Length)..] != index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".runsettings"
                 || !shardIds.Add((original, index))) return false;
             coverage[original].Add(verdict);
         }
