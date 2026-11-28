@@ -3799,6 +3799,13 @@
             <code>WaitForCapabilityRecovery</code>. A new subscription window reopens model probing.
             The next ready advertisement clears the recorded dispatch wait.</td>
         </tr>
+        <tr id="case-result-summary-format-and-quota">
+          <td>2026-11-27 to 2026-11-28</td>
+          <td><code>AGT-4447</code><br><span class="small">result-summary-format-and-quota</span></td>
+          <td>No core CLI crashed. AGT-4395 found six paid format repetitions on 27 November and 160 route refusals before provider start on 28 November.</td>
+          <td>Malformed replies repeated the same prompt. Route admission happened after rendering, and quota refusals could enter the summary retry budget.</td>
+          <td>A format rejection leaves the prior Result intact. Quota waits retain one recoverable pending summary for the current evidence. On capacity recovery, successful finalization reaches <code>Ready</code> with a fingerprint-bound Result and assessment.</td>
+        </tr>
       </tbody>
     </table>
 

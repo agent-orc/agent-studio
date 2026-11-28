@@ -27,6 +27,7 @@ public sealed class RemoteCliOneShotTests
         var oneShot = new RemoteCliOneShot("codex", new ClientFactory(client), config);
         var result = await oneShot.RunAsync(new("codex", "gpt-6-sol", "Summarize this card."));
         Assert.False(result.Ok);
+        Assert.True(result.HostWaiting);
         Assert.Equal("waiting for a host with model-acceptance:codex:gpt-6-sol", result.Error);
         Assert.Equal("/api/v1/one-shot-jobs", handler.Path);
         Assert.Contains("Summarize this card.", handler.Body);

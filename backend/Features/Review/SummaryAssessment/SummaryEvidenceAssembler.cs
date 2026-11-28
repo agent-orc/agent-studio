@@ -149,8 +149,7 @@ public static class SummaryEvidenceAssembler
         var result = HeaderField(head, "Result");
         var filesRaw = HeaderField(head, "Files");
         int? files = filesRaw is not null && Regex.Match(filesRaw, @"\d+") is { Success: true } m
-            ? int.Parse(m.Value, System.Globalization.CultureInfo.InvariantCulture)
-            : null;
+            && int.TryParse(m.Value, System.Globalization.CultureInfo.InvariantCulture, out var count) ? count : null;
         var tests = HeaderField(head, "Tests");
         return result is null && files is null && tests is null ? null : new SummaryStatusHeader(result, files, tests);
     }

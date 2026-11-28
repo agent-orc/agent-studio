@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Review;
 
@@ -39,10 +40,8 @@ public static class SummaryAssessmentStore
     public static void Write(string jobFolder, SummaryAssessment assessment, string statusMarkdown)
     {
         var target = PathFor(jobFolder);
-        var temp = target + ".tmp";
         var bound = assessment with { StatusFingerprint = Fingerprint(statusMarkdown) };
-        File.WriteAllText(temp, JsonSerializer.Serialize(bound, Options));
-        File.Move(temp, target, overwrite: true);
+        new AtomicJsonFileWriter().ReplaceExisting(target, JsonSerializer.Serialize(bound, Options));
     }
 
     /// <summary>

@@ -709,7 +709,7 @@ public sealed class RemoteTaskRunner
             // must finish while this attempt is leased: settling first turns a
             // later upload into a fenced 409 and loses otherwise eligible
             // evidence. Transfer faults remain non-fatal for the code handoff.
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, teardown.ResultSha);
 
             if (outbox is not null)
             {
@@ -983,7 +983,7 @@ public sealed class RemoteTaskRunner
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, stopTeardown.ResultSha);
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -1125,7 +1125,7 @@ public sealed class RemoteTaskRunner
                         && artifactManifest is not null)
                     {
                         outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
-                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, teardown.ResultSha);
                         await CompleteOrReconcileAsync(
                             taskKey,
                             lease,
@@ -2016,7 +2016,8 @@ public sealed class RemoteTaskRunner
         RunLeaseInfoDto lease,
         ArtifactTransferPlan? plan,
         LogShipper shipper,
-        DurableRunOutbox? outbox)
+        DurableRunOutbox? outbox,
+        string? resultSha)
     {
         if (plan is null) return;
         var issues = plan.Skipped.ToList();
@@ -2106,7 +2107,8 @@ public sealed class RemoteTaskRunner
                 Fence: lease.FencingToken,
                 AuthorityEpoch: lease.AuthorityEpoch,
                 IdempotencyKey: $"artifact-finalize:{lease.AttemptId}:{plan.Manifest.Digest}",
-                FinalizeResult: true), CancellationToken.None);
+                FinalizeResult: true,
+                ResultSha: resultSha), CancellationToken.None);
             _log($"artifact result-document finalization task={taskKey} ResultDocumentStatus={finalization?.ResultDocumentStatus ?? "missing"}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

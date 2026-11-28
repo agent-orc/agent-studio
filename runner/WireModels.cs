@@ -481,7 +481,8 @@ public sealed record ArtifactIngestRequest(
     long? Fence = null,
     long? AuthorityEpoch = null,
     string? IdempotencyKey = null,
-    bool FinalizeResult = false);
+    bool FinalizeResult = false,
+    string? ResultSha = null);
 
 public sealed record ArtifactIngestResponse(
     string TaskKey,

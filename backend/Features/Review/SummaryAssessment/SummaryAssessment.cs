@@ -33,6 +33,8 @@ public sealed record SummaryAssessment
     /// </summary>
     public string? StatusFingerprint { get; init; }
 
+    public SummaryEvidenceVersion? EvidenceVersion { get; init; }
+
     public List<SummaryInconsistency> Inconsistencies { get; init; } = [];
 }
 

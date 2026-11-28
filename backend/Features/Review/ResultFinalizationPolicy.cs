@@ -72,6 +72,8 @@ public static class ResultFinalizationPolicy
     /// <summary>Longest reason text carried onto the wire and the card timeline.</summary>
     public const int MaxReasonChars = 300;
 
+    public const string SupersededResult = "The run result changed during summary generation.";
+
     private const string ExhaustedBudget = "summary retry budget exhausted";
 
     /// <summary>
@@ -113,6 +115,13 @@ public static class ResultFinalizationPolicy
     public static bool IsInputRefusal(string? error)
         => OrchestratorPromptBoundary.IsRefusal(error?.Trim());
 
+    public static bool IsWaitingForHost(string? error)
+        => error?.StartsWith("waiting for a host with ", StringComparison.Ordinal) == true;
+
+    public static bool IsUnretryable(string? error)
+        => IsInputRefusal(error) || error == SupersededResult
+            || error?.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal) == true;
+
     /// <summary>Trim and bound a free-form failure reason for wire + timeline use.</summary>
     public static string? Limit(string? reason)
     {
@@ -128,12 +137,14 @@ public static class ResultFinalizationPolicy
         TimelineSummary: $"Summary pending ({Humanize(reason)})",
         ScheduleRetry: true);
 
-    private static ResultAcknowledgementPlan Degraded(string error) => IsInputRefusal(error)
+    private static ResultAcknowledgementPlan Degraded(string error) => IsUnretryable(error)
         ? new(
             ResultSummaryDelivery.Degraded,
             CommitStatusDocument: false,
             ResultDocumentStatus: "degraded:" + error,
-            TimelineSummary: $"Summary degraded (input refused: {error})",
+            TimelineSummary: IsInputRefusal(error)
+                ? $"Summary degraded (input refused: {error})"
+                : $"Summary degraded ({error})",
             ScheduleRetry: false)
         : new(
             ResultSummaryDelivery.Degraded,
