@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 
 namespace AgentStudio.Registry;
 
@@ -9,6 +10,7 @@ namespace AgentStudio.Registry;
 /// </summary>
 public sealed class ProjectUrlReadinessService
 {
+    private const int MaxRedirects = 5;
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(2500);
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ProjectUrlReadinessService> _logger;
@@ -40,9 +42,8 @@ public sealed class ProjectUrlReadinessService
             return Finish(project, url, "offline", null, "unknown", "Project URL must use HTTP or HTTPS.", started);
         }
 
-        var ownsProcess = _processes?.Get(project.Id, url.Id) is { } process
-            && ProjectUrlProcessStates.IsActive(process.State);
-        if (ProjectUrlProbePolicy.Decide(url.Url, _networked, ownsProcess) == ProjectUrlProbeVerdict.LocalOnly)
+        if (ProjectUrlProbePolicy.Decide(url.Url, _networked, hostOwnsActiveProcess: false) == ProjectUrlProbeVerdict.LocalOnly
+            && ProjectUrlDestinationConnector.LocalPermission(project, url, _processes?.Get(project.Id, url.Id), target) is null)
             return Finish(project, url, ProjectUrlProbePolicy.LocalOnly, null, "unknown",
                 ProjectUrlProbePolicy.LocalOnlyDetail, started);
 
@@ -50,28 +51,46 @@ public sealed class ProjectUrlReadinessService
         timeout.CancelAfter(ProbeTimeout);
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, target);
-            request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (project.Id, url.Id));
-            request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
-            using var response = await _httpClientFactory.CreateClient("project-url-readiness")
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            using var client = _httpClientFactory.CreateClient("project-url-readiness");
+            for (var redirects = 0; ; redirects++)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, target);
+                request.Options.Set(ProjectUrlDestinationConnector.ProjectUrlOption, (project.Id, url.Id));
+                request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,*/*;q=0.8");
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
 
-            var statusCode = (int)response.StatusCode;
-            var (framePolicy, policyReason) = EvaluateFramePolicy(response, target, studioOrigin);
-            var kind = statusCode is >= 200 and < 300
-                ? framePolicy == "blocked" ? "frame-blocked" : "healthy"
-                : "http-error";
-            var result = Finish(project, url, kind, statusCode, framePolicy, policyReason, started);
-            if (!inspectBuildStamp || !response.IsSuccessStatusCode) return result;
-            try
-            {
-                return result with { Commit = await BuildStamp(response, timeout.Token) };
-            }
-            catch (Exception ex) when (ex is IOException or HttpRequestException
-                || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            {
-                _logger.LogDebug(ex, "Build stamp unavailable for project URL {UrlId}", url.Id);
-                return result;
+                var statusCode = (int)response.StatusCode;
+                if (IsRedirect(response.StatusCode))
+                {
+                    if (!Uri.TryCreate(target, response.Headers.Location, out var next)
+                        || !ProjectUrlDestinationConnector.SameOrigin(target, next) || next.UserInfo.Length != 0)
+                        return Finish(project, url, "http-error", statusCode, "unknown",
+                            "The readiness probe refused the redirect destination.", started);
+                    if (redirects == MaxRedirects)
+                        return Finish(project, url, "http-error", statusCode, "unknown",
+                            "The readiness probe reached its redirect limit.", started);
+
+                    // The shared handler opens a checked connection for each request.
+                    target = next;
+                    continue;
+                }
+
+                var (framePolicy, policyReason) = EvaluateFramePolicy(response, target, studioOrigin);
+                var kind = response.IsSuccessStatusCode
+                    ? framePolicy == "blocked" ? "frame-blocked" : "healthy"
+                    : "http-error";
+                var result = Finish(project, url, kind, statusCode, framePolicy, policyReason, started);
+                if (!inspectBuildStamp || !response.IsSuccessStatusCode) return result;
+                try
+                {
+                    return result with { Commit = await BuildStamp(response, timeout.Token) };
+                }
+                catch (Exception ex) when (ex is IOException or HttpRequestException
+                    || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogDebug(ex, "Build stamp unavailable for project URL {UrlId}", url.Id);
+                    return result;
+                }
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -83,6 +102,9 @@ public sealed class ProjectUrlReadinessService
             return Finish(project, url, "offline", null, "unknown", ex.Message, started);
         }
     }
+
+    private static bool IsRedirect(HttpStatusCode statusCode) => statusCode is HttpStatusCode.MovedPermanently
+        or HttpStatusCode.Redirect or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
 
     private static async Task<string?> BuildStamp(HttpResponseMessage response, CancellationToken token)
     {
