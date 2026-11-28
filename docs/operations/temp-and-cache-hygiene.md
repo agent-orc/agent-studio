@@ -385,11 +385,21 @@ authorize deletion. Links from the identity through the configured local state
 root disable instance cleanup. Rejected roots are logged before any sibling
 enumeration. Inspection and deletion use pinned directories: Linux opens every
 ancestor with `openat(O_NOFOLLOW | O_DIRECTORY)` and removes entries with
-`unlinkat` relative to the inspected parent descriptor; Windows directory
-handles deny rename until their children have been inspected and removed.
-Replacing a checked path with a link cannot redirect deletion. Platforms without
-this safe directory implementation skip instance cleanup and log
-`reason=unavailable-instance-anchor`.
+`unlinkat` relative to the inspected parent descriptor. A dedicated Linux
+thread uses [Landlock](https://kernel.org/doc/html/v6.15/userspace-api/landlock.html)
+removal rules layered over the pinned ancestors. The
+kernel denies deletion through a handle whose directory moves outside those
+authorized ancestors, including a moved instances anchor. Other host threads
+keep their existing permissions. Cleanup also verifies the original locations
+before mutation, and atomically claims each empty directory under a unique
+name before removal so a replacement at the original name is retained.
+An interrupted claim can leave a `.retention-<token>` directory; the same age
+and content checks apply to that directory on the next retention pass.
+Windows directory handles deny rename until their children have been inspected
+and removed. Platforms without the safe directory implementation skip instance
+cleanup and log `reason=unavailable-instance-anchor`. Linux kernels without
+enabled Landlock support (or with too few available policy layers for the root)
+retain instances and log `reason=unavailable-deletion-confinement`.
 `InstanceRetentionDays` is 14 days.
 It always keeps the current identity, every instance with a batch manifest,
 pending evidence, a persisted push reservation, or any unknown file. Only
