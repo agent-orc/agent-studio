@@ -147,6 +147,13 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("same-index")]
     [InlineData("wrong-command")]
     [InlineData("no-metadata")]
+    [InlineData("out-of-plan")]
+    [InlineData("fixed-out-of-plan")]
+    [InlineData("partial-out-of-plan")]
+    [InlineData("incomplete-settings")]
+    [InlineData("truncated-settings")]
+    [InlineData("empty-settings")]
+    [InlineData("empty-index")]
     public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
     {
         const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
@@ -178,6 +185,25 @@ public sealed class PostMergeRunStoreTests : IDisposable
             "wrong-command" => receipt with { Verdicts = [receipt.Verdicts[0], shard, second with
                 { Command = second.Command.Replace("tests.csproj", "other.csproj", StringComparison.Ordinal) }] },
             "no-metadata" => receipt with { Envelope = null },
+            "out-of-plan" or "fixed-out-of-plan" => receipt with
+            {
+                Verdicts = [receipt.Verdicts[0], shard, second with
+                    { Command = second.Command.Replace("shard-1.runsettings", "shard-2.runsettings", StringComparison.Ordinal) }],
+            },
+            "partial-out-of-plan" => receipt with
+            {
+                Status = "red", Verdicts = [receipt.Verdicts[0], second with
+                    { Command = second.Command.Replace("shard-1.runsettings", "shard-2.runsettings", StringComparison.Ordinal), ExitCode = 1 }],
+            },
+            "incomplete-settings" or "truncated-settings" or "empty-settings" or "empty-index" => receipt with
+            {
+                Verdicts = [receipt.Verdicts[0], shard with
+                {
+                    Command = command[..command.IndexOf(" --filter", StringComparison.Ordinal)]
+                        + " --settings '" + (evidence is "empty-settings" or "incomplete-settings" ? "" : evidence == "empty-index"
+                            ? "/post-merge-shards/shard-.runsettings" : "/post-merge-shards/shard-.x.runsettings") + (evidence == "incomplete-settings" ? "" : "'"),
+                }, second],
+            },
             _ => receipt,
         };
         if (evidence is not ("valid" or "fixed-valid"))

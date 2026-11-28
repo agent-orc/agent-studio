@@ -572,7 +572,30 @@ The Runner service posts start, terminal, and skip receipts to
 `/api/runner/post-merge/projects/{project}/runs`. `PostMergeRunStore` persists
 the exact tip, window range, command verdicts, timestamps, last green SHA,
 last completed window tip, and `developState` per project outside card folders.
-Only a matching active run can complete. Green advances last green; red keeps
+Terminal receipts must retain the active run's project, ID, kind, exact tip,
+start timestamp, and ordered command list. Green requires one verdict for each
+planned command, with no omitted, substituted, extra, or duplicate coverage.
+Red and inconclusive receipts may contain partial evidence, but every supplied
+verdict must belong to the original plan.
+
+Sharded verdicts may replace a planned `dotnet test ... --no-build` command when
+the start envelope's `shardPlan` declares that suite as `auto` or a fixed count.
+The terminal envelope supplies a count from 1 to 16, preserving a fixed start
+count, and `suiteSelection.suiteCommands` maps the suite ID to its original
+command. A mapping present at start must agree. Each verdict names the suite
+and uses the original command without its `--filter`, followed by
+`--settings '<directory>/post-merge-<run-id>/shard-<index>.runsettings'`.
+All shards for that command share a directory and have distinct indices in
+`0..count-1`. Green requires every index; partial red or inconclusive evidence
+must still use indices within the declared count. Malformed settings arguments
+are refused as receipt conflicts. The route returns HTTP 409 for plan or
+coverage conflicts and HTTP 400 for malformed or oversized receipt fields.
+Neither refusal advances green state or consumes the active claim.
+
+Exact terminal replay remains idempotent; changed replay conflicts. Legacy
+receipts without optional suite or envelope fields remain supported for exact
+command coverage, within the existing 64-command and 64-verdict bounds.
+Green advances last green; red keeps
 the previous green; an unchanged tip records a skip. The gate-economics row
 projects the state, last green SHA, nightly verdict, and red duration. The board
 header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red

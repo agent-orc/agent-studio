@@ -205,14 +205,15 @@ public sealed class PostMergeRunStore
             var bare = System.Text.RegularExpressions.Regex.Replace(original,
                 "\\s--filter(?:\\s+|=)(?:\"[^\"]*\"|'[^']*'|\\S+)", "").Trim();
             var prefix = bare + " --settings '";
-            if (!verdict.Command.StartsWith(prefix, StringComparison.Ordinal)
+            if (verdict.Command.Length <= prefix.Length
+                || !verdict.Command.StartsWith(prefix, StringComparison.Ordinal)
                 || !verdict.Command.EndsWith("'", StringComparison.Ordinal)) return false;
             var settings = verdict.Command[prefix.Length..^1].Replace('\\', '/');
             var marker = "/post-merge-" + active.Id + "/shard-";
             var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
             if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
                 || !int.TryParse(settings[(markerIndex + marker.Length)..^12], out var index)
-                || index < 0 || index >= ProjectTestSuite.MaxShards
+                || index < 0 || index >= count
                 || !shardIds.Add((original, index))) return false;
             coverage[original].Add(verdict);
         }
