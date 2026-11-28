@@ -42,11 +42,24 @@ public static class ReviewRepeatFilterPolicy
     public const int MaximumAssertionControls = 3;
 
     public static bool RequiresAssertionProof(ReviewCommandEvidenceDto candidate, ReviewCommandEvidenceDto repeat)
-        => candidate.InitialFailures is { Count: > 0 } initial
-            && repeat.InitialFailures is { Count: > 0 } repeated
-            && !initial.ToHashSet(StringComparer.Ordinal).SetEquals(repeated)
+    {
+        if (repeat is { ExitCode: 0, Signal: null }) return false;
+        var initial = (candidate.InitialFailures ?? []).Concat(candidate.NewFailures ?? [])
+            .Concat(candidate.PreExistingFailures ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        var repeated = repeat.InitialFailures;
+        var invocation = (candidate.FileName + " " + string.Join(' ', candidate.Arguments)).Replace('\\', '/');
+        var tool = Path.GetFileNameWithoutExtension(candidate.FileName.Replace('\\', '/'));
+        var dotnetTest = (tool.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            && candidate.Arguments.FirstOrDefault() == "test")
+            || invocation.Contains("dotnet test", StringComparison.OrdinalIgnoreCase);
+        var mixedBaseline = dotnetTest && candidate.BaselineExitCode is > 0
+            && initial.Except(candidate.PreExistingFailures ?? [], StringComparer.Ordinal).Any();
+        if (repeated is null or { Count: 0 } || (mixedBaseline && candidate.Diagnosis?.ChargesCard == true))
+            return mixedBaseline;
+        return (mixedBaseline || !initial.ToHashSet(StringComparer.Ordinal).SetEquals(repeated))
             && initial.Intersect(repeated, StringComparer.Ordinal)
                 .Except(candidate.PreExistingFailures ?? [], StringComparer.Ordinal).Any();
+    }
 
     public static bool HasCompleteAssertionProof(
         ReviewAssertionEvidenceDto proof, ReviewCommandEvidenceDto candidate,
@@ -60,6 +73,11 @@ public static class ReviewRepeatFilterPolicy
             || candidate.PreExistingFailures?.Contains(proof.Test, StringComparer.Ordinal) == true
             || proof.Repeat is not { Signal: null, ExitCode: > 0 and < 124 } repeat
             || proof.Control is not { Signal: null, ExitCode: 0 } control)
+            return false;
+        var clean = commands.FirstOrDefault(item => item.StepId == candidate.StepId
+            && item.Phase == "clean-repeat" && item.WorkspaceRole == "clean-repeat");
+        if (clean is not { Signal: null, ExitCode: > 0 and < 124 }
+            || clean.InitialFailures?.Contains(proof.Test, StringComparer.Ordinal) != true)
             return false;
         var baseline = commands.FirstOrDefault(item => item.StepId == candidate.StepId
             && item.Phase == "verification" && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)

@@ -288,9 +288,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             Assert.Equal() Failure: Strings differ
             Expected: "Value"
             Actual:   "{actual}"
-            Source: {workspace}/test.cs
+            Source: assertion value
               Stack Trace:
-               at {workspace}/test.cs:line 10
+               at Product.Tests.A() in {workspace}/test.cs:line 10
               Failed Product.Tests.B [1 ms]
               Error Message:
             {other}
@@ -325,7 +325,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         static string? Fingerprint(string value) => ReviewTestFailureAttribution.AssertionFingerprint(
             "/review", "verify", "Product.Tests.A", new(1,
                 "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure\n" + value
-                + "\n  Stack Trace:\n   at Product.Tests.A()", ""));
+                + "\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10", ""));
 
         var first = Fingerprint(firstValue);
         var repeat = Fingerprint(repeatValue);
@@ -340,6 +340,51 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("at asserted value one", "at asserted value two")]
+    [InlineData("Failed assertion one", "Failed assertion two")]
+    [InlineData("Passed assertion one", "Passed assertion two")]
+    [InlineData("Failed! assertion one", "Failed! assertion two")]
+    [InlineData("Test Run assertion one", "Test Run assertion two")]
+    [InlineData("Total tests: one", "Total tests: two")]
+    [InlineData("value one [FAIL]", "value two [FAIL]")]
+    [InlineData("\nvalue\n", "value")]
+    [InlineData("value\n", "value")]
+    [InlineData("/review/repository/value", "/review/baseline-clean-abc-123/value")]
+    [InlineData("\u001b[31mvalue\u001b[0m", "value")]
+    [InlineData("[xUnit.net asserted] value", "value")]
+    [InlineData("value\r\nnext", "value\nnext")]
+    public void Assertion_fingerprints_cannot_discard_message_content(string firstValue, string repeatValue)
+    {
+        static string? Fingerprint(string value) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1,
+                "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure\n" + value
+                + "\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10", ""));
+        var first = Fingerprint(firstValue);
+        var repeat = Fingerprint(repeatValue);
+        Assert.True(first is null || repeat is null || first != repeat,
+            "Distinct assertion messages must differ or remain explicitly unavailable.");
+    }
+
+    [Theory]
+    [InlineData("Assert.True() Failure", 10, "Assert.True() Failure", 11)]
+    [InlineData("\nAssert.True() Failure", 10, "Assert.True() Failure", 10)]
+    [InlineData("Assert.True() Failure\n", 10, "Assert.True() Failure", 10)]
+    [InlineData("Error Message:\nAssert.True() Failure", 10, "Assert.True() Failure", 10)]
+    public void Assertion_fingerprints_distinguish_assertion_sites_and_retain_message_whitespace(
+        string firstMessage, int firstLine, string repeatMessage, int repeatLine)
+    {
+        static string? Fingerprint(string message, int line) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1,
+                "  Failed Product.Tests.A [1 ms]\n  Error Message:\n" + message
+                + $"\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line {line}", ""));
+        var first = Fingerprint(firstMessage, firstLine);
+        var repeat = Fingerprint(repeatMessage, repeatLine);
+        Assert.NotNull(first);
+        Assert.NotNull(repeat);
+        Assert.NotEqual(first, repeat);
+    }
+
+    [Theory]
     [InlineData("Failed Product.Tests.Again [1 ms]")]
     [InlineData("Product.Tests.Again [FAIL]")]
     [InlineData("Failed Product.Tests.A(value: 1) [1 ms]")]
@@ -349,13 +394,73 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         static string? Fingerprint(string output) => ReviewTestFailureAttribution.AssertionFingerprint(
             "/review", "verify", "Product.Tests.A", new(1, output, ""));
         var other = otherHeading + "\n  Error Message:\nAssert.True() Failure\n  Stack Trace:\n   at Other()\n";
-        const string selected = "  Failed Product.Tests.A [2 ms]\n  Error Message:\nAssert.False() Failure\n";
+        const string selected = "  Failed Product.Tests.A [2 ms]\n  Error Message:\nAssert.False() Failure\n"
+            + "  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10\n";
 
         Assert.Null(Fingerprint(other));
         Assert.NotNull(Fingerprint(selected));
         Assert.Equal(Fingerprint(selected), Fingerprint(other + selected));
         Assert.Equal(Fingerprint(selected), Fingerprint(selected.Replace(
-            "Failed Product.Tests.A [2 ms]", "Product.Tests.A [FAIL]", StringComparison.Ordinal)));
+            "Failed Product.Tests.A [2 ms]", "Product.Tests.A [FAIL]", StringComparison.Ordinal)
+            .Replace("  Error Message:\n", "", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  Stack Trace:\n   at Product.Tests.A()")]
+    [InlineData("  Failed Product.Tests.B [1 ms]\nother assertion\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10")]
+    [InlineData("  Stack Trace:\nasserted content\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10")]
+    [InlineData("  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10\nTest Run Failed.\nasserted content\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 11")]
+    [InlineData("  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10\n  Passed Product.Tests.B [1 ms]\nasserted content\n  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 11")]
+    public void Assertion_fingerprints_require_unambiguous_diagnostics_and_source_location(string suffix)
+        => Assert.Null(ReviewTestFailureAttribution.AssertionFingerprint("/review", "verify", "Product.Tests.A",
+            new(1, "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.True() Failure\n" + suffix, "")));
+
+    [Fact]
+    public void Assertion_fingerprints_prefer_detailed_report_and_reject_duplicate_selected_blocks()
+    {
+        const string detailed = "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.True() Failure\n"
+            + "  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10\n";
+        static string? Fingerprint(string output, string error = "") => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1, output, error));
+        var expected = Fingerprint(detailed);
+        Assert.NotNull(expected);
+        Assert.Equal(expected, Fingerprint("[xUnit.net 00:00:01] Product.Tests.A [FAIL]\n"
+            + "[xUnit.net 00:00:01] brief assertion summary\n" + detailed));
+        Assert.Equal(expected, Fingerprint("", detailed));
+        Assert.Null(Fingerprint(detailed + detailed));
+        Assert.Null(Fingerprint(detailed, detailed));
+    }
+
+    [Fact]
+    public void Xunit_assertion_messages_keep_literal_error_labels_and_normalize_only_stack_sources()
+    {
+        static string? Fingerprint(string message, string workspace, int line) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1,
+                "[xUnit.net 00:00:01] Product.Tests.A [FAIL]\n" + string.Join('\n',
+                    (message + $"\n  Stack Trace:\n    {workspace}/test.cs({line},0): at Product.Tests.A()")
+                    .Split('\n').Select(item => "[xUnit.net 00:00:01] " + item)), ""));
+        var first = Fingerprint("Assert.True() Failure", "/review/repository", 10);
+        Assert.NotNull(first);
+        Assert.Equal(first, Fingerprint("Assert.True() Failure", "/review/baseline-clean-abc-123", 10));
+        Assert.NotEqual(first, Fingerprint("Assert.True() Failure", "/review/repository", 11));
+        Assert.NotEqual(first, Fingerprint("Error Message:\nAssert.True() Failure", "/review/repository", 10));
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\n\n")]
+    [InlineData("\n[xUnit.net 00:00:02] Finished: Product.Tests\n")]
+    [InlineData("\n  Passed Product.Tests.B [1 ms]\n")]
+    public void Assertion_fingerprints_ignore_stack_footer_framing(string footer)
+    {
+        const string diagnostic = "  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.True() Failure\n"
+            + "  Stack Trace:\n   at Product.Tests.A() in /review/repository/test.cs:line 10";
+        static string? Fingerprint(string output) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", new(1, output, ""));
+        var expected = Fingerprint(diagnostic);
+        Assert.NotNull(expected);
+        Assert.Equal(expected, Fingerprint(diagnostic + footer + "Test Run Failed.\n"));
     }
 
     [Theory]
@@ -377,6 +482,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [InlineData("different", "ReviewInfra")]
     [InlineData("different-duration", "ReviewInfra")]
     [InlineData("different-whitespace", "ReviewInfra")]
+    [InlineData("different-site", "ReviewInfra")]
+    [InlineData("missing-site", "ReviewInfra")]
     [InlineData("absent", "ReviewInfra")]
     [InlineData("aborted", "ReviewInfra")]
     [InlineData("unavailable", "ReviewInfra")]
@@ -433,6 +540,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                   different-whitespace) case "$PWD" in *baseline-clean-*) actual='a b';; *) actual='a  b';; esac;;
                 esac
                 printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual %s\n' "$actual"
+                line=10
+                [ 'CONTROL' = different-site ] && line=11
+                [ 'CONTROL' = missing-site ] && line=unknown
+                printf '  Stack Trace:\n   at Product.Tests.A() in %s/test.cs:line %s\n' "$PWD" "$line"
                 [ 'CONTROL' = aborted ] && printf 'Test Run Aborted\n'
                 exit 1
               fi
@@ -449,13 +560,14 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
               [ 'CONTROL' = different-duration ] && actual='1 ms'
               [ 'CONTROL' = different-whitespace ] && actual='a  b'
               printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual %s\n' "$actual"
+              printf '  Stack Trace:\n   at Product.Tests.A() in %s/test.cs:line 10\n' "$PWD"
               case "$PWD" in
                 *clean-repeat-*) other=C; [ 'CONTROL' = repeat-aborted ] && printf 'Test Run Aborted\n';;
                 *) other=B; [ 'CONTROL' = initial-aborted ] && printf 'Test Run Aborted\n';;
               esac
               if [ 'CONTROL' = bounded ]; then
                 for extra in D E F; do
-                  printf '  Failed Product.Tests.%s [1 ms]\n  Error Message:\nAssert.True() Failure\n' "$extra"
+                  printf '  Failed Product.Tests.%s [1 ms]\n  Error Message:\nAssert.True() Failure\n  Stack Trace:\n   at Product.Tests.Extra() in %s/test.cs:line 20\n' "$extra" "$PWD"
                 done
               fi
               printf '  Failed Product.Tests.%s [1 ms]\n  Error Message:\nAssert.True() Failure\n' "$other"
@@ -533,6 +645,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var absent = reduced with { Commands = reduced.Commands.Select(item => item == candidate
             ? item with { AssertionEvidence = [] } : item).ToArray() };
         Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(absent, subject.Plan).Outcome);
+        var missingClean = reduced with { Commands = reduced.Commands.Where(item => item.Phase != "clean-repeat").ToArray() };
+        Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(missingClean, subject.Plan).Outcome);
+        var missingRepeatedTest = reduced with { Commands = reduced.Commands.Select(item => item.Phase == "clean-repeat"
+            ? item with { InitialFailures = ["Product.Tests.C"] } : item).ToArray() };
+        Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(missingRepeatedTest, subject.Plan).Outcome);
     }
 
     [Fact]

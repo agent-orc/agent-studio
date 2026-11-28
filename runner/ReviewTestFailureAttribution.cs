@@ -78,36 +78,114 @@ internal static partial class ReviewTestFailureAttribution
     internal static string? AssertionFingerprint(
         string attemptRoot, string stepId, string test, ProcessResult process)
     {
-        var lines = (process.StdOut + "\n" + process.StdErr).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
-            .Select(line => XunitPrefix().Replace(AnsiEscape().Replace(line, ""), "")).ToArray();
-        var start = Array.FindIndex(lines, line =>
+        // Prefer the detailed VSTest block to xUnit's earlier, potentially
+        // interleaved report. Never combine the streams into one assertion.
+        var streams = new[] { process.StdOut, process.StdErr }.Select(stream => stream.Split('\n')).ToArray();
+        foreach (var vstest in new[] { true, false })
         {
-            var heading = line.Trim();
-            return heading == test + " [FAIL]" || heading == "Failed " + test
-                || (heading.StartsWith("Failed " + test + " [", StringComparison.Ordinal)
-                    && heading.EndsWith("]", StringComparison.Ordinal));
-        });
-        if (start < 0) return null;
-        var diagnostic = lines.Skip(start + 1).TakeWhile(line =>
-        {
-            var metadata = line.Trim();
-            return !metadata.StartsWith("Failed ", StringComparison.Ordinal)
-                && !metadata.StartsWith("Passed ", StringComparison.Ordinal)
-                && !metadata.StartsWith("Failed!", StringComparison.Ordinal)
-                && !metadata.StartsWith("Passed!", StringComparison.Ordinal)
-                && !metadata.EndsWith("[FAIL]", StringComparison.Ordinal)
-                && metadata != "Stack Trace:" && !metadata.StartsWith("at ", StringComparison.Ordinal)
-                && !metadata.StartsWith("Test Run ", StringComparison.Ordinal)
-                && !metadata.StartsWith("Total tests:", StringComparison.Ordinal);
-        }).SkipWhile(line => string.IsNullOrWhiteSpace(line) || line.Trim() == "Error Message:");
-        var message = string.Join('\n', diagnostic).Trim('\n');
-        if (string.IsNullOrWhiteSpace(message)) return null;
-        // Whitespace, times, GUIDs and ports can be asserted values. Only remove
-        // known console framing and checkout paths, not data from the assertion.
-        var normalized = ReviewFailureFingerprint.NormalizePaths(attemptRoot, message);
-        return ReviewFailureFingerprint.Prefix + Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(stepId + "\n" + test + "\n" + normalized))).ToLowerInvariant();
+            var matches = streams.SelectMany(lines => lines.Select((line, index) => (lines, line, index)))
+                .Where(item => IsAssertionHeading(ConsoleHeading(item.line), test, vstest)).ToArray();
+            if (matches.Length == 0) continue;
+            if (matches.Length != 1) return null;
+            var (raw, _, start) = matches[0];
+            var leading = LeadingAnsi().Match(raw[start]).Value;
+            var trailing = TrailingAnsi().Match(raw[start]).Value;
+            var xunit = XunitPrefix().IsMatch(AnsiEscape().Replace(raw[start], ""));
+            var diagnostic = new List<string>();
+            var stack = false;
+            var source = false;
+            var message = false;
+            for (var index = start + 1; index < raw.Length; index++)
+            {
+                var heading = ConsoleHeading(raw[index]);
+                if (TestResultHeading().IsMatch(heading) || TestRunSummary().IsMatch(heading))
+                {
+                    // Without a stack boundary, this could be text asserted by
+                    // the test. A partial message cannot prove a reproduction.
+                    if (!stack) return null;
+                    if (heading.StartsWith("Passed ", StringComparison.Ordinal)
+                        || heading.StartsWith("Skipped ", StringComparison.Ordinal))
+                        continue;
+                    if (TestRunSummary().IsMatch(heading)
+                        && raw.Skip(index + 1).Any(item => ConsoleHeading(item) == "Stack Trace:"))
+                        return null;
+                    break;
+                }
+                if (index == raw.Length - 1 && raw[index].Length == 0) break;
+                var line = raw[index];
+                if (leading.Length > 0 || trailing.Length > 0)
+                {
+                    if (!line.StartsWith(leading, StringComparison.Ordinal)
+                        || !line.EndsWith(trailing, StringComparison.Ordinal)
+                        || line.Length < leading.Length + trailing.Length)
+                        return null;
+                    line = line.Substring(leading.Length, line.Length - leading.Length - trailing.Length);
+                }
+                if (xunit)
+                {
+                    var prefix = XunitPrefix().Match(line);
+                    if (!prefix.Success) return null;
+                    line = line[prefix.Length..];
+                }
+                // Remove one framing label, never whitespace or message lines
+                // that happen to look like console metadata.
+                if (vstest && index == start + 1)
+                {
+                    if (line.Trim() != "Error Message:") return null;
+                    continue;
+                }
+                if (line.Trim() == "Stack Trace:")
+                {
+                    if (stack || !message) return null;
+                    stack = true;
+                }
+                else if (stack && StackSource().Match(line) is { Success: true } location)
+                {
+                    source = true;
+                    var path = location.Groups["path"];
+                    line = line[..path.Index] + ReviewFailureFingerprint.NormalizePaths(attemptRoot, path.Value)
+                        + line[(path.Index + path.Length)..];
+                }
+                if (!stack && !string.IsNullOrWhiteSpace(line)) message = true;
+                if (stack && string.IsNullOrWhiteSpace(line)) continue;
+                if (stack && XunitPrefix().Match(line) is { Success: true } footer
+                    && line[footer.Length..].TrimStart().StartsWith("Finished: ", StringComparison.Ordinal))
+                    continue;
+                diagnostic.Add(line);
+            }
+            // Identical messages from different assertions in one method need
+            // their source locations. Missing locations are incomplete proof.
+            if (!source || diagnostic.All(string.IsNullOrWhiteSpace)) return null;
+            var identity = string.Join('\n', diagnostic);
+            return ReviewFailureFingerprint.Prefix + Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(stepId + "\n" + test + "\n" + identity))).ToLowerInvariant();
+        }
+        return null;
     }
+
+    private static string ConsoleHeading(string line)
+        => XunitPrefix().Replace(AnsiEscape().Replace(line, ""), "").Trim();
+
+    private static bool IsAssertionHeading(string heading, string test, bool vstest)
+        => vstest
+            ? heading == "Failed " + test || (heading.StartsWith("Failed " + test + " [", StringComparison.Ordinal)
+                && TestResultHeading().IsMatch(heading))
+            : heading == test + " [FAIL]";
+
+    [GeneratedRegex(@"^(?:\x1b\[[0-?]*[ -/]*[@-~])+")]
+    private static partial Regex LeadingAnsi();
+
+    [GeneratedRegex(@"(?:\x1b\[[0-?]*[ -/]*[@-~])+$")]
+    private static partial Regex TrailingAnsi();
+
+    [GeneratedRegex(@"^(?:(?:Failed|Passed|Skipped) .+ \[[0-9.,<> hms]+\]|[\w.+`]+(?:\(.*\))? \[FAIL\])$")]
+    private static partial Regex TestResultHeading();
+
+    [GeneratedRegex(@"^(?:Test Run (?:Failed|Successful|Aborted)\.?|(?:Failed|Passed)!\s+-\s+Failed:.*|Total tests: [0-9]+)$")]
+    private static partial Regex TestRunSummary();
+
+    [GeneratedRegex(@"^(?:[ \t]+at .+ in (?<path>.+):line [0-9]+|[ \t]+(?<path>(?:/|[A-Za-z]:[/\\]).+)\([0-9]+(?:,[0-9]+)?\): at .+)\r?$")]
+    private static partial Regex StackSource();
 
     internal static DeliveryFailureDiagnosisResult DiagnoseAssertions(IReadOnlyList<ReviewAssertionEvidenceDto> proofs)
     {

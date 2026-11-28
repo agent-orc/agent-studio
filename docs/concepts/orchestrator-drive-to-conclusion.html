@@ -3635,6 +3635,13 @@
           <td>Command-output normalization removed assertion values and whitespace before hashing. Substring test-name matching could also select a sibling method or parameterized case.</td>
           <td>Assertion fingerprints preserve values and require an exact test heading. Changed assertions remain incomplete evidence and reach <code>ReviewInfra</code>; matching assertions retain the existing product-failure path. Repeat bounds, checkout envelopes and transition rules are unchanged.</td>
         </tr>
+        <tr id="case-review-assertion-partial-diagnostic-and-lost-proof">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-partial-diagnostic-and-lost-proof</span></td>
+          <td>No CLI crashed. Synthetic regressions reproduced collisions when assertion messages resembled console metadata or identical messages came from different source lines. A mixed report could also reach <code>Pass</code> after its exact-test proof was removed and its diagnosis became environment or integration-branch debt.</td>
+          <td>Fingerprint extraction discarded message content and assertion locations. Grading required the control proof only for a product diagnosis and checked integration-branch debt earlier.</td>
+          <td>Complete diagnostic blocks retain message content and assertion source locations; ambiguous blocks remain incomplete. The proof check runs before disposition shortcuts and removes unsupported product verdicts. Missing or invalid controls reach <code>ReviewInfra</code>, while matching assertions retain <code>ProductFailure</code>. Repeat bounds, per-tree envelopes and lane transitions are unchanged.</td>
+        </tr>
       </tbody>
     </table>
 

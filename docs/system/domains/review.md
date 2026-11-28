@@ -67,9 +67,16 @@ control measurements. An aborted host, changed assertion, absent base test or
 unavailable control remains explicit incomplete evidence. Shared base failures
 keep their existing disposition. Parameterized cases that cannot be identified
 by an exact method filter also remain incomplete.
-Assertion fingerprints require the exact test heading and preserve assertion
-values, including whitespace, durations, timestamps, identifiers and ports.
-Console decoration and checkout paths are normalized separately from those values.
+Assertion fingerprints require the exact test heading, a complete diagnostic
+block and an assertion source location. They retain message whitespace, asserted
+paths, console-like message text and stack locations, including source line
+numbers. Only framing established by the test heading and checkout paths in
+stack source locations are normalized. Missing locations or ambiguous output
+remain incomplete evidence. Report grading requires retained controls before
+accepting a reproduced candidate-only assertion, including environment and
+integration-branch diagnoses; losing the proof cannot turn the mixed run into a
+pass. Inference respects the frozen comparison mode and known backend diff
+scope. A clean repeat that passed keeps its existing disposition.
 
 When a deterministic command is red on a stale merge base and the fetched target
 has advanced, the review host measures the command on a clean target checkout.
