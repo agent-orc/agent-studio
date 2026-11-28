@@ -16,7 +16,7 @@
     <span class="task-card__header-signals">
       <span class="task-card__project" data-testid="task-card-project">
         <span class="task-card__project-disk" aria-hidden="true">{{ identity().initial }}</span>
-        <span class="task-card__project-name">{{ job().projectName }}</span>
+        <span class="task-card__project-name" data-testid="task-card-project-name">{{ job().projectName }}</span>
       </span>
       @if ((job().state === '4-review' || job().state === '5-human-review') && job().qualityStudioVerdict === 'block') {
         <span class="task-card__quality-block-dot" data-testid="task-card-quality-block"

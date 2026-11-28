@@ -47,9 +47,9 @@
   <div class="ws-settings__body">
     <label class="ws-settings__picker" data-testid="workspace-settings-picker">
       <span>Settings section</span>
-      <select [value]="overlays.section()" (change)="overlays.select($any($event.target).value)" aria-label="Settings section">
+      <select (change)="overlays.select($any($event.target).value)" aria-label="Settings section">
         @for (item of railItems; track item.key) {
-          <option [value]="item.key">{{ item.label }}</option>
+          <option [value]="item.key" [selected]="item.key === overlays.section()">{{ item.label }}</option>
         }
       </select>
     </label>
