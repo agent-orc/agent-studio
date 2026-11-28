@@ -3658,6 +3658,73 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
             retained!.RetainUntil);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Restart_reconciliation_preserves_a_worker_until_exact_adoption(bool queuedBeforeUpgrade)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var clock = new ManualTimeProvider(
+            new DateTimeOffset(2026, 11, 28, 10, 0, 0, TimeSpan.Zero));
+        var first = Store(temp.Path, clock);
+        await first.InitializeAsync();
+        var (_, _, task) = await SeedReadyTaskAsync(first);
+        await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await first.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a", RequestedTtlSeconds: 300), "runner-a", default);
+        var lease = claim.Lease!;
+        var process = new RunnerProcessInfo(
+            lease.RunId, task.TaskKey, 4242, "/worktrees/TS-1", clock.GetUtcNow().UtcDateTime);
+        var renewal = new LeaseRenewRequest("runner-a", "instance-a", lease.LeaseId, lease.Fence);
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await first.RenewLeaseAsync(lease.RunId, renewal with
+        {
+            Inventory = new RunnerProcessInventory(clock.GetUtcNow().UtcDateTime, [process]),
+        }, "runner-a", default);
+
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await restarted.ReconcileInvariantsAsync(default);
+        var pendingBeforeAdoption = (await restarted.GetInvariantRegistryAsync(default)).PendingRunnerActions;
+
+        if (queuedBeforeUpgrade)
+        {
+            // Model an action persisted by the older reconciler during the restart window.
+            await using var database = new SqliteConnection($"Data Source={restarted.DatabasePath}");
+            await database.OpenAsync();
+            await using var insert = database.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO runner_reconciliation_actions(
+                    action_id, runner_id, instance_id, category, action, detail, pid, run_id, task_key, created_at)
+                VALUES ('previously-queued', 'runner-a', 'instance-a', 'run-inventory', 'terminate-process',
+                        'Orphan action queued before upgrade', $pid, $run, $task, $at);
+                """;
+            insert.Parameters.AddWithValue("$pid", process.Pid);
+            insert.Parameters.AddWithValue("$run", lease.RunId);
+            insert.Parameters.AddWithValue("$task", task.TaskKey);
+            insert.Parameters.AddWithValue("$at", clock.GetUtcNow().UtcDateTime.ToString("O"));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var registration = await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a") with
+        {
+            ActiveAttempts =
+            [
+                new RunnerActiveAttempt(
+                    RunnerAttemptKinds.Coding, lease.RunId, task.TaskKey, lease.LeaseId, lease.Fence,
+                    LeaseInstanceId: lease.InstanceId),
+            ],
+        }, "runner-a", default);
+        Assert.Equal("adopted", Assert.Single(registration.AttemptAdoptions!).Status);
+        var pendingAfterAdoption = (await restarted.GetInvariantRegistryAsync(default)).PendingRunnerActions;
+
+        var renewed = await restarted.RenewLeaseAsync(lease.RunId, renewal, "runner-a", default);
+        Assert.Empty(renewed.ReconciliationActions!);
+        Assert.Equal(0, pendingBeforeAdoption);
+        Assert.Equal(0, pendingAfterAdoption);
+    }
+
     [Fact]
     public async Task Invariant_reconciliation_schedules_orphan_process_termination()
     {
@@ -3711,6 +3778,27 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Contains(
             registry.RecentViolations,
             record => record.Action == "invariant.orphan-process");
+
+        var retry = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a", AvailableSlots: 0), "runner-a", default);
+        Assert.Equal(action, Assert.Single(retry.ReconciliationActions!));
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default);
+        var otherRunner = await store.ClaimAsync(
+            new ClaimRequest("runner-b", "instance-b", AvailableSlots: 0), "runner-b", default);
+        Assert.Empty(otherRunner.ReconciliationActions!);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var replacement = new RunnerProcessInfo(
+            "run-without-lease", "TS-404", 4242, "/worktrees/TS-404", started.AddSeconds(1));
+        var refreshed = new ClaimRequest("runner-a", "instance-a", AvailableSlots: 0,
+            Inventory: new RunnerProcessInventory(clock.GetUtcNow().UtcDateTime, [replacement]));
+        var reusedPid = await store.ClaimAsync(refreshed, "runner-a", default);
+        Assert.Empty(reusedPid.ReconciliationActions!);
+        Assert.Equal(0, (await store.GetInvariantRegistryAsync(default)).PendingRunnerActions);
+
+        Assert.Equal(1, await store.ReconcileInvariantsAsync(default));
+        var newAction = Assert.Single((await store.ClaimAsync(refreshed, "runner-a", default)).ReconciliationActions!);
+        Assert.NotEqual(action.ActionId, newAction.ActionId);
     }
 
     [Fact]
