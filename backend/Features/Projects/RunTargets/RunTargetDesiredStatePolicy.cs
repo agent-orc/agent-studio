@@ -81,7 +81,7 @@ public static partial class RunTargetDesiredStatePolicy
     /// to run.
     /// </summary>
     public static RunTargetEnvironmentSpec Project(string project, EnvironmentDeclaration declaration,
-        DeployJob? openJob, IReadOnlyList<DeploymentHistoryItem> history, DeployJob? deployedJob = null)
+        DeployJob? openJob, IReadOnlyList<DeploymentHistoryItem> history, DeployJob? deployedJob = null, string? secretProject = null)
     {
         var snapshot = openJob ?? deployedJob;
         var hosting = snapshot?.Hosting ?? declaration.Hosting
@@ -91,7 +91,7 @@ public static partial class RunTargetDesiredStatePolicy
         return new(project, declaration.Id, declaration.Kind, artifact, snapshot?.ContainerPort ?? declaration.ContainerPort,
             hosting.HealthPath, hosting.Domains, hosting.Edge, hosting.Variables, snapshot?.SecretRefs ?? declaration.SecretRefs,
             hosting.Resources, openJob?.Id, openJob?.LeaseToken, openJob?.IsRollback ?? false,
-            Databases: ManagedDatabasePolicy.Specs(project, declaration.Id, snapshot?.Databases ?? [],
+            Databases: ManagedDatabasePolicy.Specs(secretProject ?? project, declaration.Id, snapshot?.Databases ?? [],
                 declaration.EffectiveDatabasePolicy));
     }
 

@@ -24,9 +24,9 @@ public sealed partial class ProjectEnvironmentService
             var operations = state?.DatabaseOperations ?? [];
             var live = records.Where(item => item.DeletedAt is null).Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
             return records.OrderBy(item => item.DeletedAt is null ? 0 : 1).ThenBy(item => item.Name, StringComparer.Ordinal)
-                .Select(item => ManagedDatabasePolicy.View(project, item, kind, policy, operations, now))
+                .Select(item => ManagedDatabasePolicy.View(_secretKeys.Canonical(project), item, kind, policy, operations, now))
                 .Concat((file.Declaration?.Databases ?? []).Where(item => !live.Contains(item.Name))
-                    .Select(item => ManagedDatabasePolicy.Pending(project, file.Declaration!, item)))
+                    .Select(item => ManagedDatabasePolicy.Pending(_secretKeys.Canonical(project), file.Declaration!, item)))
                 .ToArray();
         }
     }
