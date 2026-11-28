@@ -1570,6 +1570,7 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetService<ILogger<WatcherLeaseService>>()));
 builder.Services.AddSingleton<CapacityIdleTracker>();
 builder.Services.AddSingleton<CodingCapacityService>();
+builder.Services.AddSingleton<CodingCapacityWaitReader>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => sp.GetRequiredService<CodingCapacityService>());
 builder.Services.AddSingleton<OverlapPredictionLedger>();
 builder.Services.AddSingleton<OverlapDispatchGuard>();

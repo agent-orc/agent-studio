@@ -9,6 +9,13 @@ internal sealed record IntegrationConflictReceipt(
     string DeliverySha, string Target, DateTimeOffset OriginalDeliveredAtUtc,
     MergeIntoIntegrationResult Result, bool RecoveryQueued = false, IReadOnlyList<string>? ReservedPaths = null);
 
+internal sealed record ObservedConflictHold(string Holder, string Target, DateTimeOffset SinceUtc,
+    string? ReceiptDeliverySha, IReadOnlyList<string> OverlappingPaths)
+{
+    internal const int ReservationLimit = 8;
+    internal const int FileLimit = 20;
+}
+
 /// <summary>
 /// Collects Git and task facts for the conflict policy. This receipt has no TTL:
 /// a review id, explicit retry or unrelated target commit cannot erase a collision.
@@ -110,14 +117,27 @@ public sealed class IntegrationConflictRecovery
         if (Read(folder) is { } receipt) Write(folder, receipt with { RecoveryQueued = true });
     }
 
-    internal IReadOnlyList<RemoteDeliveryIntegrationRequest> Eligible(IReadOnlyList<RemoteDeliveryIntegrationRequest> queue)
+    internal IReadOnlyList<RemoteDeliveryIntegrationRequest> Eligible(IReadOnlyList<RemoteDeliveryIntegrationRequest> queue,
+        Action<RemoteDeliveryIntegrationRequest, IReadOnlyList<ObservedConflictHold>>? observe = null)
     {
         if (queue.Count == 0) return [];
         var reservations = Reservations(queue[0]);
         if (reservations.Count == 0) return queue;
-        return queue.Where(request => MonolithTransitionAdapter.IntegrationConflictAdmission(request.JobId,
-                request.IntegrationBranch, MonolithTransitionAdapter.IntegrationConflictOrder(request.JobId,
-                    request.IntegrationBranch, request.DeliveredAtUtc, reservations), _paths(request), reservations))
+        return queue.Where(request =>
+            {
+                var paths = _paths(request);
+                var blockers = MonolithTransitionAdapter.IntegrationConflictBlockers(request.JobId,
+                    request.IntegrationBranch, MonolithTransitionAdapter.IntegrationConflictOrder(request.JobId,
+                        request.IntegrationBranch, request.DeliveredAtUtc, reservations), paths, reservations);
+                if (observe is null || paths is null) return !blockers.Any();
+                var matches = blockers.Take(ObservedConflictHold.ReservationLimit + 1)
+                    .Select(reservation => new ObservedConflictHold(reservation.Card,
+                    reservation.Target, reservation.DeliveredAtUtc, reservation.ReceiptDeliverySha,
+                    reservation.Paths.Intersect(paths, StringComparer.Ordinal).Take(ObservedConflictHold.FileLimit + 1).ToArray()))
+                    .ToArray();
+                if (matches.Length > 0) observe(request, matches);
+                return matches.Length == 0;
+            })
             .OrderBy(request => MonolithTransitionAdapter.IntegrationConflictOrder(request.JobId,
                 request.IntegrationBranch, request.DeliveredAtUtc, reservations)).ToArray();
     }
@@ -130,14 +150,18 @@ public sealed class IntegrationConflictRecovery
             request.IntegrationBranch, request.DeliveredAtUtc, reservations)).ToArray();
     }
 
+    internal static IntegrationConflictReceipt? ReadReservation(TaskInfo card)
+        => card.State is TaskStates.Ready or TaskStates.Progress or TaskStates.AutoReview
+            && Read(card.FolderPath) is { RecoveryQueued: true } receipt ? receipt : null;
+
     private IReadOnlyList<IntegrationRecoveryReservation> Reservations(RemoteDeliveryIntegrationRequest request)
     {
         return _cards(request)
-            .Where(card => card.State is TaskStates.Ready or TaskStates.Progress or TaskStates.AutoReview)
-            .Select(card => (Card: card, Receipt: Read(card.FolderPath)))
-            .Where(item => item.Receipt is { RecoveryQueued: true })
+            .Select(card => (Card: card, Receipt: ReadReservation(card)))
+            .Where(item => item.Receipt is not null)
             .Select(item => new IntegrationRecoveryReservation(item.Card.Id, item.Receipt!.Target,
-                item.Receipt.OriginalDeliveredAtUtc, item.Receipt.ReservedPaths ?? item.Receipt.Result.ConflictedFiles)).ToArray();
+                item.Receipt.OriginalDeliveredAtUtc, item.Receipt.ReservedPaths ?? item.Receipt.Result.ConflictedFiles,
+                item.Receipt.DeliverySha)).ToArray();
     }
 
     private static IntegrationConflictReceipt? Read(string folder)

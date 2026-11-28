@@ -1667,6 +1667,18 @@ public sealed partial class AttemptAuthorityService
             return FindReview(reviewAttemptId) is { } review && IsReviewedDeliveryCurrentLocked(review);
     }
 
+    // Missing authority is common for legacy or externally owned reviews.
+    // Only a known replacement proves that the queued generation lost ownership.
+    internal bool HasSupersededReviewedDelivery(string taskKey, string reviewAttemptId, string resultSha)
+    {
+        lock (_gate)
+            return FindReview(reviewAttemptId) is { } review && Same(taskKey, review.TaskKey)
+                && Same(resultSha, review.Subject.ExpectedResultSha)
+                && (review.State == AttemptLifecycleState.Superseded
+                    || CurrentReview(review.TaskKey) is { } current && !Same(current.AttemptId, review.AttemptId)
+                    || CurrentRun(review.TaskKey) is { } run && !Same(run.AttemptId, review.SourceRunAttemptId));
+    }
+
     private bool IsReviewedDeliveryCurrentLocked(ReviewAttemptRecord review)
         => CurrentRun(review.TaskKey) is { State: AttemptLifecycleState.Completed } run
            && Same(run.AttemptId, review.SourceRunAttemptId)

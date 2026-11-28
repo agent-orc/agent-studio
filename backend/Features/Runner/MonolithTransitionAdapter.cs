@@ -60,9 +60,9 @@ public static class MonolithTransitionAdapter
         => IntegrationConflictPolicy.Round(outcome, used, maximum);
     public static bool IntegrationConflictRetry(bool deliveryChanged, bool targetChanged, bool pathsChanged)
         => IntegrationConflictPolicy.MayRetry(deliveryChanged, targetChanged, pathsChanged);
-    public static bool IntegrationConflictAdmission(string card, string target, DateTimeOffset at,
+    public static IEnumerable<IntegrationRecoveryReservation> IntegrationConflictBlockers(string card, string target, DateTimeOffset at,
         IReadOnlyList<string>? paths, IReadOnlyList<IntegrationRecoveryReservation> reservations)
-        => IntegrationConflictPolicy.MayIntegrate(card, target, at, paths, reservations);
+        => IntegrationConflictPolicy.BlockingReservations(card, target, at, paths, reservations);
     public static DateTimeOffset IntegrationConflictOrder(string card, string target, DateTimeOffset at,
         IReadOnlyList<IntegrationRecoveryReservation> reservations)
         => IntegrationConflictPolicy.OrderAt(card, target, at, reservations);

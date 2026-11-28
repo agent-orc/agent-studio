@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -94,6 +95,11 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
     private readonly object _writeLock = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
     private readonly ILogger<GateRunLedger> _logger = logger ?? NullLogger<GateRunLedger>.Instance;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastFinished = new(StringComparer.OrdinalIgnoreCase);
+
+    // A live progress signal for polling reads. The durable ledger remains the history source.
+    internal DateTimeOffset? LastObservedFinish(string project)
+        => _lastFinished.TryGetValue(project, out var finished) ? finished : null;
 
     public void Append(GateRunLedgerRow row)
     {
@@ -125,6 +131,8 @@ public sealed class GateRunLedger(string root, TimeProvider? timeProvider = null
                 }
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            _lastFinished.AddOrUpdate(row.Project, row.FinishedAtUtc,
+                (_, prior) => prior >= row.FinishedAtUtc ? prior : row.FinishedAtUtc);
             Prune(_time.GetUtcNow().UtcDateTime.Date.AddDays(-RetentionDays));
         }
     }
