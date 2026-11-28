@@ -21,26 +21,50 @@ public sealed class ControlPlaneAuditConcurrencyTests : IDisposable
         using var verifier = new ControlPlaneAuditVerifier(log, monitor, null, clock);
         var captured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
+        var appended = 0;
         log.VerificationSnapshotCaptured = () =>
         {
             captured.TrySetResult();
-            Assert.True(release.Wait(TimeSpan.FromSeconds(60)), "Concurrent mutations did not finish.");
+            // Writers must not wait for the verifier. Every append flushes to disk,
+            // so on a busy host 256 of them took longer than the former fixed 60 s.
+            // The verifier therefore waits while the writers make progress and
+            // fails only when no append completes for a whole stall window.
+            WaitWhileProgressing(release.WaitHandle, () => Volatile.Read(ref appended));
         };
-        var verifying = Task.Run(() => verifier.VerifyAsync(CancellationToken.None));
-        await captured.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        // AGT-4360: the verifier blocks a thread inside the hook while sixteen
+        // writers must run. As pool work items they waited for the thread pool,
+        // which adds workers slowly or not at all while the CPU is saturated.
+        // Verifier and writers run on dedicated threads; the test waits for
+        // completion signals, not for the machine.
+        var verifying = Dedicated(() => verifier.VerifyAsync(CancellationToken.None).GetAwaiter().GetResult());
+        await captured.Task.WaitAsync(DeadlockBreaker);
         try
         {
             // Sixteen concurrent card mutation streams, 256 distinct audited operations.
-            await Task.WhenAll(Enumerable.Range(0, 16).Select(card => Task.Run(() =>
+            using var go = new ManualResetEventSlim();
+            var writers = Enumerable.Range(0, 16).Select(card => Dedicated(() =>
             {
+                go.Wait();
                 for (var mutation = 0; mutation < 16; mutation++)
+                {
                     log.Append(new("operator-agent", "operator-agent:test", (mutation % 3) switch
                     {
                         0 => "POST /api/tasks",
                         1 => "PUT /api/tasks/references",
                         _ => "POST /api/tasks/move",
                     }, "200", $"card-{card}", Details: new { card, mutation }));
-            })));
+                    Interlocked.Increment(ref appended);
+                }
+                return 0;
+            })).ToArray();
+            go.Set();
+            var all = Task.WhenAll(writers);
+            await Dedicated(() =>
+            {
+                WaitWhileProgressing(((IAsyncResult)all).AsyncWaitHandle, () => Volatile.Read(ref appended));
+                return 0;
+            });
+            await all;
         }
         finally
         {
@@ -57,6 +81,26 @@ public sealed class ControlPlaneAuditConcurrencyTests : IDisposable
         Assert.Equal(ControlPlaneAuditIntegrityStates.Verified, (await verifier.VerifyAsync(CancellationToken.None)).State);
         Assert.Empty(monitor.Raised);
     }
+
+    private static readonly TimeSpan DeadlockBreaker = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Waits for <paramref name="done"/> while <paramref name="progress"/> advances.
+    /// The bound is on one append, not on all 256, so a slow disk only slows the test.
+    /// </summary>
+    private static void WaitWhileProgressing(WaitHandle done, Func<int> progress)
+    {
+        var seen = progress();
+        while (!done.WaitOne(DeadlockBreaker))
+        {
+            var now = progress();
+            Assert.True(now != seen, $"No audit append completed within {DeadlockBreaker.TotalSeconds:0} s ({now} of 256 done): the writers wait for the verifier.");
+            seen = now;
+        }
+    }
+
+    private static Task<T> Dedicated<T>(Func<T> body) =>
+        Task.Factory.StartNew(body, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     public void Dispose()
     {
