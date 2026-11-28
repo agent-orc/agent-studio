@@ -103,10 +103,10 @@ public sealed class EnvironmentFlowServiceTests
         }.Select(t => t with { ProjectName = "project" }).ToArray();
         IReadOnlyList<TimelineEvent> Events(TaskInfo task) => task.Id switch
         {
-            "integrated" => [new() { Ts = now.AddHours(-2), Kind = TimelineEventKinds.IntegrationSucceeded }],
+            "integrated" => [RemoteSuccess(now.AddHours(-2))],
             "auto-completed" => [Move(now.AddHours(-1), TaskStates.AutoReview, TaskStates.Completed)],
             "accepted" => [
-                new() { Ts = now.AddHours(-23), Kind = TimelineEventKinds.IntegrationSucceeded },
+                RemoteSuccess(now.AddHours(-23)),
                 Move(now.AddHours(-1), TaskStates.HumanReview, TaskStates.Completed),
             ],
             _ => [],
@@ -131,6 +131,38 @@ public sealed class EnvironmentFlowServiceTests
             ? [.. Events(t), Move(now, TaskStates.HumanReview, TaskStates.Completed)] : Events(t),
             now, integrationQueues: board.Read());
         Assert.Equal(integration, afterAcceptance.Queues.Single(q => q.Queue == "Integration"));
+    }
+
+    [Fact]
+    public void Aggregate_PlacementChangesDoNotReclassifyHistoricalIntegrationSuccesses()
+    {
+        var now = new DateTime(2026, 11, 28, 12, 0, 0, DateTimeKind.Utc);
+        var task = Task("moved", TaskStates.HumanReview, now.AddHours(-1))
+            with { ProjectName = "project" };
+        var board = new DeliveryIntegrationQueueBoard();
+        board.Publish("project", []);
+        IReadOnlyList<TimelineEvent> events = [
+            new() { Ts = now.AddHours(-3), Kind = TimelineEventKinds.IntegrationSucceeded,
+                Details = new() { ["stage"] = RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage } },
+            new() { Ts = now.AddHours(-2), Kind = TimelineEventKinds.IntegrationSucceeded },
+            new() { Ts = now.AddHours(-25), Kind = TimelineEventKinds.IntegrationSucceeded },
+            new() { Ts = now.AddHours(1), Kind = TimelineEventKinds.IntegrationSucceeded },
+            Move(now.AddMinutes(-5), TaskStates.HumanReview, TaskStates.Completed),
+        ];
+
+        var remote = EnvironmentFlowService.Aggregate([task], _ => events, now,
+            integrationQueues: board.Read(), localIntegrationProjects: new HashSet<string>());
+        var local = EnvironmentFlowService.Aggregate([task], _ => events, now,
+            integrationQueues: board.Read(), localIntegrationProjects: new HashSet<string> { "project" });
+
+        foreach (var result in new[] { remote, local })
+        {
+            Assert.Equal(1d / 24, result.Queues.Single(q => q.Queue == "Integration").ThroughputPerHour);
+            Assert.Equal(1d / 24, result.Queues.Single(q => q.Queue == "Integration (local lane fallback)")
+                .ThroughputPerHour);
+            Assert.Equal(1, result.Today.Integrated); // Daily integration counts cards, not attempts.
+        }
+        Assert.Equal(remote.Today, local.Today);
     }
 
     [Fact]
@@ -196,6 +228,12 @@ public sealed class EnvironmentFlowServiceTests
     {
         Id = id, Kind = TaskKinds.Task, State = lane, CreatedAt = at,
         EnteredLaneAt = at, LastActivity = at,
+    };
+
+    private static TimelineEvent RemoteSuccess(DateTime at) => new()
+    {
+        Ts = at, Kind = TimelineEventKinds.IntegrationSucceeded,
+        Details = new() { ["stage"] = RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage },
     };
 
     private static TimelineEvent Move(DateTime at, string from, string to) => new()

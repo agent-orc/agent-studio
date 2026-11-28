@@ -106,11 +106,16 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         foreach (var task in tasks)
         {
             var taskEvents = readTimeline(task);
-            var successes = taskEvents.Count(e => e.Kind == TimelineEventKinds.IntegrationSucceeded
-                && e.Ts >= since && e.Ts <= now);
-            if (localIntegrationProjects?.Contains(task.ProjectName) == true)
-                localIntegrationsLast24h += successes;
-            else integrationsLast24h += successes;
+            foreach (var success in taskEvents.Where(e => e.Kind == TimelineEventKinds.IntegrationSucceeded
+                         && e.Ts >= since && e.Ts <= now))
+            {
+                // Placement controls current admission only. Historical output belongs to the
+                // path recorded by the event, even after a project changes execution location.
+                if (success.Details?.GetValueOrDefault("stage") == RemoteDeliveryIntegrationCoordinator.PreHumanReviewStage)
+                    integrationsLast24h++;
+                else
+                    localIntegrationsLast24h++;
+            }
             if (taskEvents.Any(e => e.Kind == TimelineEventKinds.PostStepFinished
                     && e.Ts >= since && e.Ts <= now
                     && e.Details?.GetValueOrDefault("pipelineStepId") == PipelineCatalogue.BuildTestGateStepId))
@@ -198,8 +203,8 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
             Queue("Acceptance", TaskStates.HumanReview, TaskStates.Completed)
                 with { ThroughputPerHour = acceptancesLast24h / 24d },
         };
-        if (integrationRows is not null && localIntegrationProjects is { Count: > 0 })
-            queues.Add(LocalIntegrationFallback(live.Where(task => localIntegrationProjects.Contains(task.ProjectName))));
+        if (integrationRows is not null && (localIntegrationProjects is { Count: > 0 } || localIntegrationsLast24h > 0))
+            queues.Add(LocalIntegrationFallback(live.Where(task => localIntegrationProjects?.Contains(task.ProjectName) == true)));
         var reasons = live.Where(IsWaiting).GroupBy(task => WaitReason(task, integrationQueues, reviewActivities), StringComparer.Ordinal)
             .Select(g => new EnvironmentWaitReason(g.Key, g.Count()))
             .OrderByDescending(g => g.Count).ThenBy(g => g.Reason, StringComparer.Ordinal)
@@ -213,7 +218,8 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         EnvironmentQueueFlow LocalIntegrationFallback(IEnumerable<TaskInfo> candidates)
         {
             // Local delivery has no published integration queue. Keep its legacy lane proxy explicit;
-            // acceptance is never evidence that integration succeeded.
+            // acceptance is never evidence that integration succeeded. Events without the remote
+            // pre-review stage retain the legacy fallback attribution, independent of placement.
             var waiting = candidates.Where(task => task.State == TaskStates.HumanReview).ToList();
             var oldest = waiting.Select(task => task.EnteredLaneAt)
                 .Where(at => at != default && at <= now).DefaultIfEmpty().Min();
