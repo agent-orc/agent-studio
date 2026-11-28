@@ -270,7 +270,7 @@ public class CodexCliServiceTests : IDisposable
             sessionName: null,
             resumeSession: false);
 
-        Assert.Contains("model=gpt-5.5", line);
+        Assert.Contains("model=gpt-6.2-sol", line);
         Assert.DoesNotContain("claude-opus-4-7", line);
     }
 

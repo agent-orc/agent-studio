@@ -82,7 +82,7 @@ public sealed record ModelSelectionPolicy
     private static Dictionary<string, ConsumerModelPolicy> Defaults()
     {
         var review = new ConsumerModelPolicy(
-            new ConsumerPolicyRoute("claude", "claude-opus-5", "high"),
+            new ConsumerPolicyRoute(CliTypes.Codex, CodexRoutingPolicy.StandardModel, CodexRoutingPolicy.StandardThinkingLevel),
             Fallbacks: ConsumerFallbacks.Catalogue,
             SameClassOnly: true, StickyWithinCard: true);
         return new(StringComparer.OrdinalIgnoreCase)
@@ -92,7 +92,7 @@ public sealed record ModelSelectionPolicy
             ["review-deep"] = review,
             ["review-grade"] = review,
             ["concept-fit"] = review,
-            ["chat"] = new(new ConsumerPolicyRoute("codex"), Fallbacks: ConsumerFallbacks.Catalogue),
+            ["chat"] = new(new ConsumerPolicyRoute(CliTypes.Codex), Fallbacks: ConsumerFallbacks.Catalogue),
             ["one-shot"] = new(new ConsumerPolicyRoute("claude", "claude-haiku-4-5"), Fallbacks: ConsumerFallbacks.Catalogue),
             ["merge-resolver"] = new(new ConsumerPolicyRoute("claude", "claude-opus-5", "high"), Fallbacks: ConsumerFallbacks.Catalogue),
             ["card-creation"] = new(Route: "qualification", Fallbacks: ConsumerFallbacks.Catalogue),

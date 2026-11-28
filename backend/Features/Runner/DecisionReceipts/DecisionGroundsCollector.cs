@@ -257,8 +257,10 @@ public sealed class DecisionGroundsCollector(
     public static DecisionModelRouteV1 Route(IConfiguration configuration)
     {
         var section = configuration.GetSection("Orchestration:DecisionModel");
-        return new(section["Cli"] ?? "codex", section["Model"] ?? "gpt-6-sol",
-            section["ThinkingLevel"] ?? "medium", DecisionModelCustody.RunnerHostJob,
+        var cli = section["Cli"] ?? CliTypes.Codex;
+        var model = section["Model"] ?? ModelMetadataRegistry.DefaultForCli(cli) ?? CodexRoutingPolicy.StandardModel;
+        return new(cli, model, ModelMetadataRegistry.ResolveThinkingLevel(cli, model, section["ThinkingLevel"]),
+            DecisionModelCustody.RunnerHostJob,
             Blank(section["AlternateCli"]), Blank(section["AlternateModel"]), Blank(section["AlternateThinkingLevel"]));
     }
 

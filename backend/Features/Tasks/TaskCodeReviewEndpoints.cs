@@ -34,7 +34,7 @@ public static class TaskCodeReviewEndpoints
 
     /// <summary>Hard fallback when neither config nor request specifies a model.</summary>
     public static string DefaultModelFallback =>
-        ModelMetadataRegistry.DefaultForCli(DefaultCliFallback) ?? ModelIds.Gpt55;
+        ModelMetadataRegistry.DefaultForCli(DefaultCliFallback) ?? ModelIds.Gpt62Sol;
 
     /// <summary>Default per-run wall-clock cap when configuration omits it.</summary>
     public const int DefaultTimeoutSecondsFallback = 600;

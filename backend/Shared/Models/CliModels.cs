@@ -258,15 +258,11 @@ public static class ModelFamilies
 /// when discovery has not run yet (process just started) or reported nothing
 /// useful for the family.</item>
 /// </list>
-/// Gpt-flagship is a thin alias over the already-live <see cref="ModelMetadataRegistry.DefaultForCli"/>
-/// Codex detection layer, so it stays in lockstep with the existing gpt-5.6
-/// mechanism instead of duplicating it. The compatibility family id
-/// <c>gpt-mini</c> now resolves to Luna, which replaced retired GPT-5.4 Mini.
+/// The Codex flagship and legacy support-family IDs both resolve to Studio's standard route.
 /// </summary>
 public static class ModelFamilyResolver
 {
-    /// <summary>Family members in declared (newest-first) order. Claude entries are
-    /// registry ids; the compatibility gpt-mini family resolves to Luna.</summary>
+    /// <summary>Claude family members in declared newest-first order.</summary>
     private static readonly IReadOnlyDictionary<string, string[]> StaticMembers =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
@@ -274,7 +270,6 @@ public static class ModelFamilyResolver
             [ModelFamilies.ClaudeSonnet] = [ModelIds.ClaudeSonnet5, ModelIds.ClaudeSonnet46, ModelIds.ClaudeSonnet45],
             [ModelFamilies.ClaudeOpus] =
                 [ModelIds.ClaudeOpus5, ModelIds.ClaudeOpus48, ModelIds.ClaudeOpus47, ModelIds.ClaudeOpus46, ModelIds.ClaudeOpus45],
-            [ModelFamilies.GptMini] = [ModelIds.Gpt56Luna],
         };
 
     private static readonly IReadOnlyDictionary<string, string> VendorForFamily =
@@ -283,7 +278,6 @@ public static class ModelFamilyResolver
             [ModelFamilies.ClaudeHaiku] = "anthropic",
             [ModelFamilies.ClaudeSonnet] = "anthropic",
             [ModelFamilies.ClaudeOpus] = "anthropic",
-            [ModelFamilies.GptMini] = "openai",
         };
 
     /// <summary>Resolve the newest available model id for <paramref name="family"/>
@@ -293,8 +287,9 @@ public static class ModelFamilyResolver
     /// caller never has to null-check a runtime default.</summary>
     public static string Resolve(string family)
     {
-        if (string.Equals(family, ModelFamilies.GptFlagship, StringComparison.OrdinalIgnoreCase))
-            return ModelMetadataRegistry.DefaultForCli(CliTypes.Codex) ?? ModelIds.Gpt55;
+        if (string.Equals(family, ModelFamilies.GptFlagship, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(family, ModelFamilies.GptMini, StringComparison.OrdinalIgnoreCase))
+            return CodexRoutingPolicy.StandardModel;
 
         if (!StaticMembers.TryGetValue(family, out var members) || members.Length == 0)
             throw new ArgumentException($"Unknown model family '{family}'.", nameof(family));
@@ -335,7 +330,7 @@ public sealed record ModelMetadata(
 /// </summary>
 public static class ModelMetadataRegistry
 {
-    private static readonly string[] Gpt62ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"];
+    private static readonly string[] Gpt62ThinkingLevels = [.. CodexRoutingPolicy.ThinkingLevels];
 
     private static readonly ModelMetadata[] Entries =
     [
@@ -371,11 +366,7 @@ public static class ModelMetadataRegistry
             defaultThinkingLevel: "medium", minimumCliVersion: "2.1.293"),
         Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
             aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeHaiku45)),
-        // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
-        // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
-        // the default must be the account-valid model (AGT-1941). Pricing is
-        // supplied only by TokenEconomy; Studio stores no independent rate.
-        new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
+        new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 400_000),
         // gpt-6-astra is onboarded as a known model so the picker can show it
         // disabled-with-a-reason on a codex-cli that does not offer it yet
@@ -398,7 +389,7 @@ public static class ModelMetadataRegistry
         // none effort. Context is the Codex default window (Sol 500K, Astra
         // 272K; both support 1M via model_context_window). Live discovery
         // remains the availability gate.
-        new(ModelIds.Gpt62Sol, "GPT-6.2 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
+        new(ModelIds.Gpt62Sol, "GPT-6.2 Sol", "openai", IsDefault: true, Deprecated: false, Available: false,
             ContextWindow: 500_000, ThinkingLevels: Gpt62ThinkingLevels,
             DefaultThinkingLevel: "low", MinimumCliVersion: CodexCliRelease.Gpt62MinimumVersion),
         new(ModelIds.Gpt62Astra, "GPT-6.2 Astra", "openai", IsDefault: false, Deprecated: false, Available: false,
@@ -447,17 +438,11 @@ public static class ModelMetadataRegistry
     private static readonly IReadOnlyDictionary<string, ModelMetadata> ByLabel = Entries
         .ToDictionary(e => e.Label, e => e, StringComparer.OrdinalIgnoreCase);
 
-    // Detection-driven Codex default id, published by CodexModelDiscovery after
-    // a live catalog fetch (house rule: derive from the installed CLI, do not
-    // hardcode a catalog - AGT-2025). Volatile because it is read on request
-    // threads and written from the discovery gate. Null => CLI not yet probed,
-    // unavailable, or no gpt-5.6 detected => the static gpt-5.5 baseline holds.
+    // Local CLI catalogue evidence is independent of the Studio default route.
     private static volatile string? _detectedCodexDefaultId;
 
     /// <summary>
-    /// Publish the Codex default model derived from the installed CLI. Pass null
-    /// to clear (CLI unavailable / no gpt-5.6 detected) so
-    /// <see cref="DefaultForCli"/> falls back to the static gpt-5.5 baseline.
+    /// Publish whether the local Codex CLI has advertised the Studio default.
     /// </summary>
     public static void SetDetectedCodexDefault(string? modelId)
         => _detectedCodexDefaultId = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
@@ -490,7 +475,7 @@ public static class ModelMetadataRegistry
     /// only when that decision is made.
     /// </summary>
     private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
-        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt62Sol, ModelIds.Gpt62Astra, ModelIds.Gpt6Luna };
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt6Luna };
 
     /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
     /// ladder/default from live CLI discovery rather than the static table.</summary>
@@ -569,13 +554,8 @@ public static class ModelMetadataRegistry
 
     public static string? DefaultForCli(string? cliType)
     {
-        // Codex follows the installed CLI: discovery publishes gpt-6-sol when
-        // offered, else gpt-5.6-sol (AGT-2903), and that becomes the product
-        // default everywhere Gpt55 was drawn (task creation, cli-type switch,
-        // client-default materialization). Null => static gpt-5.5 baseline.
-        if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex
-            && _detectedCodexDefaultId is { Length: > 0 } detected)
-            return detected;
+        if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex)
+            return CodexRoutingPolicy.StandardModel;
 
         var vendor = VendorForCli(cliType);
         if (vendor == null) return null;
@@ -590,6 +570,9 @@ public static class ModelMetadataRegistry
     /// </summary>
     public static string? DefaultThinkingLevelForCli(string? cliType, string? model)
     {
+        if (VendorForCli(cliType) == "openai" && CodexRoutingPolicy.IsGpt62(NormalizeId(model)))
+            return CodexRoutingPolicy.StandardThinkingLevel;
+
         // The explicit allowlist keeps already-shipped static ladders from
         // changing. GPT-6.1 Sol has a registry fallback so migration proposals
         // can explain max/ultra pins before live discovery has run.
@@ -639,7 +622,7 @@ public static class ModelMetadataRegistry
         var canonical = trimmed is null ? null : NormalizeId(trimmed);
         // Preserve historic alias storage for existing models. New generation
         // spellings must become the exact ids accepted by their CLIs.
-        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.ClaudeHaiku55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.ClaudeHaiku55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna or ModelIds.Gpt62Sol or ModelIds.Gpt62Astra
             ? canonical
             : trimmed;
         if (string.IsNullOrWhiteSpace(cliType)) return normalized;
@@ -836,6 +819,9 @@ public static class ModelMetadataRegistry
     /// </summary>
     public static string? NormalizeThinkingLevel(string? cliType, string? model, string? requested)
     {
+        if (VendorForCli(cliType) == "openai" && CodexRoutingPolicy.IsGpt62(NormalizeId(model)))
+            return CodexRoutingPolicy.ResolveThinkingLevel(requested, CodexRoutingPolicy.ProviderDefaultThinkingLevel);
+
         var levels = ThinkingLevelsFor(cliType, model);
         if (levels.Count == 0) return null;
 

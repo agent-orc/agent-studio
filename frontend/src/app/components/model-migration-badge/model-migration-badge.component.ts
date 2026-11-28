@@ -250,7 +250,7 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
     if (!cli || !modelId || !pinned?.trim()) return null;
     const model = this.catalogs.modelsFor(cli as CliType).find((candidate) => candidate.id === modelId);
     if (!model || model.available === false || !model.thinkingLevels?.length) return null;
-    const mapping = mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned);
+    const mapping = mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned, model.id);
     return mapping.mappedFrom ? mapping : null;
   }
 

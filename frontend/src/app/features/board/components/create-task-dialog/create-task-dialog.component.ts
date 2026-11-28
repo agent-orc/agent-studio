@@ -55,7 +55,7 @@ const PENDING_PREFIX = 'pending-attachment-';
 export class CreateTaskDialogComponent implements AfterViewInit {
   readonly taskTypeOptions = [{ value: 'bug', label: 'Bug', testid: 'create-task-type-bug' }, { value: 'feature', label: 'Feature', testid: 'create-task-type-feature' }, { value: 'chore', label: 'Chore', testid: 'create-task-type-chore' }] as const;
   readonly watchPaths = input<WatchPathEntry[]>([]);
-  readonly availableModels = input<CliModelInfo[]>([]);
+  readonly availableModels = input<readonly CliModelInfo[]>([]);
   readonly cliTypeDraft = input.required<CliType>();
   readonly routing = input<ComponentRoutingResolution | null>(null); readonly routingPending = input(false);
   readonly submitting = input(false);

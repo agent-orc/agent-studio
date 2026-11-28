@@ -113,7 +113,7 @@ public sealed class CodexDetectedDefaultTests : IDisposable
         // driven only by CodexModelDiscovery.PickDetectedDefault, never by the
         // ladder mechanism.
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
-        Assert.Equal(ModelIds.Gpt56Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -136,17 +136,17 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     }
 
     [Fact]
-    public void DefaultForCli_Codex_FallsBackToGpt55_WhenNothingDetected()
+    public void DefaultForCli_Codex_UsesGpt62Sol_WhenNothingDetected()
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(null);
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
-    public void DefaultForCli_Codex_ReturnsDetected_WhenCliReportsGpt56()
+    public void DefaultForCli_Codex_KeepsGpt62Sol_WhenCliReportsGpt56()
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
-        Assert.Equal(ModelIds.Gpt56Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public sealed class CodexDetectedDefaultTests : IDisposable
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
         ModelMetadataRegistry.SetDetectedCodexDefault("   ");
         Assert.Null(ModelMetadataRegistry.DetectedCodexDefault);
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -185,9 +185,8 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     }
 
     [Fact]
-    public void DefaultForCli_FollowsTheGpt6SolPreference_WithItsDiscoveredDefaultLevel()
+    public void DefaultForCli_KeepsStandardModelWithGpt6SolDiscovery()
     {
-        // AGT-2903: gpt-6-sol > gpt-5.6-sol > gpt-5.5 baseline.
         var models = new List<CliModelInfo>
         {
             new() { Id = ModelIds.Gpt56Sol, Available = true },
@@ -201,13 +200,13 @@ public sealed class CodexDetectedDefaultTests : IDisposable
         ModelMetadataRegistry.SetDetectedCodexDefault(
             CodexModelDiscovery.PickDetectedDefault(new CliModelCatalog { Models = models, Source = "test" }));
 
-        Assert.Equal(ModelIds.Gpt6Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
         Assert.Equal("medium", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, ModelIds.Gpt6Sol));
         // gpt-6-sol offers ultra in live discovery: no mapping is hard-coded.
         Assert.Equal("ultra", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Sol, "ultra"));
 
         ModelMetadataRegistry.SetDetectedCodexDefault(null);
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -247,12 +246,12 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
         // A claude model requested under codex is remapped to the detected default.
-        Assert.Equal(ModelIds.Gpt56Sol, ModelMetadataRegistry.NormalizeForCli(CliTypes.Codex, ModelIds.ClaudeOpus48));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.NormalizeForCli(CliTypes.Codex, ModelIds.ClaudeOpus48));
         // An explicitly-requested gpt-5.6 model is preserved (not in the static
         // registry, but vendor-compatible with codex).
         Assert.Equal(ModelIds.Gpt56Sol, ModelMetadataRegistry.NormalizeForCli(CliTypes.Codex, ModelIds.Gpt56Sol));
         // With nothing detected the same foreign model lands on the gpt-5.5 floor.
         ModelMetadataRegistry.SetDetectedCodexDefault(null);
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.NormalizeForCli(CliTypes.Codex, ModelIds.ClaudeOpus48));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.NormalizeForCli(CliTypes.Codex, ModelIds.ClaudeOpus48));
     }
 }

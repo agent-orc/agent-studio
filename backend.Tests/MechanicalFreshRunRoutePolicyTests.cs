@@ -8,9 +8,9 @@ namespace AgentStudio.Tests;
 public sealed class MechanicalFreshRunRoutePolicyTests
 {
     [Theory]
-    [InlineData("semantic-conflict", "gpt-6-sol", "medium")]
-    [InlineData("failed-deterministic-gate", "gpt-5.6-terra", "medium")]
-    [InlineData("pending-mechanical-continuation", "gpt-5.6-terra", "medium")]
+    [InlineData("semantic-conflict", ModelIds.Gpt62Sol, "medium")]
+    [InlineData("failed-deterministic-gate", ModelIds.Gpt62Sol, "medium")]
+    [InlineData("pending-mechanical-continuation", ModelIds.Gpt62Sol, "medium")]
     public void Fresh_fallback_clears_the_policy_floor(string reason, string model, string thinking)
     {
         var folder = Path.Combine(Path.GetTempPath(), "fresh-route-" + Guid.NewGuid().ToString("N"));

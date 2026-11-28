@@ -3,6 +3,7 @@ using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using System.Text;
+using CodexRoutingPolicy = AgentStudio.TaskServer.Contracts.CodexRoutingPolicy;
 using CapabilityProtocol = AgentStudio.TaskServer.Contracts.CapabilityProtocol;
 
 namespace AgentStudio.Tasks;
@@ -118,18 +119,20 @@ public static class LeaseEndpoints
             provider == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
         AgentStudio.TaskServer.Contracts.ProviderModelFallback? policyEquivalent = null;
         if (provider == CliTypes.Codex
-            && model is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
-            && string.Equals(thinking, "xhigh", StringComparison.OrdinalIgnoreCase)
-            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
+            && (model == ModelIds.Gpt56Sol || CodexRoutingPolicy.IsSupersededSolPreference(model)
+                || CodexRoutingPolicy.IsGpt62(model))
+            && thinking is "high" or "xhigh" or "max" or "ultra"
+            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-high")
                 ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)
             policyEquivalent = new(model!, highEquivalent.Model,
-                continuation ? "The declared same-tier Opus xhigh route after Sol capacity."
+                continuation ? "The declared same-tier Opus route after Sol capacity."
                     : unauthorized ? "provider-unauthorized-policy-equivalent" : "model-capacity-policy-equivalent",
                 CliTypes.Claude, highEquivalent.ThinkingLevel);
         return AgentStudio.TaskServer.Contracts.ProviderRejectionFallbackRoutes.Candidates(
             provider, unauthorized,
             sibling is null ? null : new(model!, sibling.ToModel,
-                continuation ? sibling.Reason : "model-capacity-sibling", provider, thinking),
+                continuation ? sibling.Reason : "model-capacity-sibling", provider,
+                CodexRoutingPolicy.IsGpt62(sibling.ToModel) ? CodexRoutingPolicy.ResolveThinkingLevel(thinking) : thinking),
             equivalent is null ? null : new(model!, equivalent.ToModel,
                 continuation ? "The catalogue equivalent after a provider model refusal."
                     : unauthorized ? "provider-unauthorized-equivalent" : "model-capacity-equivalent",

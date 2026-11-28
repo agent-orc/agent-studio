@@ -1160,15 +1160,27 @@ public static class TaskCrudEndpoints
 
             var modelExplicit = req.ModelExplicit ?? !string.IsNullOrWhiteSpace(req.Model);
             var thinkingExplicit = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
-            var requestedCli = string.IsNullOrWhiteSpace(req.CliType) ? CliTypes.Claude : req.CliType;
-            if ((!modelExplicit || !thinkingExplicit)
+            var requestedCli = mutations.ResolveCreationCli(req);
+            var clientRoute = mutations.ResolveCreationClientRoute(req, requestedCli);
+            if (clientRoute.Model is not null && !modelExplicit
+                && (!thinkingExplicit || req.ThinkingLevel is not null))
+            {
+                req = req with
+                {
+                    Model = clientRoute.Model,
+                    ThinkingLevel = thinkingExplicit ? req.ThinkingLevel : clientRoute.ThinkingLevel,
+                    ModelExplicit = false,
+                    ThinkingLevelExplicit = thinkingExplicit,
+                };
+            }
+            else if ((!modelExplicit || !thinkingExplicit)
                 && CliTypes.IsValid(requestedCli))
             {
                 try
                 {
                     // AGT-3709: a cold catalogue starts the CLI in a PTY; create
                     // never waits for that and answers from the registry instead.
-                    var catalogue = await RequestPathModelCatalogue.GetAsync(cliRouter, requestedCli, ct);
+                    var catalogue = await RequestPathModelCatalogue.GetAsync(cliRouter, requestedCli!, ct);
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,

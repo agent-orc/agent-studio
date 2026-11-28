@@ -92,7 +92,9 @@ public static class CliEndpoints
         // the contract shown is the real one, not a frontend guess.
         cliGroup.MapGet("/contracts", () => Results.Ok(CliCompletionContracts.All));
 
-        cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
+        cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router,
+            IConfiguration configuration, IHttpClientFactory clients,
+            AgentStudio.Runner.V1ReviewExecutorRegistry executionHosts, CancellationToken ct) =>
         {
             if (!CliTypes.IsValid(cliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
@@ -100,14 +102,15 @@ public static class CliEndpoints
                 is AgentStudio.Security.RequestAccess access
                 && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
                     AgentStudio.Security.PermissionTarget.WorkspaceWide);
+            if (scoped && refresh == true) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase))
+                return Results.Ok(await CodexExecutionModelCatalogue.GetAsync(configuration, clients, executionHosts, ct));
             if (scoped)
             {
-                if (refresh == true) return Results.StatusCode(StatusCodes.Status403Forbidden);
                 // A project member receives a static catalogue. Even a normal
                 // model lookup may start a CLI probe when its cache is cold.
                 return Results.Ok(cliType.ToLowerInvariant() switch
                 {
-                    "codex" => CodexModelDiscovery.FallbackCatalog("scoped-registry"),
                     "claude" => ClaudeModelDiscovery.FallbackCatalog("scoped-registry"),
                     _ => new CliModelCatalog { Models = [], Source = "scoped-registry", FetchedAt = DateTime.UtcNow },
                 });

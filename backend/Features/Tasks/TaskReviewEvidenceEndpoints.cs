@@ -124,6 +124,8 @@ public static class TaskReviewEvidenceEndpoints
                 Title = title,
                 Agent = info.Agent,
                 CliType = info.CliType,
+                Model = info.Model,
+                ThinkingLevel = info.ThinkingLevel,
                 WatchPath = info.WatchPath,
                 PromptMarkdown = prompt,
                 TargetState = targetState,
