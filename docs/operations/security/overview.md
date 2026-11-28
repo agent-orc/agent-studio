@@ -2129,9 +2129,11 @@ chain. Revoking the runner ends all credentials for that identity.
 Healthy automatic renewal suppresses expiry reminders. Access and the
 credential inventory report current expiry, last renewal, the next window,
 failures and refused reuse. Standalone Task Server principals use their
-management rotation workflow. See
-[host enrollment and operation](../setup/networked-task-server.md#automatic-credential-renewal)
-for the switches, rollout and recovery after missed expiry.
+management rotation workflow. Studio Owners can change the per-runner policy
+in Access or through the
+[per-runner renewal API](../setup/networked-task-server.md#per-runner-renewal-api).
+See the [host enrollment guide](../setup/networked-task-server.md#automatic-credential-renewal)
+for the installation switch, rollout and recovery after missed expiry.
 
 <!-- append-only:security-overview:end -->
 

@@ -186,9 +186,11 @@ same staged successor. A role that misses the expiry needs another enrollment
 code.
 
 In Settings > Access, open an enrolled role and use **Turn automatic renewal
-off** to keep manual rotation for that role. To disable new renewals for the
-installation, set `Security__RunnerCredentialRenewalEnabled=false` on the
-Studio API. With the networked Compose deployment, set
+off** to keep manual rotation for that role. The same setting is available
+through the [per-runner renewal API](#per-runner-renewal-api). To disable new
+renewals for the installation, set
+`Security__RunnerCredentialRenewalEnabled=false` on the Studio API. With the
+networked Compose deployment, set
 `STUDIO_RUNNER_CREDENTIAL_RENEWAL_ENABLED=false` in the deployment environment
 and apply it with the usual server rollout. A successor already registered can
 finish proving. Revoke the role to end it and every credential in its chain
@@ -207,6 +209,31 @@ before their current credentials expire. A live, expiring credential in a
 writable file adopts renewal without a new code or token exchange by the
 owner. A pre-expiry-policy credential with no end date still needs a one-time
 manual rotation to adopt the finite lifetime.
+
+#### Per-runner renewal API
+
+Send `PUT /api/auth/runners/{id}/renewal` from an authenticated same-origin
+client using the Studio Owner session cookie and its matching `X-CSRF-Token`
+header. Use the runner identity `id` from `GET /api/auth/runners`.
+
+```http
+PUT /api/auth/runners/{id}/renewal
+Content-Type: application/json
+
+{"enabled": false}
+```
+
+Use `false` to turn automatic renewal off for the role and `true` to turn it
+back on. The API returns `200 OK` with the updated runner record in the same
+shape as an entry in `GET /api/auth/runners`. `renewal.runnerEnabled` is the
+saved per-runner setting, `renewal.installationEnabled` is the installation
+setting, and `renewal.enabled` is the effective setting for the current
+credential. If the installation switch is off, saving `true` for a role
+leaves its effective setting off.
+
+A missing or null `enabled` returns `400` with `renewal-policy-required`.
+Unknown, revoked, retired, or non-runner IDs return `404` with
+`runner-not-found`.
 
 ### Migrate a host from the local profile
 
