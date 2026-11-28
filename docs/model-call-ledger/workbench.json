@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "id": "model-call-ledger",
+  "title": "Model call ledger",
+  "summary": "Capture and price individual model responses, link them to their work, and make the evidence available in Studio and Magazine.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-28",
+  "sourceTaskKeys": [
+    "AGT-4392"
+  ],
+  "relatedTaskKeys": [
+    "AGT-4375",
+    "AGT-4376",
+    "AGT-4351",
+    "AGT-4393",
+    "AGT-4394",
+    "AGT-4395"
+  ],
+  "openDecisions": [
+    {
+      "id": "MC-D1",
+      "decisionId": "storage",
+      "title": "Storage",
+      "question": "Which store should own the call ledger?",
+      "options": {
+        "A": "Task Server SQLite with a host outbox",
+        "B": "PostgreSQL now",
+        "C": "JetStream plus SQL projection",
+        "D": "Cassandra",
+        "E": "Versioned files"
+      },
+      "recommended": "A",
+      "recommendation": "A. Task Server SQLite with a host outbox",
+      "rationale": "One Task Server needs durable writes and arbitrary pivots at modest ingest rate. Use one local data volume and migrate when active multi-node writes or measured operational limits require it.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D2",
+      "decisionId": "delivery",
+      "title": "Delivery durability",
+      "question": "How do hosts deliver usage during an outage?",
+      "options": {
+        "A": "Persistent outbox and durable ACK",
+        "B": "Stream brokers on all hosts",
+        "C": "Best-effort upload"
+      },
+      "recommended": "A",
+      "recommendation": "A. Persistent outbox and durable ACK",
+      "rationale": "Persist before advancing the reader, replay after reconnect, and signal any coverage gaps.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D3",
+      "decisionId": "cost",
+      "title": "Cost display",
+      "question": "What values does the product store and display?",
+      "options": {
+        "A": "Dated list rates alongside attributable provider points",
+        "B": "List price only",
+        "C": "Estimated credits"
+      },
+      "recommended": "A",
+      "recommendation": "A. Dated list rates alongside attributable provider points",
+      "rationale": "Store resolved components and basis. Store recorded comparable points only where a provider reports and attributes them.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D4",
+      "decisionId": "retention",
+      "title": "Retention",
+      "question": "How long are individual calls retained?",
+      "options": {
+        "A": "180 days plus durable privacy-minimized rollups",
+        "B": "30 days plus durable rollups",
+        "C": "365 days plus durable rollups"
+      },
+      "recommended": "A",
+      "recommendation": "A. 180 days plus durable privacy-minimized rollups",
+      "rationale": "Balances detail for comparisons and diagnostics against volume and personal data.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D5",
+      "decisionId": "findings",
+      "title": "Finding attribution",
+      "question": "How is the cost of a multi-finding round assigned?",
+      "options": {
+        "A": "Explicit primary plus a shared bucket",
+        "B": "Even split across findings",
+        "C": "Full charge to every finding"
+      },
+      "recommended": "A",
+      "recommendation": "A. Explicit primary plus a shared bucket",
+      "rationale": "Preserves additive rankings and links every co-trigger in detail.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D6",
+      "decisionId": "presentation",
+      "title": "Presentation",
+      "question": "Which reporting surfaces are product defaults?",
+      "options": {
+        "A": "Explorer, fixed pipeline and lifecycle, and daily/weekly Magazine",
+        "B": "Magazine only",
+        "C": "CSV only"
+      },
+      "recommended": "A",
+      "recommendation": "A. Explorer, fixed pipeline and lifecycle, and daily/weekly Magazine",
+      "rationale": "Start with the measured night in product; promote interaction and issues on the same query contracts.",
+      "status": "open"
+    },
+    {
+      "id": "MC-D7",
+      "decisionId": "backfill",
+      "title": "Backfill",
+      "question": "How much history should be reconciled first?",
+      "options": {
+        "A": "Measured night then audited 30 days",
+        "B": "Measured night then live only",
+        "C": "All retained history before rollout"
+      },
+      "recommended": "A",
+      "recommendation": "A. Measured night then audited 30 days",
+      "rationale": "Fast proof with exact coverage, then a bounded comparison against existing reports.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "MC-1",
+      "title": "Coding night in Model Calls",
+      "dependsOn": [],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-1",
+        "criteria": [
+          "Importing the reference export yields 19,774 coding responses on 58 cards, 2,639,640,822 tokens, 4,592 waits and 924 status checks; 680 research responses are outside this coding proof.",
+          "Repeat the same import, restart the server and prove counts and IDs are unchanged. A late usage revision cannot create a new response.",
+          "An isolated permitted workspace Time window → card → run → response drill works in Playwright and a different project cannot read aggregates or any individual call. Capture the proof in light and dark.",
+          "Publish comparison against the reference totals with unknown fields and price coverage. Do not require USD 765 equality across incompatible or unresolved tariff evidence."
+        ]
+      },
+      "promptMarkdown": "# Coding night in Model Calls\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for storage, backfill and presentation unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nTask Server ledger and in-product read path.\n\nCreate the portable call/coverage schema and the separate SQLite store. Add an authenticated operator-only historical import/ingest path. Use the Codex source records for the 27 Nov 21:52 to 28 Nov 09:12:07 UTC measurement, and fall back to AGT-4375 calls.csv and measurements.json from its card results when source IDs are unavailable. Use the validated dataset fingerprint and card/run/response ordinal identity in the import namespace. Keep the response ID alias path available for later evidence. Stay in an authorized workspace, and import only sanitized usage and bounded metadata. Capture usage basis and timestamp basis; keep gaps nullable. Use the existing ITokenPricing seam when a historical tariff is supported, and expose explicit unpriced coverage otherwise.\nExpose a scoped time-window query and response detail route. Under Token Usage add a Model Calls entry that shows total calls and tokens and supports a card filter, run expansion and response detail. Show happened-at, observed/inferred provenance, tokens, list-price status and any fields known. Link to the source card evidence under normal permission checks. Preserve legacy pricing and admission unchanged. Use the Dossier prototype as visual direction.\n\n## Acceptance\n- Importing the reference export yields 19,774 coding responses on 58 cards, 2,639,640,822 tokens, 4,592 waits and 924 status checks; 680 research responses are outside this coding proof.\n- Repeat the same import, restart the server and prove counts and IDs are unchanged. A late usage revision cannot create a new response.\n- An isolated permitted workspace Time window → card → run → response drill works in Playwright and a different project cannot read aggregates or any individual call. Capture the proof in light and dark.\n- Publish comparison against the reference totals with unknown fields and price coverage. Do not require USD 765 equality across incompatible or unresolved tariff evidence.\n\nRecord the scoped storage decision against ADR-0063. Inspect the existing studio_token_usage ingest before choosing the compatibility path. Preserve its run-level contract and make the response store authoritative only for the new routes."
+    },
+    {
+      "id": "MC-2",
+      "title": "Live Codex capture and replay",
+      "dependsOn": [
+        "MC-1"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-2",
+        "criteria": [
+          "A live billable Codex probe replays to an identical count after interruption and contains no prompt or command text.",
+          "Test reconnect, crash before ACK, partial line, rotation, resumed sessions, stale authenticated attempt and cross-project rejection.",
+          "Document burst, lag and backup/restore results for the Dossier workload and coverage visibility."
+        ]
+      },
+      "promptMarkdown": "# Live Codex capture and replay\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for storage and delivery unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nRunner and Task Server ingress.\n\nRegister source sessions with the launcher and persist project, host, CLI/version, runner/container and fenced attempt context before execution. Parse per-response usage and tool classifications on the host; store only allowed scalars and references. Drain during the run and at exit, including failed/aborted runs. Use the existing authenticated channel with batch ACK and outbox rules from the Dossier. Include authorized late events and coverage diagnostics. Map overlapping historical IDs only on proven identity. Reuse existing waiting classification efforts, including AGT-4376 if delivered.\n\n## Acceptance\n- A live billable Codex probe replays to an identical count after interruption and contains no prompt or command text.\n- Test reconnect, crash before ACK, partial line, rotation, resumed sessions, stale authenticated attempt and cross-project rejection.\n- Document burst, lag and backup/restore results for the Dossier workload and coverage visibility."
+    },
+    {
+      "id": "MC-3",
+      "title": "Dated call pricing and provider points",
+      "dependsOn": [
+        "MC-2"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-3",
+        "criteria": [
+          "Resolve supported short and long context at the boundary timestamp and prompt threshold, with dated tests for supported rates.",
+          "Unknown model, unsupported long context, absent cache split and provider-points gaps remain typed and distinguishable from known zero.",
+          "Correcting a price creates a revision and preserves the previous published view."
+        ]
+      },
+      "promptMarkdown": "# Dated call pricing and provider points\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for cost unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nToken pricing and revision contract.\n\nExtend ITokenPricing and the catalog adapter to preserve effective-date, prompt-size, service tier, cache policy and component price evidence at call granularity. Keep observed points in their provider unit or explicitly unknown. Allow versioned price repair and calculate/cost breakdown reuse. Compare the 358 unpriced 30-day runs to complete matched call scopes and explain the remainder.\n\n## Acceptance\n- Resolve supported short and long context at the boundary timestamp and prompt threshold, with dated tests for supported rates.\n- Unknown model, unsupported long context, absent cache split and provider-points gaps remain typed and distinguishable from known zero.\n- Correcting a price creates a revision and preserves the previous published view."
+    },
+    {
+      "id": "MC-4",
+      "title": "Review and conflict provenance",
+      "dependsOn": [
+        "MC-3"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-4",
+        "criteria": [
+          "Replayed review settlements and receipts do not duplicate charges. A shell-only gate emits no call.",
+          "A real blocking follow-up, a multi-finding round, a conflict continuation and a technical retry each drill to typed cause and provenance."
+        ]
+      },
+      "promptMarkdown": "# Review and conflict provenance\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for findings and delivery unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nReview workers and continuation envelopes.\n\nAt review aspect launch and conflict session launch, bind review package, aspect, round, fence, delivery and triggering finding/decision IDs. Preserve verification edges and shared causes. Capture response facts where available; reconcile settlement controls and independent non-model spans. Preserve structured cause through existing orchestration handoffs without introducing transition rules.\n\n## Acceptance\n- Replayed review settlements and receipts do not duplicate charges. A shell-only gate emits no call.\n- A real blocking follow-up, a multi-finding round, a conflict continuation and a technical retry each drill to typed cause and provenance."
+    },
+    {
+      "id": "MC-5",
+      "title": "Card creation and other one-shot usage",
+      "dependsOn": [
+        "MC-4"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-5",
+        "criteria": [
+          "Creating a card shows its attributed tag call and price when supported, including when the call precedes task registration.",
+          "Project-only maintenance, failed creation, provider retry and receipt replay have correct scope and counts."
+        ]
+      },
+      "promptMarkdown": "# Card creation and other one-shot usage\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for delivery and cost unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nTask Server one-shot producers and shared ad hoc path.\n\nWire the common invocation and completion seams for auto-tag, post-summary-assessment, summary generation, tag maintenance and remaining one-shot producers. Carry workspace, project, step, actor and prompt manifest. Use an immutable creation correlation linked to the card after successful creation. Keep truly shared workspace/project work and uncertain granularity visible.\n\n## Acceptance\n- Creating a card shows its attributed tag call and price when supported, including when the call precedes task registration.\n- Project-only maintenance, failed creation, provider retry and receipt replay have correct scope and counts."
+    },
+    {
+      "id": "MC-6",
+      "title": "Chat, personas, decisions and remaining CLI adapters",
+      "dependsOn": [
+        "MC-5"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-6",
+        "criteria": [
+          "List each supported call site and its telemetry granularity. Fixture coverage exercises workspace and card chat, persona, decision, fallback and opaque CLI usage.",
+          "Live or representative protocol probes verify response granularity per supported adapter with no prompt leakage."
+        ]
+      },
+      "promptMarkdown": "# Chat, personas, decisions and remaining CLI adapters\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for delivery and cost unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nChat/orchestrator and provider invocation adapters.\n\nInventory the remaining invocation boundaries and instrument orchestrator and chat sessions, personas, live/shadow decision jobs, and remaining supported coding/research CLI adapters. Reuse the shared call envelope and outbox. Record genuine receipt granularity when the provider lacks individual usage. Wire sanitized prompt manifest IDs/revisions where produced. Keep pure decision-library steps out of the ledger.\n\n## Acceptance\n- List each supported call site and its telemetry granularity. Fixture coverage exercises workspace and card chat, persona, decision, fallback and opaque CLI usage.\n- Live or representative protocol probes verify response granularity per supported adapter with no prompt leakage."
+    },
+    {
+      "id": "MC-7",
+      "title": "Reconciliation, retention and 30-day backfill",
+      "dependsOn": [
+        "MC-6"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-7",
+        "criteria": [
+          "Replay the 30-day window twice with unchanged totals, source watermarks, per-model price gaps and explicit unknowns.",
+          "Prove that expiry with replay does not resurrect details or double-count rollups and that late price revisions are auditable.",
+          "Verify retention and 180-day query resource targets on the one-machine profile."
+        ]
+      },
+      "promptMarkdown": "# Reconciliation, retention and 30-day backfill\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for retention and backfill unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nLedger projections and migration tooling.\n\nAdd restartable ingestion of bus, card/persona/one-shot/chat receipts, review settlements, selection evidence and retained sessions. Audit exact joins and coverage, partition ownership, residual accounting, price corrections and deduplication. Implement detail expiry, durable rollups and restore/erasure procedures. Compare to existing reports before any switch to budget or legacy readers.\n\n## Acceptance\n- Replay the 30-day window twice with unchanged totals, source watermarks, per-model price gaps and explicit unknowns.\n- Prove that expiry with replay does not resurrect details or double-count rollups and that late price revisions are auditable.\n- Verify retention and 180-day query resource targets on the one-machine profile."
+    },
+    {
+      "id": "MC-8",
+      "title": "Explorer, comparisons and savings scenarios",
+      "dependsOn": [
+        "MC-7"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-8",
+        "criteria": [
+          "Measured night supports time, task, host, model/level, step, cause and kind pivots within coverage.",
+          "Prove navigation and reconciliation across aggregates and children. Test overlap between removal rules, partial price coverage and full dark/light responsive interaction."
+        ]
+      },
+      "promptMarkdown": "# Explorer, comparisons and savings scenarios\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for presentation and cost unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nModel Calls query contract and Studio explorer.\n\nExtend the first slice into a multidimensional explorer with saved scopes, comparison periods or models, rankings, call drill-down and rule-based insights. Implement bounded scenarios for model or level change, waiting elimination and one linked round less. Use the same authorized query and pricing semantics as the ledger. Render assumptions, sample size and priced coverage.\n\n## Acceptance\n- Measured night supports time, task, host, model/level, step, cause and kind pivots within coverage.\n- Prove navigation and reconciliation across aggregates and children. Test overlap between removal rules, partial price coverage and full dark/light responsive interaction."
+    },
+    {
+      "id": "MC-9",
+      "title": "Host pipeline and card lifecycle",
+      "dependsOn": [
+        "MC-8"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-9",
+        "criteria": [
+          "A seeded card spanning creation, coding, review, remediation and integration reconciles to its lifecycle subtotal.",
+          "Measured wait hotspot and card creation are discoverable from host/step and lifecycle. Verify screenshots on desktop and phone in both themes."
+        ]
+      },
+      "promptMarkdown": "# Host pipeline and card lifecycle\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for presentation and findings unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nStudio standing views.\n\nBuild the fixed host × step picture and lifecycle cost timeline from the Dossier. Show execution counts, provider responses and process intervals as distinct source measures. Connect timeline events and causal follow-ups to the explorer and to the shared detail view. Preserve project permissions, pinned windows and unknown gaps.\n\n## Acceptance\n- A seeded card spanning creation, coding, review, remediation and integration reconciles to its lifecycle subtotal.\n- Measured wait hotspot and card creation are discoverable from host/step and lifecycle. Verify screenshots on desktop and phone in both themes."
+    },
+    {
+      "id": "MC-10",
+      "title": "Daily and weekly usage issues",
+      "dependsOn": [
+        "MC-9"
+      ],
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "MC-10",
+        "criteria": [
+          "One issue per period and scope survives replay; late usage creates an explicit revision.",
+          "Report numbers match the query with identical permissions and revision, including DST boundaries, partial ingestion and unknown prices."
+        ]
+      },
+      "promptMarkdown": "# Daily and weekly usage issues\n\nRead AGENTS.md, docs/model-call-ledger/index.html and docs/system/domains/tokens.md and token-pricing.md. Apply the Dossier recommendations for presentation unless a recorded owner decision selects another option. Record the option implemented in the card results.\n\n## Scope\nMagazine reporting and report routes.\n\nImplement deterministic report generation over the shared query API and configured workspace calendar. Publish daily and weekly model use, cost, coverage, waste and top-card evidence in Magazine and matching structured routes. Include revisions, catch-up after restart, access controls, explicit source lag and linked filters.\n\n## Acceptance\n- One issue per period and scope survives replay; late usage creates an explicit revision.\n- Report numbers match the query with identical permissions and revision, including DST boundaries, partial ingestion and unknown prices."
+    }
+  ]
+}
