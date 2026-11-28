@@ -11,6 +11,7 @@ namespace AgentStudio.Tests;
 // clock-independent: fixed review receipt dates and injected authority time never meet real time.
 public sealed class CompletionContentEvidenceTests : IDisposable
 {
+    private CompletionContentEvidence.LocalReviewEvidence? _reviewedEvidence;
     private readonly string _root = Path.Combine(Path.GetTempPath(), "completion-lineage-" + Guid.NewGuid().ToString("N"));
     private static readonly DateTime ReviewedAt = new(2026, 11, 26, 10, 0, 0, DateTimeKind.Utc);
     private readonly AttemptAuthorityService _authority;
@@ -244,11 +245,11 @@ public sealed class CompletionContentEvidenceTests : IDisposable
             ? CompletionContentEvidence.LocalContextFile : CompletionContentEvidence.LocalAdmissionFile), expected);
         // Reproduce the original unguarded call before exercising its recovery boundary.
         Assert.Same(expected, Record.Exception(() => CompletionContentEvidence.WriteLocalAdmission(
-            _root, "local-review-1", new string('a', 40), budget.RoundBudget.ContentAdmissions, writer)));
+            _root, "local-review-1", new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, writer)));
 
         var logger = new AdmissionLogger();
         Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger, writer));
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger, writer));
         var error = Assert.Single(logger.Errors);
         Assert.Same(expected, error.Exception);
         Assert.Contains("local-content-admission-record-failed", error.Message);
@@ -258,7 +259,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         Assert.Equal(originalFinding, File.ReadAllText(findingPath));
 
         Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger));
         if (status == "pass")
         {
             Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
@@ -278,6 +279,10 @@ public sealed class CompletionContentEvidenceTests : IDisposable
     [InlineData("blank-sha")]
     [InlineData("missing-delivery")]
     [InlineData("different-delivery")]
+    [InlineData("same-sha-new-run")]
+    [InlineData("replaced-review-context")]
+    [InlineData("missing-snapshot")]
+    [InlineData("malformed-snapshot-context")]
     [InlineData("missing-context")]
     [InlineData("missing-finding")]
     [InlineData("malformed-context")]
@@ -290,6 +295,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         var context = File.ReadAllText(contextPath);
         var finding = File.ReadAllText(findingPath);
         var dispositions = budget.RoundBudget.ContentAdmissions;
+        var reviewedEvidence = _reviewedEvidence;
         string? sha = new string('a', 40);
         switch (damage)
         {
@@ -299,6 +305,11 @@ public sealed class CompletionContentEvidenceTests : IDisposable
             case "blank-sha": sha = " "; break;
             case "missing-delivery": File.Delete(TaskPaths.SessionEventsLog(_root)); break;
             case "different-delivery": LocalDelivery(new string('b', 40)); break;
+            case "same-sha-new-run": LocalDelivery(new string('a', 40), ReviewedAt.AddHours(1)); break;
+            case "replaced-review-context": CompletionContentEvidence.WriteLocalContext(_root,
+                BriefVersionStore.ReadCurrent(_root), null, ReviewedAt.AddHours(1)); break;
+            case "missing-snapshot": reviewedEvidence = null; break;
+            case "malformed-snapshot-context": reviewedEvidence = reviewedEvidence! with { ContextJson = "[]" }; break;
             case "missing-context": File.Delete(contextPath); break;
             case "missing-finding": File.Delete(findingPath); break;
             case "malformed-context": File.WriteAllText(contextPath, "null"); break;
@@ -308,7 +319,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         var logger = new AdmissionLogger();
         // This is the promotion boundary used immediately before GuardedMoveJob.
         Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            sha, dispositions, logger));
+            sha, dispositions, reviewedEvidence, logger));
         Assert.Contains("local-content-admission-record-failed", Assert.Single(logger.Errors).Message);
         Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
         Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
@@ -317,7 +328,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         File.WriteAllText(contextPath, context);
         File.WriteAllText(findingPath, finding);
         Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger));
         Assert.True(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
         Assert.Equal(finding, File.ReadAllText(findingPath));
     }
@@ -343,7 +354,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         var logger = new AdmissionLogger();
 
         Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger));
         Assert.Contains("original finding", Assert.Single(logger.Errors).Exception!.Message);
         Assert.Equal(context, File.ReadAllText(contextPath));
         Assert.Equal(mismatchedFinding, File.ReadAllText(findingPath));
@@ -351,11 +362,90 @@ public sealed class CompletionContentEvidenceTests : IDisposable
 
         File.WriteAllText(findingPath, reviewedFinding);
         Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger));
         Assert.True(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card with {
             Mode = aspect == "concept-fit" ? "concept" : "coding",
         }, null)).Accepted);
         Assert.Equal(reviewedFinding, File.ReadAllText(findingPath));
+    }
+
+    [Theory]
+    [InlineData("requirement-fit", "summary")]
+    [InlineData("requirement-fit", "details")]
+    [InlineData("requirement-fit", "missing")]
+    [InlineData("requirement-fit", "evidenceChecked")]
+    [InlineData("concept-fit", "summary")]
+    public void Replacement_local_finding_with_same_status_cannot_inherit_the_reviewed_admission(
+        string aspect, string changedField)
+    {
+        var budget = LocalAdmission("Consider clearer wording.", aspect: aspect, writeAdmission: false);
+        var contextPath = Path.Combine(_root, CompletionContentEvidence.LocalContextFile);
+        var context = File.ReadAllText(contextPath);
+        var findingPath = Path.Combine(_root, $"aspect-{aspect}.json");
+        var original = File.ReadAllText(findingPath);
+        var replacement = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+        replacement[changedField] = "A different finding needs a separate review.";
+        File.WriteAllText(findingPath, replacement.ToJsonString());
+
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, new AdmissionLogger()));
+        Assert.Equal(context, File.ReadAllText(contextPath));
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+        Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card with {
+            Mode = aspect == "concept-fit" ? "concept" : "coding",
+        }, null)).Accepted);
+    }
+
+    [Theory]
+    [InlineData("summary")]
+    [InlineData("details")]
+    [InlineData("evidenceChecked")]
+    public void Local_snapshot_rejects_artifacts_that_do_not_match_the_returned_verdict(string changedField)
+    {
+        LocalAdmission("Consider clearer wording.", writeAdmission: false);
+        var path = Path.Combine(_root, "aspect-requirement-fit.json");
+        var replacement = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        replacement[changedField] = "A different finding needs a separate review.";
+        File.WriteAllText(path, replacement.ToJsonString());
+
+        Assert.Null(CompletionContentEvidence.CaptureLocalReviewEvidence(_root, [new AspectVerdict(
+            "requirement-fit", AspectStatus.Concerns, "Consider clearer wording.", "Consider clearer wording.", null)
+            { EvidenceChecked = "The bounded implementation." }]));
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+    }
+
+    [Fact]
+    public void Finding_replaced_during_the_receipt_write_keeps_promotion_pending_and_retry_uses_the_original()
+    {
+        var budget = LocalAdmission("Consider clearer wording.", writeAdmission: false);
+        var path = Path.Combine(_root, "aspect-requirement-fit.json");
+        var original = File.ReadAllText(path);
+        var logger = new AdmissionLogger();
+        var writer = new ReplacingFindingWriter(path);
+
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger, writer));
+        Assert.Contains("changed while recording", Assert.Single(logger.Errors).Exception!.Message);
+        Assert.False(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+
+        File.WriteAllText(path, original);
+        Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, _reviewedEvidence, logger));
+        Assert.True(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card, null)).Accepted);
+        Assert.Equal(original, File.ReadAllText(path));
+    }
+
+    private sealed class ReplacingFindingWriter(string findingPath) : AgentStudio.Persistence.IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => ReplaceExisting(path, content);
+        public void ReplaceExisting(string path, string content)
+        {
+            new AgentStudio.Persistence.AtomicJsonFileWriter().ReplaceExisting(path, content);
+            if (Path.GetFileName(path) != CompletionContentEvidence.LocalContextFile) return;
+            var finding = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(findingPath))!;
+            finding["summary"] = "A replacement concern raised during the write.";
+            File.WriteAllText(findingPath, finding.ToJsonString());
+        }
     }
 
     [Fact]
@@ -372,7 +462,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         var context = File.ReadAllText(contextPath);
 
         Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
-            new string('a', 40), dispositions, new AdmissionLogger()));
+            new string('a', 40), dispositions, _reviewedEvidence, new AdmissionLogger()));
         Assert.Equal(context, File.ReadAllText(contextPath));
         Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
     }
@@ -392,7 +482,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
 
         Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root,
             damage == "blank-review" ? " " : "local-review-1", new string('a', 40),
-            budget.RoundBudget.ContentAdmissions, new AdmissionLogger()));
+            budget.RoundBudget.ContentAdmissions, _reviewedEvidence, new AdmissionLogger()));
         Assert.Equal(context, File.ReadAllText(contextPath));
         Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
     }
@@ -429,8 +519,13 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         CompletionContentEvidence.StampLocalRun(_root);
         CompletionContentEvidence.WriteLocalContext(_root, BriefVersionStore.ReadCurrent(_root), null, ReviewedAt);
         File.WriteAllText(Path.Combine(_root, $"aspect-{aspect}.json"), JsonSerializer.Serialize(new {
-            status, summary, evidenceChecked = "The bounded implementation.", missing = "A concrete example.",
+            aspect, status, summary, details = summary,
+            evidenceChecked = "The bounded implementation.", missing = "A concrete example.",
         }));
+        _reviewedEvidence = CompletionContentEvidence.CaptureLocalReviewEvidence(_root, [new AspectVerdict(
+            aspect, status == "pass" ? AspectStatus.Pass : status == "block" ? AspectStatus.Block : AspectStatus.Concerns,
+            summary, summary, null) { EvidenceChecked = "The bounded implementation." }]);
+        Assert.NotNull(_reviewedEvidence);
         Contract.ReviewFollowUpFinding[] findings = qualityBlock
             ? [new(aspect, status, summary), new("code-quality", "block", "backend/Quality.cs fails an optional diagnostic.")]
             : [new(aspect, status, summary)];
@@ -442,7 +537,7 @@ public sealed class CompletionContentEvidenceTests : IDisposable
             new("local-review-1", budget.BlockingAspects, budget.RoundBudget.DegradedAspects));
         if (writeAdmission)
             CompletionContentEvidence.WriteLocalAdmission(_root, "local-review-1", new string('a', 40),
-                budget.RoundBudget.ContentAdmissions);
+                budget.RoundBudget.ContentAdmissions, _reviewedEvidence);
         return budget;
     }
 
