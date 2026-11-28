@@ -71,6 +71,41 @@ reset parsing and capability admission; see the
   `frontend/src/app/components/cli-model-selector/`: CLI status, usage, quota,
   and model UI.
 
+## Waiting for commands in detached Codex coding runs
+
+The runner passes `-c developer_instructions="…"` before `exec` on fresh and
+resumed coding runs. Codex 0.166.0 adds the text as a developer message and
+keeps its built-in instructions. The separately verified
+`model_instructions_file` setting replaces the built-in model instructions and
+the runner leaves it unset. This launch policy applies to the detached coding
+worker.
+
+For a command that may run longer than 30 seconds, follow the loop in
+[AGENTS.md](../../../AGENTS.md#verification). The model launches one
+`exec` script which starts the command and waits for its exit using
+`write_stdin` inside the script. Use the repository's `scripts/agent-check.sh`
+when present for build and test commands. Each separate wait or repeated status
+call requires another model response. Claude Code 2.1.327 can wait in one
+foreground Bash call. Its default timeout is 120 seconds and its default
+maximum is 600 seconds, configurable via `BASH_MAX_TIMEOUT_MS`.
+
+| Codex 0.166.0 control | Scope and bound |
+| --- | --- |
+| Outer `exec` pragma `yield_time_ms` | Defaults to 30,000 ms and accepts integers through 9,007,199,254,740,991 ms (JavaScript's largest safe integer). The ordinary CLI code-mode session supplies no fixed yield ceiling. A code-mode host can supply a session limit. The operator's 1,800,000 ms setting held one invocation open for 330.1 seconds. A solution build attempt on the same host held one invocation open until its 1,500-second shell timeout. Use 1,800,000 ms as the working budget and a shorter shell timeout. |
+| Nested `exec_command` with a running background session | Initial observation is capped at 30,000 ms. A shell timeout limits the command's lifetime. |
+| Empty `write_stdin` | Codex clamps the requested observation window to 5,000 ms through `background_terminal_max_timeout`. The default and runner setting are 300,000 ms. On the run host a request for 310,000 ms returned after 300.078 seconds with the command still running. |
+| `background_terminal_max_timeout` | Sets the upper observation bound for empty terminal reads. It leaves the command lifetime, the outer pragma, and the 30,000 ms limit on nonempty writes independent. |
+
+The version-specific limits are implemented in the Codex
+[pragma parser](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/code-mode-protocol/src/description.rs),
+[code-mode runtime](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/code-mode-runtime/src/service.rs),
+and [terminal process manager](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/core/src/unified_exec/process_manager.rs).
+
+When measuring a run, group recorded tool calls by model response. Count a
+response as waiting only if its tool calls are all waits, sleeps, empty
+terminal reads, or repeated read-only status checks. The response that
+launches a command is work, including when its script waits internally.
+
 ## Invariants
 
 - Every driver must satisfy the same contract: start process, stream output,

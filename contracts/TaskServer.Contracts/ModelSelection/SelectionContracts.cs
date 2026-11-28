@@ -250,6 +250,8 @@ public sealed record SelectionLedgerEntry(
     public bool NearbyResetWait { get; init; }
     public decimal? FromPricePerMTok { get; init; }
     public decimal? ToPricePerMTok { get; init; }
+    public SelectionOutcome? AdmissionOutcome { get; init; }
+    public string? QuotaSubscriptionKey { get; init; }
     /// <summary>The ledger event for a result, or null for a plain primary launch.</summary>
     public static SelectionLedgerEntry? For(
         SelectionRequest request, SelectionResult result, string executionPath, string id, DateTime at)

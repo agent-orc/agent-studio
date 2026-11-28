@@ -104,6 +104,7 @@ public static partial class ProviderAccessClassifier
         "hit your weekly limit",
         "session limit",
         "usage limit",
+        "usage_limit_reached",
         "quota exceeded",
         "quota exhausted",
         "rate limit exceeded",
@@ -208,7 +209,8 @@ public static partial class ProviderAccessClassifier
                 FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"),
                 ParseModelRetryAt(text, observedAt ?? DateTimeOffset.UtcNow));
 
-        var explicitRefusal = Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text);
+        var explicitRefusal = ProviderRequestRejectionClassifier.IsUsageWindowRefusal(text)
+                              || Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text);
         if (explicitRefusal)
         {
             var now = observedAt ?? DateTimeOffset.UtcNow;
@@ -343,7 +345,7 @@ public static partial class ProviderAccessClassifier
     {
         foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
-            if (Contains(line, signals) || Http429Regex().IsMatch(line) || ExplicitHttp401Regex().IsMatch(line))
+            if (Contains(line, signals) || ProviderRequestRejectionClassifier.IsUsageWindowRefusal(line) || Http429Regex().IsMatch(line) || ExplicitHttp401Regex().IsMatch(line))
                 return Trim(line);
         }
         return fallback;
@@ -370,7 +372,7 @@ public static partial class ProviderAccessClassifier
     [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\s*Z|\s*[+-]\d{2}:?\d{2})?)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex IsoResetRegex();
 
-    [GeneratedRegex(@"\bresetsAt\s*=\s*(?<value>\d{10})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\breset(?:sAt|s_at)\\?""?\s*[:=]\s*\\?""?(?<value>\d{10})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EpochResetRegex();
 
     [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>(?:\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?|\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)))(?:\s*\((?<zone>[A-Za-z_+./-]+)\))?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

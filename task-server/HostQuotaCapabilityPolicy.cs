@@ -11,7 +11,7 @@ public static class HostQuotaCapabilityPolicy
         => host.Status == "active" && host.HostAdmission.AdmissionState == "open"
            && host.LastSeenAt > nowUtc.AddMinutes(-3)
            && host.Capabilities.Any(capability => capability.Key == "provider-auth:" + provider
-               && capability.IsFresh && capability.AdvertisedStatus == "ready"
+               && capability.IsFresh && capability.AdvertisedStatus is ("ready" or "limited")
                && capability.HealthState == CapabilityHealthStates.Healthy
                && capability.HealthOutcome is not ("credential_invalid" or "provider_incident" or "indeterminate"));
 }

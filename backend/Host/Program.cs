@@ -1572,8 +1572,10 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostModelFactSource>();
 builder.Services.AddSingleton<CapacityIdleTracker>();
 builder.Services.AddSingleton<CodingCapacityService>();
+builder.Services.AddSingleton<CodingCapacityWaitReader>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => sp.GetRequiredService<CodingCapacityService>());
 builder.Services.AddSingleton<OverlapPredictionLedger>();
 builder.Services.AddSingleton<OverlapDispatchGuard>();
@@ -1612,6 +1614,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGat
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
+builder.Services.AddSingleton<OperatorPressureReader>();
 // Resolved per read: the deploy fact titles a job by the Deploy area's names (AGT-3987).
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDeployFactSource(
     sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(), sp.GetRequiredService<ProjectRegistry>(),

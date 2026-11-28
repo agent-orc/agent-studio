@@ -10,7 +10,8 @@ public sealed record HostTelemetrySample(DateTime Timestamp, double? CpuPercent,
     DateTime? TaskServerConnectionFailureStartedAt = null, int TaskServerConnectionConsecutiveFailures = 0,
     DateTime? TaskServerConnectionEscalatedAt = null, string? TaskServerConnectionLastError = null,
     DateTime? TaskServerConnectionLastRecoveredAt = null,
-    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null);
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null,
+    long? SwapUsedBytes = null, long? SwapTotalBytes = null);
 
 public sealed record HostTelemetryFinding(
     string Kind,
@@ -64,15 +65,7 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
     {
         lock (_gate)
         {
-            var thresholds = new AgentStudio.TaskServer.Contracts.HostDiskPressureThresholds(
-                config.GetValue("DiskPressure:WarningFreeBytes", 20L * 1024 * 1024 * 1024),
-                config.GetValue("DiskPressure:WarningFreePercent", 15d),
-                config.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
-                config.GetValue("DiskPressure:CriticalFreePercent", 5d));
-            var previous = _diskPaused.GetValueOrDefault(clientId);
-            if (filesystems is null && previous is not null) return previous;
-            var decision = AgentStudio.TaskServer.Contracts.HostDiskPressurePolicy.Decide(
-                filesystems, thresholds, previous is not null);
+            var decision = ReadDiskPressure(clientId, filesystems);
             if (filesystems is { Count: > 0 })
             {
                 if (decision.Level == HostDiskPressureLevel.Critical) _diskPaused[clientId] = decision;
@@ -80,6 +73,26 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
             }
             return decision;
         }
+    }
+
+    internal HostDiskPressureDecision ReadDiskPressure(string clientId, IReadOnlyList<HostFilesystemUsageDto>? filesystems)
+    {
+        lock (_gate)
+        {
+            var previous = _diskPaused.GetValueOrDefault(clientId);
+            if (filesystems is null && previous is not null) return previous;
+            var thresholds = new HostDiskPressureThresholds(
+                config.GetValue("DiskPressure:WarningFreeBytes", 20L * 1024 * 1024 * 1024),
+                config.GetValue("DiskPressure:WarningFreePercent", 15d),
+                config.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
+                config.GetValue("DiskPressure:CriticalFreePercent", 5d));
+            return HostDiskPressurePolicy.Decide(filesystems, thresholds, previous is not null);
+        }
+    }
+
+    internal HostTelemetrySample? Latest(string clientId)
+    {
+        lock (_gate) return Read(clientId).LastOrDefault();
     }
 
     public HostTelemetryResponse Query(string clientId, string window, DateTime? nowUtc = null)
@@ -132,7 +145,8 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
             latest.TaskServerConnectionStatus, latest.TaskServerConnectionObservedAt,
             latest.TaskServerConnectionFailureStartedAt, latest.TaskServerConnectionConsecutiveFailures,
             latest.TaskServerConnectionEscalatedAt, latest.TaskServerConnectionLastError,
-            latest.TaskServerConnectionLastRecoveredAt, latest.Filesystems);
+            latest.TaskServerConnectionLastRecoveredAt, latest.Filesystems,
+            L(x => x.SwapUsedBytes), L(x => x.SwapTotalBytes));
     }
 
     internal static IReadOnlyList<HostTelemetryFinding> Findings(List<HostTelemetrySample> points)

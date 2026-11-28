@@ -256,16 +256,31 @@ public sealed class ProjectPreparationCacheRetentionTests : IDisposable
     }
 
     [Fact]
-    public void The_cache_root_is_product_owned_and_never_the_temp_root()
+    public void The_cache_root_is_product_owned_and_never_unowned_machine_temp()
     {
         var configured = ProjectPreparationPaths.DefaultCacheRoot(
             name => name == ProjectPreparationPaths.CacheRootVariable ? _workspace.Path : null);
         Assert.Equal(Path.GetFullPath(_workspace.Path), configured);
 
         var resolved = ProjectPreparationPaths.DefaultCacheRoot(_ => null);
-        Assert.False(
-            resolved.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.Ordinal),
-            $"'{resolved}' is inside the temp root; a cache there has no owner and no bound.");
+        var ownedTestCache = Path.Combine(TestTempRoot.SuiteRoot, "state", "agent-studio", "cache");
+        if (string.Equals(resolved, ownedTestCache, StringComparison.Ordinal))
+        {
+            // The module initializer gives this state an owner and bounded cleanup.
+            // Accept only that exact cache path, never an arbitrary temp fallback.
+            Assert.Equal(Path.Combine(TestTempRoot.SuiteRoot, "state"), LocalStateRoot.Resolve());
+            Assert.Equal(LocalStateRoot.Combine("agent-studio", "cache"), resolved);
+        }
+        else
+        {
+            foreach (var tempRoot in new[] { TestTempRoot.HostTempRoot, Path.GetTempPath() })
+            {
+                var fullTemp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(tempRoot));
+                Assert.NotEqual(fullTemp, Path.TrimEndingDirectorySeparator(resolved));
+                Assert.False(resolved.StartsWith(fullTemp + Path.DirectorySeparatorChar, StringComparison.Ordinal),
+                    $"'{resolved}' is inside unowned machine temp; a cache there has no owner and no bound.");
+            }
+        }
 
         // The project segment keeps one project's eviction away from another's.
         var project = ProjectPreparationPaths.ProjectCacheRoot("agent studio/m1 pilot", _ => null);

@@ -107,7 +107,10 @@ public sealed class HostTelemetrySampler
             .Where(parts => parts.Length == 2)
             .ToDictionary(parts => parts[0], parts => ParseKb(parts[1]), StringComparer.Ordinal);
         var total = memory.GetValueOrDefault("MemTotal");
-        var available = memory.GetValueOrDefault("MemAvailable", memory.GetValueOrDefault("MemFree"));
+        long? available = memory.TryGetValue("MemAvailable", out var availableBytes) || memory.TryGetValue("MemFree", out availableBytes)
+            ? availableBytes : null;
+        long? swapTotal = memory.TryGetValue("SwapTotal", out var swapBytes) ? swapBytes : null;
+        var swapUsed = memory.TryGetValue("SwapFree", out var swapFree) ? swapTotal - swapFree : null;
 
         var vm = ProcLines("vmstat")
             .Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -124,8 +127,10 @@ public sealed class HostTelemetrySampler
         _previousSwap = vm.Count == 2 ? currentSwap : null;
 
         return new HostTelemetrySample(now, cpu, ParseDouble(loads.ElementAtOrDefault(0)), ParseDouble(loads.ElementAtOrDefault(1)), ParseDouble(loads.ElementAtOrDefault(2)),
-            total > 0 && available > 0 ? Math.Max(0, total - available) : null, total > 0 ? total : null,
-            swapIn, swapOut, steal, ioWait, stat.Length == 0 ? 0 : ParseLinuxHostCpuCount(stat), activeSlots);
+            total > 0 && available is >= 0 && available <= total ? total - available : null,
+            total > 0 ? total : null,
+            swapIn, swapOut, steal, ioWait, stat.Length == 0 ? 0 : ParseLinuxHostCpuCount(stat), activeSlots,
+            SwapUsedBytes: swapUsed is >= 0 ? swapUsed : null, SwapTotalBytes: swapTotal);
     }
 
     private HostTelemetrySample SampleWindows(DateTime now, int activeSlots)

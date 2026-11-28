@@ -70,6 +70,26 @@ unreconciled rejected tip. See the
 
 ## Gate economics and integration lane
 
+`GET /api/operator/coding-capacity` includes a `wait` projection on each
+authorized project row. It reports up to 50 live integration deliveries with
+their lane, queued review attempt and result SHA when available, queue phase
+and age. An admission observation within two integration recheck intervals,
+with overlapping paths and a matching current recovery receipt, yields
+`intentional-wait` with reason `wait-for-holder`. The next check uses the
+integration recheck interval.
+Each delivery shows up to eight reservations and 20 overlapping files per
+reservation. Dependent counts cover the returned deliveries. Legacy recovery
+receipts supply the holder's original delivery time as `sinceUtc` and have no
+recorded expiry.
+
+A known successor run or review can yield
+`confirmed-lost-ownership`. Missing or expired evidence yields `unknown`.
+The projection also includes the current fenced dispatch plan when available,
+observed gate and integration owners, and the latest observed progress time.
+Gate completions and integration ownership are observed by the serving
+process. The read performs no recovery or model calls, and never advises an API
+restart.
+
 The batch gate state read reports `phaseAtUtc` for each batch and
 `startedAtUtc` for each run. A `Running` phase also reports whether this
 process owns a live flight and, when it does not, the recovery delay and next
@@ -3127,6 +3147,25 @@ comparison before Quality Studio's verdict contract can decide a review.
   keeps its own test stage until the project switches to post-merge checks
   (Dossier P7). The Owner picks the strategy on the project settings page or
   with `PUT /api/projects/{name}/testing` (`{"strategy":"fast"}`).
+- Fast coding reviews select against the immutable result and its merge base
+  with the integration line, including on fix rounds. The .NET review scope
+  keeps changed runnable test classes and `TypeTest` or `TypeTests` companions
+  of changed types. The selector reads both sides of renames and the old side
+  of deletions, groups partial classes, and excludes `MachineBound` cases.
+  Process-reference checks and the fixed review base remain outside the trial
+  budget. The budget covers 32 distinct test-source files added by direct type
+  references across all affected .NET test projects. It counts matching test
+  sources for a partial class. A match in a helper part alone counts the test
+  sources it selects. If the set is larger, the pilot omits the whole optional
+  set. The selection audit and review-plan
+  log record the paths and the post-merge routine suite obligation.
+  The default adds the eligible pilot checks and preserves existing class
+  selections. The log compares the two scopes on each delivery.
+  `RemoteReview:UseBudgetedDotNetScope=true` enables replacement of the prior
+  reference filters for the pilot. Unavailable inputs prevent that
+  replacement. Strict and full review policies retain their existing fallback.
+  Verify evidence reuse still requires the same result SHA, command and
+  toolchain, and a passing receipt from an eligible attempt.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.

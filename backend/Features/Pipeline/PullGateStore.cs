@@ -84,6 +84,16 @@ public sealed class PullGateStore
             .Select(job => (DateTime?)job.EnqueuedAt!.Value.UtcDateTime).OrderBy(value => value).FirstOrDefault();
     }
 
+    internal (int Count, DateTime? OldestAt) QueueObservation()
+    {
+        lock (_gate)
+        {
+            var queued = _jobs.Values.Where(job => job.State == "queued").ToArray();
+            return (queued.Length, queued.All(job => job.EnqueuedAt is not null)
+                ? queued.Min(job => job.EnqueuedAt?.UtcDateTime) : null);
+        }
+    }
+
     public IDisposable? TryFenceHostClaims(string hostId)
     {
         lock (_gate)

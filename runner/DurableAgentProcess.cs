@@ -481,7 +481,8 @@ internal sealed class DurableAgentProcess
         bool launchFailed;
         try
         {
-            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append);
+            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
+                spec, directory, Append, unattendedCoding: true);
         }
         catch (Exception ex)
         {

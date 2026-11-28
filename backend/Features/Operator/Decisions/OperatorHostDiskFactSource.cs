@@ -19,7 +19,7 @@ public sealed class OperatorHostDiskFactSource(V1ReviewExecutorRegistry registry
     internal IReadOnlyList<OperatorDecisionFact> Project(string id, HostTelemetryResponse series, DateTime nowUtc)
     {
         var latest = series.Points.LastOrDefault();
-        if (latest is null || nowUtc - latest.Timestamp > TimeSpan.FromMinutes(15)) return [];
+        if (latest is null || !IsFresh(latest.Timestamp, nowUtc)) return [];
         var pressure = telemetry.DiskPressure(id, latest.Filesystems);
         if (pressure.Level == HostDiskPressureLevel.Healthy) return [];
         return [new(OperatorDecisionTypes.HostDiskPressure,
@@ -30,4 +30,7 @@ public sealed class OperatorHostDiskFactSource(V1ReviewExecutorRegistry registry
             latest.Timestamp, [new("Host", "/workspace/settings/environment")],
             Title: $"Host {id} disk space low")];
     }
+
+    internal static bool IsFresh(DateTime timestamp, DateTime nowUtc)
+        => timestamp != default && timestamp <= nowUtc && nowUtc - timestamp <= TimeSpan.FromMinutes(15);
 }

@@ -242,7 +242,9 @@ public sealed record HostTelemetrySample(
     IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null,
     AgentStudio.TaskServer.Contracts.HostPlacementDto? Placement = null,
     long? NetworkReceiveBytesPerSecond = null,
-    long? NetworkTransmitBytesPerSecond = null);
+    long? NetworkTransmitBytesPerSecond = null,
+    long? SwapUsedBytes = null,
+    long? SwapTotalBytes = null);
 
 public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFailed, Invalid }
 

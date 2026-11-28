@@ -28,7 +28,8 @@ internal sealed record CapacityHost(string Id, string Name, string HostId, int S
 public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSettingsService settings,
     ClientIdentityStore clients, V1ReviewExecutorRegistry executors, QuotaService quota,
     IModelSelectionService selection, OverlapDispatchGuard dispatch, CapacityIdleTracker idle,
-    TaskListGitProjectionCache gitProjection, ProjectRegistry? registry = null, RunLeaseService? leases = null)
+    TaskListGitProjectionCache gitProjection, ProjectRegistry? registry = null, RunLeaseService? leases = null,
+    CodingCapacityWaitReader? waitReader = null)
     : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.CapacityUnderused];
@@ -111,10 +112,14 @@ public sealed class CodingCapacityService(TaskScannerService scanner, ProjectSet
             var registered = registry?.FindByStorageLocation(watchPath) ?? registry?.FindByIdOrDisplayName(project);
             var slots = ProjectSlots(config, assigned, occupancy.GetValueOrDefault(project),
                 RemoteProjectRepositoryResolver.Resolve(registered, config.IntegrationBranch), now);
-            return CodingCapacityProjection.Project(project, tasks.Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)).ToArray(),
+            var projectTasks = tasks.Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return CodingCapacityProjection.Project(project, projectTasks,
                 references, slots.Total, slots.Used, Blocks, Waits, slots.Admissible, slots.Blocks,
                 assigned.Select(host => host.LastProgressAt).Max(), assigned.SelectMany(host => host.AdmissionLimits).Distinct().ToArray()) with
-                { Allocations = assigned.Select(host => host.Allocation).OfType<CapacityAllocation>().ToArray() };
+                {
+                    Allocations = assigned.Select(host => host.Allocation).OfType<CapacityAllocation>().ToArray(),
+                    Wait = waitReader?.Read(project, config, projectTasks, new DateTimeOffset(now)),
+                };
         }).ToArray();
         var fleetHosts = includeQuota ? hosts : hosts.Where(host => projects.Any(project => Assigned(settings.Get(project), host))).ToArray();
         var byCard = rows.SelectMany(row => row.Cards).ToDictionary(card => card.CardKey, StringComparer.OrdinalIgnoreCase);
