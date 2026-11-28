@@ -7,7 +7,8 @@ public static class MechanicalRoundFallbackPolicy
 {
     internal static bool RequiresPreparedCheckout(string? reason)
         => reason is "semantic-conflict" or "invalid-session-after-resume" or "resume-token-ceiling"
-            or "resume-duration-ceiling" or "resumed-round-inconclusive" or "resumed-round-failed";
+            or "resume-duration-ceiling" or "resumed-round-inconclusive" or "resumed-round-failed"
+            or MechanicalSessionContinuation.SessionLostBeforeLaunch;
 
     public static ExecutionOutcomeDecision AsTypedDecision(
         ExecutionOutcomeDecision decision,

@@ -51,6 +51,7 @@ public sealed class TaskCleanContextLease : IDisposable
     private readonly string _rootPath;
     private readonly string _taskIdentityHash;
     private int _disposed;
+    internal FileStream? SweepProtection { get; set; }
 
     internal TaskCleanContextLease(
         string cliType,
@@ -87,18 +88,19 @@ public sealed class TaskCleanContextLease : IDisposable
     /// </summary>
     public bool Delete()
     {
-        Interlocked.Exchange(ref _disposed, 1);
-        return TaskCleanContextStore.DeleteOwnedHome(_rootPath, HomePath);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return false;
+        try { return TaskCleanContextStore.DeleteOwnedHome(_rootPath, HomePath); }
+        finally { SweepProtection?.Dispose(); }
     }
 
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        TaskCleanContextStore.TouchExisting(
-            HomePath,
-            CliType,
-            _taskIdentityHash,
-            DateTimeOffset.UtcNow);
+        try
+        {
+            TaskCleanContextStore.TouchExisting(HomePath, CliType, _taskIdentityHash, DateTimeOffset.UtcNow);
+        }
+        finally { SweepProtection?.Dispose(); }
     }
 }
 
@@ -258,7 +260,8 @@ public static class TaskCleanContextStore
         string? userHome = null,
         string? rootOverride = null,
         DateTimeOffset? nowUtc = null,
-        TimeSpan? retention = null)
+        TimeSpan? retention = null,
+        bool runnerManaged = false)
     {
         var recipe = ResolveRecipe(cliType);
         var normalizedTaskIdentity = NormalizeTaskIdentity(taskIdentity);
@@ -268,52 +271,74 @@ public static class TaskCleanContextStore
         var taskIdentityHash = Hash(normalizedTaskIdentity);
         var now = nowUtc ?? DateTimeOffset.UtcNow;
 
-        lock (Gate)
+        if (!runnerManaged || !OperatingSystem.IsLinux()) return AcquireHome();
+        var protection = AcquireSweepProtection(root, home);
+        try
         {
-            Cleanup(root, now, retention ?? DefaultRetention, keepHome: home);
-            Directory.CreateDirectory(Path.GetDirectoryName(home)!);
+            var lease = AcquireHome();
+            lease.SweepProtection = protection;
+            return lease;
+        }
+        catch
+        {
+            protection.Dispose();
+            throw;
+        }
 
-            if (Directory.Exists(home))
+        TaskCleanContextLease AcquireHome()
+        {
+            lock (Gate)
             {
-                var existing = ReadMarker(home);
-                if (MarkerMatches(existing, recipe.CliType, taskIdentityHash))
+                if (!runnerManaged) Cleanup(root, now, retention ?? DefaultRetention, keepHome: home);
+                Directory.CreateDirectory(root);
+                if (!IsPhysicalDirectory(root)) throw new IOException("Clean-context root is linked.");
+                var provider = Path.GetDirectoryName(home)!;
+                Directory.CreateDirectory(provider);
+                if (!IsPhysicalDirectory(provider) || new DirectoryInfo(home).LinkTarget is not null)
+                    throw new IOException("Clean-context provider or task directory is linked.");
+
+                if (Directory.Exists(home))
                 {
-                    WriteMarker(home, existing! with { LastUsedAtUtc = now });
-                    var relinked = RelinkSharedCredentials(recipe, resolvedUserHome, home);
-                    return BuildLease(recipe, root, home, taskIdentityHash, reused: true, resolvedUserHome, relinked);
+                    var existing = ReadMarker(home);
+                    if (MarkerMatches(existing, recipe.CliType, taskIdentityHash))
+                    {
+                        WriteMarker(home, existing! with { LastUsedAtUtc = now });
+                        var relinked = RelinkSharedCredentials(recipe, resolvedUserHome, home);
+                        return BuildLease(recipe, root, home, taskIdentityHash, reused: true, resolvedUserHome, relinked);
+                    }
+
+                    if (Directory.EnumerateFileSystemEntries(home).Any())
+                        throw new InvalidDataException(
+                            $"Clean-context home '{home}' exists without the expected task marker; refusing to adopt it.");
+                }
+                else
+                {
+                    Directory.CreateDirectory(home);
                 }
 
-                if (Directory.EnumerateFileSystemEntries(home).Any())
-                    throw new InvalidDataException(
-                        $"Clean-context home '{home}' exists without the expected task marker; refusing to adopt it.");
-            }
-            else
-            {
-                Directory.CreateDirectory(home);
-            }
-
-            try
-            {
-                var seeded = SeedFreshHome(recipe, resolvedUserHome, home);
-                WriteMarker(home, new CleanContextMarker(
-                    MarkerVersion,
-                    recipe.CliType,
-                    taskIdentityHash,
-                    now,
-                    now));
-                return new TaskCleanContextLease(
-                    recipe.CliType,
-                    recipe.EnvironmentVariable,
-                    root,
-                    home,
-                    taskIdentityHash,
-                    reused: false,
-                    seeded);
-            }
-            catch
-            {
-                DeleteOwnedHome(root, home);
-                throw;
+                try
+                {
+                    var seeded = SeedFreshHome(recipe, resolvedUserHome, home);
+                    WriteMarker(home, new CleanContextMarker(
+                        MarkerVersion,
+                        recipe.CliType,
+                        taskIdentityHash,
+                        now,
+                        now));
+                    return new TaskCleanContextLease(
+                        recipe.CliType,
+                        recipe.EnvironmentVariable,
+                        root,
+                        home,
+                        taskIdentityHash,
+                        reused: false,
+                        seeded);
+                }
+                catch
+                {
+                    DeleteOwnedHome(root, home);
+                    throw;
+                }
             }
         }
     }
@@ -333,8 +358,8 @@ public static class TaskCleanContextStore
         var normalizedTaskIdentity = NormalizeTaskIdentity(taskIdentity);
         var root = ResolveRoot(userHome ?? ResolveUserHome(), rootOverride);
         var home = ResolveTaskHome(root, recipe.CliType, normalizedTaskIdentity);
-        var marker = ReadMarker(home);
-        if (Directory.Exists(home) && MarkerMatches(marker, recipe.CliType, Hash(normalizedTaskIdentity)))
+        var marker = IsPhysicalDirectory(home) ? ReadMarker(home) : null;
+        if (marker is not null && MarkerMatches(marker, recipe.CliType, Hash(normalizedTaskIdentity)))
         {
             homePath = home;
             return true;
@@ -429,46 +454,170 @@ public static class TaskCleanContextStore
     {
         if (retention <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(retention), "Retention must be positive.");
-        if (!Directory.Exists(rootPath)) return new CleanContextCleanupResult(0, 0, []);
+        var homes = Inventory(rootPath);
+        var expired = homes.Where(home => home.LastUsedAtUtc < nowUtc - retention
+            && (keepHome is null || !PathsEqual(home.Path, keepHome))).ToArray();
+        var result = SweepHomes(rootPath, expired);
+        return result with { Scanned = homes.Count };
+    }
 
-        var scanned = 0;
-        var deleted = 0;
-        var failed = new List<string>();
-        var cutoff = nowUtc - retention;
+    private const string EvictionSuffix = ".evicting";
 
-        foreach (var cliDirectory in Directory.EnumerateDirectories(rootPath))
+    public sealed record Home(string Path, string? TaskIdentityHash, DateTimeOffset LastUsedAtUtc);
+
+    public static string TaskIdentityHash(string taskIdentity) => Hash(NormalizeTaskIdentity(taskIdentity));
+
+    public static IReadOnlyList<Home> Inventory(string root)
+    {
+        if (!IsPhysicalDirectory(root)) return [];
+        var homes = new List<Home>();
+        foreach (var cliType in new[] { CodexRecipe.CliType, ClaudeRecipe.CliType })
         {
-            foreach (var home in Directory.EnumerateDirectories(cliDirectory))
+            var provider = Path.Combine(root, cliType);
+            if (!IsPhysicalDirectory(provider)) continue;
+            foreach (var directory in Directory.EnumerateDirectories(provider))
             {
-                scanned++;
-                if (keepHome != null && PathsEqual(home, keepHome)) continue;
-
-                try
-                {
-                    var marker = ReadMarker(home);
-                    var lastUsed = marker?.LastUsedAtUtc
-                        ?? new DateTimeOffset(Directory.GetLastWriteTimeUtc(home), TimeSpan.Zero);
-                    if (lastUsed >= cutoff) continue;
-                    if (DeleteOwnedHome(rootPath, home)) deleted++;
-                }
-                catch
-                {
-                    failed.Add(home);
-                }
-            }
-
-            try
-            {
-                if (!Directory.EnumerateFileSystemEntries(cliDirectory).Any())
-                    Directory.Delete(cliDirectory);
-            }
-            catch
-            {
-                failed.Add(cliDirectory);
+                if (!IsHomeName(Path.GetFileName(directory)) || !IsPhysicalDirectory(directory)) continue;
+                try { homes.Add(InspectHome(directory, cliType)); }
+                catch (IOException) when (!Directory.Exists(directory)) { }
             }
         }
+        return homes;
+    }
 
-        return new CleanContextCleanupResult(scanned, deleted, failed.Distinct(PathComparer()).ToList());
+    private static Home InspectHome(string home, string cliType)
+    {
+        if (home.EndsWith(EvictionSuffix, StringComparison.Ordinal))
+            return new Home(home, null, DateTimeOffset.MinValue);
+        var marker = ReadMarker(home);
+        if (marker is { Version: MarkerVersion } && marker.CliType == cliType
+            && marker.TaskIdentityHash is { Length: 64 } hash && hash.All(char.IsAsciiHexDigit))
+            return new Home(home, hash, marker.LastUsedAtUtc);
+        return new Home(home, null, Directory.GetLastWriteTimeUtc(home));
+    }
+
+    public static CleanContextCleanupResult SweepHomes(string root, IReadOnlyList<Home> candidates)
+    {
+        var deleted = 0;
+        var failed = new List<string>();
+        // Retain an exclusive lock for each candidate stripe across the process snapshot
+        // and deletion. An acquiring worker cannot seed or launch in that interval.
+        var locks = new Dictionary<string, FileStream?>();
+        var evictedHomes = new List<string>();
+        try
+        {
+            var available = new List<Home>();
+            foreach (var home in candidates)
+            {
+                var parent = Path.GetDirectoryName(home.Path);
+                if (parent is null || Path.GetFileName(parent) is not ("codex" or "claude")
+                    || !PathsEqual(Path.GetDirectoryName(parent)!, root)
+                    || !IsHomeName(Path.GetFileName(home.Path)) || !IsPhysicalDirectory(home.Path)) continue;
+                try
+                {
+                    if (OperatingSystem.IsLinux())
+                    {
+                        var path = SweepLockPath(root, home.Path);
+                        if (!locks.TryGetValue(path, out var handle))
+                            locks[path] = handle = TryOpenSweepLock(path, exclusive: true);
+                        if (handle is null) continue;
+                    }
+                    var provider = Path.GetFileName(parent);
+                    if (InspectHome(home.Path, provider) == home) available.Add(home);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    failed.Add(home.Path);
+                }
+            }
+
+            var bound = HostProcessBindings.Find(available.Select(home => home.Path).ToArray());
+            foreach (var home in available)
+            {
+                if (bound.Contains(home.Path)) continue;
+                try
+                {
+                    var path = home.Path;
+                    if (!path.EndsWith(EvictionSuffix, StringComparison.Ordinal))
+                    {
+                        var evicted = path + EvictionSuffix;
+                        Directory.Move(path, evicted);
+                        path = evicted;
+                    }
+                    evictedHomes.Add(path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    failed.Add(home.Path);
+                }
+            }
+        }
+        finally
+        {
+            foreach (var handle in locks.Values) handle?.Dispose();
+        }
+        foreach (var path in evictedHomes)
+        {
+            try
+            {
+                if (DeleteOwnedHome(root, path)) deleted++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add(path);
+            }
+        }
+        return new CleanContextCleanupResult(candidates.Count, deleted, failed);
+    }
+
+    private static bool IsHomeName(string key)
+    {
+        if (key.EndsWith(EvictionSuffix, StringComparison.Ordinal)) key = key[..^EvictionSuffix.Length];
+        return key.Length == 64 && key.All(char.IsAsciiHexDigit);
+    }
+
+    public static bool IsPhysicalDirectory(string path)
+    {
+        for (DirectoryInfo? part = new(Path.GetFullPath(path)); part is not null; part = part.Parent)
+        {
+            if (!part.Exists || part.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+        }
+        return true;
+    }
+
+    private static string SweepLockPath(string root, string home)
+    {
+        var directory = Path.Combine(root, ".locks");
+        if (!IsPhysicalDirectory(root)) throw new IOException("Clean-context root is unavailable or linked.");
+        Directory.CreateDirectory(directory);
+        if (!IsPhysicalDirectory(directory)) throw new IOException("Clean-context lock directory is linked.");
+        return Path.Combine(directory, Path.GetFileName(home)[..2]);
+    }
+
+    private static FileStream AcquireSweepProtection(string root, string home)
+    {
+        Directory.CreateDirectory(root);
+        var path = SweepLockPath(root, home);
+        // A sweep can be finishing an eviction when the next attempt arrives.
+        for (var retry = 0; retry < 600; retry++)
+        {
+            if (TryOpenSweepLock(path, exclusive: false) is { } handle) return handle;
+            Thread.Sleep(50);
+        }
+        throw new IOException("Timed out waiting for the clean-context sweep.");
+    }
+
+    private static FileStream? TryOpenSweepLock(string path, bool exclusive)
+    {
+        var file = new FileInfo(path);
+        if (file.LinkTarget is not null) throw new IOException("Clean-context lock file is linked.");
+        try
+        {
+            // File sharing maps to a shared or exclusive flock on Linux.
+            return File.Open(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                exclusive ? FileShare.None : FileShare.ReadWrite);
+        }
+        catch (IOException) { return null; }
     }
 
     internal static bool DeleteOwnedHome(string rootPath, string homePath)
@@ -485,7 +634,7 @@ public static class TaskCleanContextStore
             throw new InvalidOperationException($"Refusing to delete clean-context path outside the owned task-home shape: {home}");
         }
 
-        if (!Directory.Exists(home)) return false;
+        if (!IsPhysicalDirectory(home)) return false;
         Directory.Delete(home, recursive: true);
         return true;
     }
@@ -690,7 +839,7 @@ public static class TaskCleanContextStore
     private static CleanContextMarker? ReadMarker(string home)
     {
         var path = Path.Combine(home, MarkerFileName);
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) return null;
         try
         {
             return JsonSerializer.Deserialize<CleanContextMarker>(File.ReadAllText(path), MarkerJson);

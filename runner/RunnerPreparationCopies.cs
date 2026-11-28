@@ -1,10 +1,11 @@
-using System.Runtime.InteropServices;
+using AgentStudio.CliHosting;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
 /// <summary>Owns the writable preparation copies in this runner's work directory.</summary>
-internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerStateStore state, Action<string> log)
+internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerStateStore state, Action<string> log,
+    string? legacyPilotCacheRoot = null)
 {
     internal const long DefaultMaxBytes = 20_000_000_000;
     private const string ReleasePending = ".release-pending";
@@ -23,6 +24,13 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
     private static string Runs(string project) =>
         Path.Combine(Path.GetFullPath(project), "caches", "preparation", ProjectPreparationCacheSweep.RunsDirectoryName);
+
+    internal static string? ResolveLegacyPilotCacheRoot()
+    {
+        var data = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData,
+            Environment.SpecialFolderOption.DoNotVerify);
+        return Path.IsPathFullyQualified(data) ? Path.Combine(data, "agent-studio", "cache", "agent-studio-m1-pilot") : null;
+    }
 
     internal static string? RootFor(string workDir, PersistedRunnerSlot slot)
     {
@@ -54,7 +62,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         if (!Directory.Exists(path)) return;
         try
         {
-            TryRelease(path, ProcessReferences([path]).Contains(path), log);
+            TryRelease(path, HostProcessBindings.Find([path]).Contains(path), log);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -135,7 +143,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             var limit = disk is { TotalBytes: > 0 }
                 ? Math.Min(options.PreparationCopiesMaxBytes, (long)(disk.TotalBytes * 0.15m))
                 : options.PreparationCopiesMaxBytes;
-            Interlocked.Exchange(ref _bytes, Sweep(options.WorkDir, state.LoadAll, limit, startup, log));
+            Interlocked.Exchange(ref _bytes, Sweep(options.WorkDir, state.LoadAll, limit, startup, log, legacyPilotCacheRoot));
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -143,46 +151,66 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         }
     }
 
-    public async Task MonitorAsync(CancellationToken stop)
+    public async Task MonitorAsync(RunnerCleanContexts cleanContexts, CancellationToken stop)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         try
         {
-            while (await timer.WaitForNextTickAsync(stop)) Sweep(startup: false);
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                Sweep(startup: false);
+                await cleanContexts.SweepAsync(DateTimeOffset.UtcNow, stop);
+            }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
     }
 
     internal static long Sweep(string workDir, Func<IReadOnlyList<PersistedRunnerSlot>> slots,
-        long limit, bool startup, Action<string> log)
+        long limit, bool startup, Action<string> log, string? legacyPilotCacheRoot = null, DateTime? nowUtc = null)
     {
-        var roots = new List<(DirectoryInfo Directory, long Bytes, bool Pending)>();
+        var roots = new List<(DirectoryInfo Directory, long Bytes, bool Pending, bool Legacy)>();
         var work = new DirectoryInfo(Path.GetFullPath(workDir));
-        if (!work.Exists) return 0;
-        foreach (var project in work.EnumerateDirectories().Prepend(work))
+        if (work.Exists)
         {
-            var cache = new DirectoryInfo(Runs(project.FullName));
-            if (!cache.Exists || new[] { project, cache.Parent!.Parent!, cache.Parent, cache }
-                .Any(dir => dir.Attributes.HasFlag(FileAttributes.ReparsePoint))) continue;
-            foreach (var dir in cache.EnumerateDirectories())
+            foreach (var project in work.EnumerateDirectories().Prepend(work))
             {
-                if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
-                roots.Add((dir, Measure(dir), File.Exists(Path.Combine(dir.FullName, ReleasePending))));
+                var runs = new DirectoryInfo(Runs(project.FullName));
+                if (!runs.Exists || new[] { project, runs.Parent!.Parent!, runs.Parent, runs }
+                    .Any(directory => directory.Attributes.HasFlag(FileAttributes.ReparsePoint))) continue;
+                InspectRuns(runs, legacy: false);
+            }
+        }
+        if (legacyPilotCacheRoot is not null && OperatingSystem.IsLinux())
+        {
+            var runs = Path.Combine(legacyPilotCacheRoot, ProjectPreparationCacheSweep.RunsDirectoryName);
+            if (TaskCleanContextStore.IsPhysicalDirectory(runs)) InspectRuns(new DirectoryInfo(runs), legacy: true);
+        }
+
+        void InspectRuns(DirectoryInfo runs, bool legacy)
+        {
+            foreach (var dir in runs.EnumerateDirectories())
+            {
+                if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint)
+                    || legacy && !Guid.TryParseExact(dir.Name, "N", out _)) continue;
+                roots.Add((dir, Measure(dir), File.Exists(Path.Combine(dir.FullName, ReleasePending)), legacy));
             }
         }
 
         var total = roots.Sum(root => root.Bytes);
-        if (roots.Count == 0 || (!startup && total <= limit && !roots.Any(root => root.Pending))) return total;
+        if (roots.Count == 0) return total;
+        var legacyCutoff = (nowUtc ?? DateTime.UtcNow) - ProjectPreparationCacheSweep.DefaultRunRootRetention;
         // A slot reserves its unique id before creating any files. Reading the slots
         // after listing candidates closes the race with a concurrently starting attempt.
         var referenced = slots().Select(slot => RootFor(workDir, slot)).OfType<string>().ToHashSet(Paths);
-        var candidates = roots.Where(root => !referenced.Contains(root.Directory.FullName))
+        var candidates = roots.Where(root => !referenced.Contains(root.Directory.FullName)
+                && (root.Legacy ? root.Pending || root.Directory.LastWriteTimeUtc <= legacyCutoff
+                    : startup || root.Pending || total > limit))
             .OrderBy(root => root.Directory.LastWriteTimeUtc).ThenBy(root => root.Directory.FullName, Paths).ToArray();
         if (candidates.Length == 0) return total;
-        var processReferences = ProcessReferences(candidates.Select(root => root.Directory.FullName).ToArray());
-        foreach (var (dir, bytes, pending) in candidates)
+        var processReferences = HostProcessBindings.Find(candidates.Select(root => root.Directory.FullName).ToArray());
+        foreach (var (dir, bytes, pending, legacy) in candidates)
         {
-            if (!pending && !startup && total <= limit) continue;
+            if (!legacy && !pending && !startup && total <= limit) continue;
             if (!TryRelease(dir.FullName, processReferences.Contains(dir.FullName), log)) continue;
             total -= bytes;
             log($"preparation-copy-removed path={dir.FullName} bytes={bytes}");
@@ -190,7 +218,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         return total;
     }
 
-    private static long Measure(DirectoryInfo root)
+    internal static long Measure(DirectoryInfo root)
     {
         long bytes = 0;
         var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
@@ -206,93 +234,4 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         return bytes;
     }
 
-    // On Linux realpath(path, NULL) resolves all symlinked ancestors. The string
-    // return marshaller copies and frees the buffer allocated by libc.
-    [DllImport("libc", EntryPoint = "realpath")]
-    [return: MarshalAs(UnmanagedType.LPUTF8Str)]
-    private static extern string? RealPath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, nint buffer);
-
-    // A child can exec with a clean environment and keep its cwd, file descriptors
-    // or mapped package files. Read procfs once per batch and retain only copy roots.
-    private static HashSet<string> ProcessReferences(string[] candidates)
-    {
-        var referenced = new HashSet<string>(Paths);
-        if (!OperatingSystem.IsLinux()) return referenced;
-        // argv and environ can use the configured spelling. Kernel links use the physical path.
-        var spellings = new List<(string Prefix, string Root)>();
-        foreach (var root in candidates)
-        {
-            var physical = RealPath(root, 0);
-            if (physical is null)
-            {
-                referenced.Add(root); // Retry when we can check the physical path.
-                continue;
-            }
-            spellings.Add((root, root));
-            if (physical != root) spellings.Add((physical, root));
-        }
-        if (spellings.Count == 0) return referenced;
-        // Skip parsing large maps that contain no candidate directory.
-        // Include physical parents because .runs itself can be a symlink.
-        var runsDirectories = spellings.Select(s => Path.GetDirectoryName(s.Prefix)!).Distinct().ToArray();
-        foreach (var process in Directory.EnumerateDirectories("/proc"))
-        {
-            if (!int.TryParse(Path.GetFileName(process), out _)) continue;
-            foreach (var path in ProcessPaths(process, runsDirectories))
-            {
-                foreach (var (prefix, root) in spellings)
-                {
-                    if (path.StartsWith(prefix, StringComparison.Ordinal)
-                        && (path.Length == prefix.Length || path[prefix.Length] == '/'))
-                        referenced.Add(root);
-                }
-                if (referenced.Count == candidates.Length) return referenced;
-            }
-        }
-        return referenced;
-    }
-
-    private static IEnumerable<string> ProcessPaths(string process, string[] runsDirectories)
-    {
-        var environment = ReadProcFile(process, "environ");
-        foreach (var entry in environment.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var split = entry.IndexOf('=');
-            if (split > 0 && CacheVariables.Contains(entry[..split], StringComparer.OrdinalIgnoreCase)
-                && Path.IsPathFullyQualified(entry[(split + 1)..]))
-                yield return Path.GetFullPath(entry[(split + 1)..]);
-        }
-
-        // Some tools receive a package or browser path as an argument and open it later.
-        var arguments = ReadProcFile(process, "cmdline");
-        foreach (var argument in arguments.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var value = argument.StartsWith('-') ? argument[(argument.IndexOf('=') + 1)..] : argument;
-            if (Path.IsPathFullyQualified(value)) yield return Path.GetFullPath(value);
-        }
-
-        if (new DirectoryInfo(Path.Combine(process, "cwd")).LinkTarget is { } cwd) yield return cwd;
-        if (new FileInfo(Path.Combine(process, "exe")).LinkTarget is { } exe) yield return exe;
-        string[] descriptors;
-        try { descriptors = Directory.GetFileSystemEntries(Path.Combine(process, "fd")); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { descriptors = []; }
-        foreach (var descriptor in descriptors)
-            if (new FileInfo(descriptor).LinkTarget is { } target) yield return target;
-
-        // A loader can close the descriptor once it has mapped the file.
-        var maps = ReadProcFile(process, "maps");
-        if (!runsDirectories.Any(maps.Contains)) yield break;
-        using var lines = new StringReader(maps);
-        while (lines.ReadLine() is { } line)
-        {
-            var start = line.IndexOf('/');
-            if (start >= 0) yield return line[start..];
-        }
-    }
-
-    private static string ReadProcFile(string process, string name)
-    {
-        try { return File.ReadAllText(Path.Combine(process, name)); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return string.Empty; }
-    }
 }

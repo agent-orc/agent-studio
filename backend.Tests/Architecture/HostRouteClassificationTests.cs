@@ -145,6 +145,7 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("POST", "/api/v1/runs/{}/completion", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runs/{}/credentials/{}", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runs/{}/events", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/runners/{}/clean-context/terminal", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runs/{}/executor-receipt", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runs/{}/lease/release", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runs/{}/lease/renew", Monolith.TaskServerOnly),
