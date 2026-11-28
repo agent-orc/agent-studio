@@ -69,6 +69,7 @@ public sealed record AspectVerdict(
     /// concern fix changes evidence that a prior aspect inspected.
     /// </summary>
     public string? EvidenceChecked { get; init; }
+    public string? ReviewClassification { get; init; }
 
     /// <summary>
     /// True when this verdict is a POST-STEP INFRA failure - the aspect's
@@ -124,7 +125,8 @@ public sealed record AspectDocument(
     string? Model,
     string? Tag,
     IReadOnlyDictionary<string, string>? Metrics,
-    string? EvidenceChecked = null);
+    string? EvidenceChecked = null,
+    string? ReviewClassification = null);
 
 /// <summary>
 /// Pure helpers for the aspect-runner pipeline: parsing the fast-model
@@ -322,7 +324,8 @@ public static class AspectVerdictParsing
             Model: string.IsNullOrWhiteSpace(model) ? null : model,
             Tag: verdict.ConcernTagId,
             Metrics: metrics is { Count: > 0 } ? metrics : null,
-            EvidenceChecked: verdict.EvidenceChecked);
+            EvidenceChecked: verdict.EvidenceChecked,
+            ReviewClassification: verdict.ReviewClassification);
         return JsonSerializer.Serialize(doc, AspectJsonOpts) + "\n";
     }
 

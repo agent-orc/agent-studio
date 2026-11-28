@@ -7,7 +7,9 @@ runtime. It reads no files, configuration, clock, processes, or HTTP services.
 Every library type uses `AgentStudio.OrchestrationDecisions`. State, timeline,
 failure-domain, and outcome constants are shared from TaskServer.Contracts,
 so the hosts and library read the same persisted tokens. Verdicts classified
-`BlockWithoutCitation` do not open a finding round or count as a repeated block.
+`BlockWithoutCitation` do not open a finding round or count as a repeated block. Code-quality
+advice, uncorroborated claims, and citation downgrades also stay out of the
+automatic concern round. The recorded feedback remains available for review.
 
 The monolith still invokes these policies by default. AGT-3058 (I16) adds a
 file-backed orchestration occurrence journal and the v1 claim, lease and stage

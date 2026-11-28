@@ -64,7 +64,7 @@ public class AspectRunnerTests : IDisposable
         // and Result head read; the markdown twin stays for existing readers.
         var runner = BuildRunner(aspect => aspect switch
         {
-            "code-quality" => "The helper duplicates foo().\n[[ASPECT_VERDICT: status=concerns; summary=Dead helper left behind.]]\n[[TASK_DONE]]",
+            "code-quality" => "The helper duplicates foo().\n[[ASPECT_VERDICT: status=concerns; classification=quality-advisory; summary=Dead helper left behind.]]\n[[TASK_DONE]]",
             _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
         });
 
@@ -95,7 +95,7 @@ public class AspectRunnerTests : IDisposable
         var inputs = BuildInputs() with
         {
             DiffSummary = "Files changed: 1",
-            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+            ChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
         };
 
         var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
@@ -116,7 +116,7 @@ public class AspectRunnerTests : IDisposable
         var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
         var inputs = BuildInputs() with
         {
-            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+            ChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
         };
 
         var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
@@ -138,7 +138,7 @@ public class AspectRunnerTests : IDisposable
         var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
         var inputs = BuildInputs() with
         {
-            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+            ChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
         };
 
         var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
@@ -160,6 +160,26 @@ public class AspectRunnerTests : IDisposable
         Assert.True(LocalVisualScreenshotEvidence.HasAfterScreenshot(_jobFolder));
         Assert.Contains("after-99.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
         Assert.Single(LocalVisualScreenshotEvidence.Images(_jobFolder));
+    }
+
+    [Theory]
+    [InlineData("docs/operations/setup/linux-runner-host.md", "block", "quality-confirmed")]
+    [InlineData("docs/operations/setup/other.md", "concerns", "review-concern-no-diff-evidence")]
+    public async Task Code_quality_checks_the_delivery_citation_and_persists_the_disposition(
+        string changedPath, string expectedStatus, string expectedClassification)
+    {
+        var runner = BuildRunner(_ =>
+            "[[ASPECT_VERDICT: status=block; classification=quality-confirmed; summary=A failed verification still enables the launcher.; evidence_checked=docs/operations/setup/linux-runner-host.md migration step 3; missing=The migration shell block lacks a failure gate.]]\n[[TASK_DONE]]");
+        var report = await runner.RunAsync(BuildInputs() with { ChangedPaths = [changedPath] },
+            ["code-quality"], "claude", "claude-haiku-4-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal(expectedStatus, AspectVerdictParsing.StatusToken(verdict.Status));
+        Assert.Equal(expectedClassification, verdict.ReviewClassification);
+        var document = Assert.IsType<AspectDocument>(AspectVerdictParsing.TryParseJson(
+            File.ReadAllText(Path.Combine(_jobFolder, "aspect-code-quality.json"))));
+        Assert.Equal(verdict.ReviewClassification, document.ReviewClassification);
+        Assert.Equal(verdict.EvidenceChecked, document.EvidenceChecked);
     }
 
     private static byte[] ValidPng() => PngFixture.Create(1, 1);
@@ -209,7 +229,7 @@ public class AspectRunnerTests : IDisposable
     {
         var runner = BuildRunner(aspect => aspect switch
         {
-            "code-quality" => "[[ASPECT_VERDICT: status=concerns; summary=Dead helper left behind.]]\n[[TASK_DONE]]",
+            "code-quality" => "[[ASPECT_VERDICT: status=concerns; classification=quality-advisory; summary=Dead helper left behind.]]\n[[TASK_DONE]]",
             _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
         });
 

@@ -1022,7 +1022,7 @@ public sealed partial class TaskServerStore
                 request,
                 subject.Plan.Commands
                     .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
-                    .Select(command => command.Aspect));
+                    .Select(command => command.Aspect), subject.Plan);
             request = TaskServerTransitionAdapter.ReviewMeasurements(request, subject.Plan);
             var payloadJson = JsonSerializer.Serialize(request, ReviewJson);
             var payloadHash = Hash(payloadJson);

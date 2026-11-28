@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -360,6 +361,7 @@ public sealed class AspectRunnerService
             {
                 IsInfraFailure = string.Equals(step.Verdict, "environmental", StringComparison.OrdinalIgnoreCase),
                 EvidenceChecked = document.EvidenceChecked,
+                ReviewClassification = document.ReviewClassification,
             };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -412,11 +414,11 @@ public sealed class AspectRunnerService
             if (def.Id == "visual-review")
             {
                 prompt += LocalVisualScreenshotEvidence.PromptSection(inputs.JobFolderPath);
-                if (inputs.VisualChangedPaths is not null)
+                if (inputs.ChangedPaths is not null)
                     prompt += "\n## Changed files at the reviewed result\n"
-                              + (inputs.VisualChangedPaths.Count == 0
+                              + (inputs.ChangedPaths.Count == 0
                                   ? "No changed files."
-                                  : string.Join("\n", inputs.VisualChangedPaths));
+                                  : string.Join("\n", inputs.ChangedPaths));
             }
             string response;
             OrchestratorTokenUsage? callUsage = null;
@@ -464,7 +466,7 @@ public sealed class AspectRunnerService
                 var parsed = AspectVerdictParsing.ParseVerdict(response);
                 if (parsed != null)
                 {
-                    verdict = BuildVerdict(def, response);
+                    verdict = BuildVerdict(def, response, prompt, inputs.ChangedPaths);
                     break;
                 }
 
@@ -475,7 +477,7 @@ public sealed class AspectRunnerService
                     // environmental InfraCrash, never the card's unfinished work.
                     if (ok && !string.IsNullOrWhiteSpace(response))
                     {
-                        verdict = BuildVerdict(def, response);
+                        verdict = BuildVerdict(def, response, prompt, inputs.ChangedPaths);
                         _logger.LogWarning(
                             "Aspect runner '{AspectId}' returned an unparseable verdict twice for {Project}/{JobId}; surfacing review:unparseable.",
                             def.Id, inputs.Project, inputs.JobId);
@@ -509,7 +511,7 @@ public sealed class AspectRunnerService
             if (def.Id == "visual-review" && !LocalVisualScreenshotEvidence.HasAfterScreenshot(inputs.JobFolderPath)
                 && verdict.Status != AspectStatus.Block)
             {
-                var changedVisual = (inputs.VisualChangedPaths
+                var changedVisual = (inputs.ChangedPaths
                         ?? Regex.Matches(inputs.DiffSummary,
                                 @"frontend/[A-Za-z0-9_./-]+\.(?:html|scss|css)", RegexOptions.IgnoreCase)
                             .Select(match => match.Value)
@@ -852,7 +854,8 @@ public sealed class AspectRunnerService
         };
     }
 
-    private static AspectVerdict BuildVerdict(AspectDefinition def, string response)
+    private static AspectVerdict BuildVerdict(
+        AspectDefinition def, string response, string prompt, IReadOnlyList<string>? changedPaths)
     {
         var parsed = AspectVerdictParsing.ParseVerdict(response);
         if (parsed == null)
@@ -873,6 +876,20 @@ public sealed class AspectRunnerService
                 ConcernTagId: "review:unparseable");
         }
         var (status, summary) = parsed.Value;
+        var evidence = AspectVerdictParsing.ParseVerdictField(response, "evidence_checked");
+        string? classification = null;
+        if (CodeQualityReviewPolicy.IsCodeQuality(def.Id))
+        {
+            var verdict = CodeQualityReviewPolicy.Normalize(new ReviewVerdictDto(
+                def.Id, AspectVerdictParsing.StatusToken(status),
+                AspectVerdictParsing.ParseVerdictField(response, "classification") ?? "local-aspect",
+                summary, evidence, AspectVerdictParsing.ParseVerdictField(response, "missing")), prompt);
+            if (changedPaths is not null)
+                verdict = ReviewDiffEvidencePolicy.Normalize(verdict, changedPaths);
+            if (ReviewGradingPolicy.IsConcernToken(verdict.Status)) status = AspectStatus.Concerns;
+            summary = verdict.Summary;
+            classification = verdict.Classification;
+        }
         return new AspectVerdict(
             Aspect: def.Id,
             Status: status,
@@ -880,7 +897,8 @@ public sealed class AspectRunnerService
             Body: BuildBody(response, summary),
             ConcernTagId: status == AspectStatus.Pass ? null : $"{def.ConcernNamespace}:concerns")
         {
-            EvidenceChecked = AspectVerdictParsing.ParseVerdictField(response, "evidence_checked"),
+            EvidenceChecked = evidence,
+            ReviewClassification = classification,
         };
     }
 
@@ -979,7 +997,7 @@ public sealed record AspectRunInputs(
     string StatusSummary)
 {
     /// <summary>Exact changed paths when the local reviewer could resolve its Git subject.</summary>
-    public IReadOnlyList<string>? VisualChangedPaths { get; init; }
+    public IReadOnlyList<string>? ChangedPaths { get; init; }
     public string? ReviewAttemptId { get; init; }
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short

@@ -92,7 +92,8 @@ public static partial class ReviewFollowUpPolicy
     {
         if (!ReviewGradingPolicy.IsConcernToken(item.Status)
             && !ReviewGradingPolicy.IsBlockingToken(item.Status)
-            || IsAspectInfrastructureResult(item))
+            || IsAspectInfrastructureResult(item)
+            || CodeQualityReviewPolicy.IsAdvisoryConcern(item.Aspect, item.Classification))
             return ReviewConcernActionability.Advisory;
         // EvidenceChecked lists what the reviewer read, not the defective
         // location. Require a location and a behavior gap in the finding or

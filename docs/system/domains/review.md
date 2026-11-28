@@ -598,8 +598,10 @@ actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
 Actionable means the reviewer names a file or symbol in the delivery and a
 missing or wrong behavior. Style, naming, duplication without a behavioral gap,
-and findings with no named location remain advisory. The same classification
-applies to a block downgraded for missing review-material citation. The fix
+and findings with no named location remain advisory. Code-quality area feedback
+and uncorroborated claims remain advisory even when their text names a location
+and a possible failure. A code-quality block downgraded for missing citation or
+missing changed-path evidence cannot open a concern round. The fix
 round uses the reviewer summary and `missing` text as quoted data. It must also
 fit the card-round and lifetime delivered-review budgets. The batch gate state
 lists cards in Ready or Progress that wait for this fix, with the review attempt,
@@ -1526,6 +1528,25 @@ grades as Pass with concerns and the acceptance rail does not reissue or
 escalate on the uncited refusal. `orchestrator-engine/CouncilLoop` still records
 that verdict in its finding count but explicitly excludes the
 `block-without-citation` classification from its blocker count.
+
+The current code-quality prompt requires `quality-confirmed` for a blocker.
+The summary describes the condition and observable shipping consequence,
+`evidence_checked` cites the delivered path and relevant hunk, symbol or
+command, and `missing` identifies the broken branch or contract. Executable
+runbook failures qualify. Shippable structure, naming, comment and scope
+suggestions use `quality-advisory`. Requirement fit and tests and evidence
+own brief coverage and missing proof respectively.
+
+A follow-up prompt includes the previous attempt, finding and citation. A
+`quality-rechecked` verdict records that the reviewer checked the same contract
+and describes what happened. A repeated block still needs a shipping consequence
+and a current delivery citation. Use `quality-uncorroborated` to keep inconclusive
+or omitted rechecks in review evidence for a human. An independent defect may
+still block with `quality-independent`; the review narrative records the
+disposition of the prior claim. The classification is a reviewer statement
+recorded with the verdict. The worker and report admission enforce the marker
+and citation requirements. Frozen prompts without the current code-quality
+evidence section retain the earlier marker format.
 
 Deterministic build and test verdicts are not model opinions. A failed command
 needs the diagnosis evidence below before its verdict can block the card.

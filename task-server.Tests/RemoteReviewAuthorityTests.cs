@@ -2310,8 +2310,12 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.False(report.RetryScheduled);
     }
 
-    [Fact]
-    public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis()
+    [Theory]
+    [InlineData(false, "RemoteAspectVerdict", "ProductFailure", "ReviewFinding")]
+    [InlineData(true, CodeQualityReviewPolicy.Confirmed, "ProductFailure", "ReviewFinding")]
+    [InlineData(true, "RemoteAspectVerdict", "Pass", CodeQualityReviewPolicy.Uncorroborated)]
+    public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis(
+        bool currentPrompt, string classification, string expectedOutcome, string expectedClassification)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
@@ -2320,7 +2324,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             [new ReviewCommandDto(
                 "aspect-code-quality", "code-quality", "codex", [],
                 ExecutionKind: ReviewCommandKinds.AgentAspect,
-                Prompt: "Review the delivered implementation.",
+                Prompt: currentPrompt ? CodeQualityReviewPolicy.ProtocolHeading : "Review the delivered implementation.",
                 CliType: "codex", Model: "gpt-5.4-mini")],
             ["code-quality"], IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);
@@ -2336,17 +2340,17 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
                 ChangedPaths = ["docs/concept/workbench.json"],
             },
             Verdicts = [new ReviewVerdictDto(
-                "code-quality", "block", "RemoteAspectVerdict",
-                "Implementation contradicts the required behavior.",
+                "code-quality", "block", classification,
+                "Loading an existing workbench record discards its saved configuration.",
                 EvidenceChecked: "docs/concept/workbench.json",
-                Missing: "the required behavior")],
+                Missing: "The reader must preserve the saved configuration on load.")],
         };
 
         var report = await store.ReportReviewAsync(
             claim.Attempt!.AttemptId, request, "review-a", default);
 
-        Assert.Equal("ProductFailure", report.Outcome);
-        Assert.Equal("ReviewFinding", report.FailureClassification);
+        Assert.Equal(expectedOutcome, report.Outcome);
+        Assert.Equal(expectedClassification, report.FailureClassification);
     }
 
     [Theory]

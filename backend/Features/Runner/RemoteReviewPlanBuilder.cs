@@ -983,6 +983,26 @@ public sealed partial class RemoteReviewPlanBuilder
                 ledger.PreviousVerdicts.Where(verdict =>
                     !string.Equals(verdict.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)).ToArray()),
         };
+        // Freeze the code-quality recheck before deciding which aspects can carry
+        // over. Admission and checkpoint recovery then see the same contract.
+        if (ledger.AspectIds.Any(Contract.CodeQualityReviewPolicy.IsCodeQuality)
+            && ledger.PreviousVerdicts.LastOrDefault(verdict =>
+                Contract.CodeQualityReviewPolicy.IsCodeQuality(verdict.Aspect)) is { } previousQuality)
+        {
+            plan = plan with
+            {
+                Commands = plan.Commands.Select(command =>
+                    Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && Contract.CodeQualityReviewPolicy.IsCodeQuality(command.Aspect)
+                        ? command with
+                        {
+                            Prompt = Contract.CodeQualityReviewPolicy.WithPreviousFinding(
+                                command.Prompt, ledger.ReviewAttemptId, previousQuality),
+                        }
+                        : command).ToArray(),
+            };
+        }
+
         if (string.IsNullOrWhiteSpace(repositoryPath)
             || string.IsNullOrWhiteSpace(expectedResultSha))
             return plan;
@@ -1045,8 +1065,8 @@ public sealed partial class RemoteReviewPlanBuilder
                 {
                     command = command with
                     {
-                        Prompt = (command.Prompt ?? string.Empty)
-                                 + $"\n\n## Previous finding to verify\n\nThis aspect raised the previous finding below in review {ledger.ReviewAttemptId}. Verify that it is fixed and that the fix introduced no new issue.\n\n- Previous status: {raised.Status}\n- Previous summary: {raised.Summary}\n- Previous evidence: {raised.EvidenceChecked ?? "not recorded"}\n- Previous finding: {raised.Missing ?? "not recorded"}",
+                        Prompt = Contract.CodeQualityReviewPolicy.WithPreviousFinding(
+                            command.Prompt, ledger.ReviewAttemptId, raised),
                     };
                 }
                 scopedCommands.Add(command);

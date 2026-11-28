@@ -983,7 +983,7 @@ public static class V1ReviewPlaneEndpoints
                 currentReview.Subject.Plan?.Commands
                     .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect)
-                ?? []);
+                ?? [], currentReview.Subject.Plan);
             request = MonolithTransitionAdapter.ReviewMeasurements(
                 request, currentReview.Subject.Plan);
             if (!string.Equals(request.Environment.ExecutorId, authoritativeLease.ExecutorId, StringComparison.Ordinal)

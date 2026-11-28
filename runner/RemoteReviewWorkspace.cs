@@ -1241,9 +1241,10 @@ public sealed class RemoteReviewWorkspace
                     await ChangedPathsAgainstBaselineAsync(ct),
                     VisualReviewScreenshotBundle.HasReadableAfterScreenshot(AttemptRoot));
             }
-            verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
-                verdict,
-                ReviewCommandKinds.IsAgent(command.ExecutionKind)));
+            var isSemantic = ReviewCommandKinds.IsAgent(command.ExecutionKind);
+            if (isSemantic)
+                verdict = CodeQualityReviewPolicy.Normalize(verdict, command.Prompt);
+            verdicts.Add(ReviewVerdictCitationPolicy.Normalize(verdict, isSemantic));
             if (comparison is null
                 && !ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Process.Success
@@ -1540,8 +1541,8 @@ public sealed class RemoteReviewWorkspace
                     {
                         command = command with
                         {
-                            Prompt = (command.Prompt ?? string.Empty)
-                                     + $"\n\n## Previous finding to verify\n\nThis aspect raised the previous finding below in review {source.FromAttemptId}. Verify that it is fixed and that the fix introduced no new issue.\n\n- Previous status: {raised.Status}\n- Previous summary: {raised.Summary}\n- Previous evidence: {raised.EvidenceChecked ?? "not recorded"}\n- Previous finding: {raised.Missing ?? "not recorded"}",
+                            Prompt = CodeQualityReviewPolicy.WithPreviousFinding(
+                                command.Prompt, source.FromAttemptId, raised),
                         };
                     }
                     runnable.Add(command);
@@ -4351,9 +4352,11 @@ public sealed class RemoteReviewWorkspace
             var status = string.IsNullOrWhiteSpace(marker.Status)
                 ? result.Success ? "pass" : "block"
                 : marker.Status;
-            var summary = string.IsNullOrWhiteSpace(marker.Summary)
-                ? $"Remote aspect '{command.Aspect}' returned {status}."
-                : marker.Summary;
+            var summary = marker.Summary;
+            if (string.IsNullOrWhiteSpace(summary)
+                && !(CodeQualityReviewPolicy.IsCodeQuality(command.Aspect)
+                    && CodeQualityReviewPolicy.UsesProtocol(command.Prompt)))
+                summary = $"Remote aspect '{command.Aspect}' returned {status}.";
             if (!string.IsNullOrWhiteSpace(marker.Detail))
                 summary += $" Detail: {marker.Detail}";
             return new ReviewVerdictDto(

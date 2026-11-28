@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Prompts;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -121,7 +122,9 @@ public static class SolutionQualityGate
         var findings = new List<string>();
         foreach (var verdict in report.Verdicts)
         {
-            if (verdict.Status != AspectStatus.Concerns) continue;
+            if (verdict.Status != AspectStatus.Concerns
+                || CodeQualityReviewPolicy.IsAdvisoryConcern(verdict.Aspect, verdict.ReviewClassification))
+                continue;
 
             var text = $"{verdict.Summary}\n{verdict.Body}";
             var isRequirementFit = string.Equals(verdict.Aspect, RequirementFitAspectId, StringComparison.OrdinalIgnoreCase);

@@ -1895,7 +1895,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         SeedReviewJobWithDone("concerns-job");
         var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspect => aspect switch
         {
-            "code-quality" => "[[ASPECT_VERDICT: status=concerns; summary=Helper duplicated.]]\n[[TASK_DONE]]",
+            "code-quality" => "[[ASPECT_VERDICT: status=concerns; classification=quality-advisory; summary=Duplicate helper is not used.]]\n[[TASK_DONE]]",
             _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
         });
 
@@ -1913,7 +1913,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         // The aspect MD itself records the concern.
         var qualityMd = File.ReadAllText(Path.Combine(_watchPath, TaskStates.HumanReview, "concerns-job", "aspect-code-quality.md"));
         Assert.Equal(AspectStatus.Concerns, AspectVerdictParsing.ReadStatusFromReport(qualityMd));
-        Assert.Contains("Helper duplicated.", qualityMd);
+        Assert.Contains("Duplicate helper is not used.", qualityMd);
 
         var record = ReadOnlyDecisionRecord();
         Assert.Equal(ReviewDecisionKind.AcceptAsDone, record.Kind);
@@ -1929,7 +1929,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         // Seeded in the flat task store because the follow-up card lands there.
         var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspect => aspect switch
         {
-            "code-quality" => "[[ASPECT_VERDICT: status=block; summary=Rename the helper in backend/Other.cs.]]\n[[TASK_DONE]]",
+            "code-quality" => "[[ASPECT_VERDICT: status=block; classification=quality-confirmed; summary=A write failure leaves the receipt marked complete in backend/Other.cs.; evidence_checked=backend/Other.cs SaveReceipt; missing=The error branch must leave the receipt pending.]]\n[[TASK_DONE]]",
             _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
         }, withTaskMutations: true);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -1971,7 +1971,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Assert.Equal(ReviewDecisionKind.AcceptAsDone, record.Kind);
         var qualityMd = File.ReadAllText(Path.Combine(source.FolderPath, "aspect-code-quality.md"));
         Assert.Equal(AspectStatus.Concerns, AspectVerdictParsing.ReadStatusFromReport(qualityMd));
-        Assert.Contains("Rename the helper", qualityMd);
+        Assert.Contains("A write failure leaves the receipt marked complete", qualityMd);
 
         var ledger = ReviewRoundBudgetStore.Read(source.FolderPath);
         Assert.Equal(4, ledger.Delivered);
@@ -1983,7 +1983,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Assert.Equal(TaskStates.Ready, followUp.State);
         Assert.Contains(sourceId!, followUp.References?.FollowUpOf ?? []);
         Assert.Equal([charged.FollowUpTaskKey!], source.References?.RaisedFollowUps);
-        Assert.Contains("Rename the helper", File.ReadAllText(Path.Combine(followUp.FolderPath, "prompt.md")));
+        Assert.Contains("A write failure leaves the receipt marked complete", File.ReadAllText(Path.Combine(followUp.FolderPath, "prompt.md")));
     }
 
     [Fact]
@@ -2013,7 +2013,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     {
         var (orchestrator, scanner, sourceId) = SpentCardBudgetDelivery("budget-code-block",
             aspect => aspect == "code-quality"
-                ? "[[ASPECT_VERDICT: status=block; summary=Rename the helper in backend/Other.cs.]]\n[[TASK_DONE]]"
+                ? "[[ASPECT_VERDICT: status=block; classification=quality-confirmed; summary=A write failure leaves the receipt marked complete in backend/Other.cs.; evidence_checked=backend/Other.cs SaveReceipt; missing=The error branch must leave the receipt pending.]]\n[[TASK_DONE]]"
                 : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
@@ -2296,6 +2296,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspect => aspect switch
         {
             "requirement-fit" => "[[ASPECT_VERDICT: status=block; summary=Acceptance criterion 2 missing.]]\n[[TASK_DONE]]",
+            "code-quality" => "[[ASPECT_VERDICT: status=concerns; classification=quality-advisory; summary=Remove the redundant release argument.]]\n[[TASK_DONE]]",
             _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
         });
 
@@ -2314,6 +2315,9 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var followUp = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Ready, "blocked-job", "orchestrator-follow-up.md"));
         Assert.Contains("requirement-fit", followUp);
         Assert.Contains("Acceptance criterion 2 missing.", followUp);
+        Assert.DoesNotContain("redundant release argument", followUp);
+        Assert.Contains("redundant release argument", File.ReadAllText(
+            Path.Combine(_watchPath, TaskStates.Ready, "blocked-job", "aspect-code-quality.md")));
 
         // Aspect MDs travel with the folder to 2-ready.
         Assert.True(File.Exists(Path.Combine(_watchPath, TaskStates.Ready, "blocked-job", "aspect-requirement-fit.md")));
@@ -2336,7 +2340,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     {
         SeedReviewJobWithDone("product-block");
         var orchestrator = BuildOrchestratorWithAspects(aspect => aspect == "code-quality"
-            ? $"[[ASPECT_VERDICT: status=block; summary={summary}]]\n[[TASK_DONE]]"
+            ? $"[[ASPECT_VERDICT: status=block; classification=quality-confirmed; summary={summary}; evidence_checked=backend/Resume.cs ResumePending; missing=ResumePending drops the recorded result.]]\n[[TASK_DONE]]"
             : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);

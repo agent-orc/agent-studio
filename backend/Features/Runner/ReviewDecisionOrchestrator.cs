@@ -2707,7 +2707,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? LoadStatusSummary(current.FolderPath)
                 : string.Empty;
         var diffSummary = LoadDiffSummary(entry, current);
-        var visualChangedPaths = ResolveLocalVisualChangedPaths(entry, current);
+        var changedPaths = ResolveLocalReviewChangedPaths(entry, current);
         var resultsInventory = ResultsInventory.Render(current.FolderPath);
         var cardMode = ReviewCardMode.Describe(current.Mode);
         WritePostProcessingOutcome(current, PostProcessingOutcomes.FindingsAdded,
@@ -2727,7 +2727,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             StatusSummary: statusSummary)
         {
             ResultsInventory = resultsInventory,
-            VisualChangedPaths = visualChangedPaths,
+            ChangedPaths = changedPaths,
             CardMode = cardMode,
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 current.AcceptanceScope,
@@ -2977,8 +2977,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var enabledAspects = aspects
             .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext)
                 && (!string.Equals(id, "visual-review", StringComparison.OrdinalIgnoreCase)
-                    || visualChangedPaths is null
-                    || VisualReviewEvidence.IsFrontendVisualChange(visualChangedPaths)))
+                    || changedPaths is null
+                    || VisualReviewEvidence.IsFrontendVisualChange(changedPaths)))
             .ToList();
         var scopedReview = PlanLocalScopedReview(current, entry, enabledAspects, projectSettings);
         enabledAspects = scopedReview.RunAspects.ToList();
@@ -3040,8 +3040,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     model,
                     configuredPrompt,
                     $"aspect-{aspectId}");
-                return basePrompt
-                       + $"\n\n## Previous finding to verify\n\nThis aspect raised the previous finding below in review {scopedReview.ReviewAttemptId}. Verify that it is fixed and that the fix introduced no new issue.\n\n- Previous status: {previous.Status}\n- Previous summary: {previous.Summary}\n- Previous evidence: {previous.EvidenceChecked ?? "not recorded"}\n- Previous finding: {previous.Missing ?? "not recorded"}";
+                return CodeQualityReviewPolicy.WithPreviousFinding(basePrompt, scopedReview.ReviewAttemptId, previous);
             };
         }
 
@@ -3123,7 +3122,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 AspectVerdictParsing.StatusToken(verdict.Status),
                 verdict.Summary,
                 Finding: LocalAspectFinding(verdict),
-                Classification: verdict.ConcernTagId,
+                Classification: verdict.ReviewClassification ?? verdict.ConcernTagId,
                 InfrastructureFailure: verdict.IsInfraFailure,
                 ReportBody: verdict.Body)),
             ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
@@ -3252,7 +3251,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             blockedAspects.Length > 0 ? "ProductFailure" : "Pass",
             report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
                 verdict.Aspect, AspectVerdictParsing.StatusToken(verdict.Status), verdict.Summary,
-                Finding: LocalAspectFinding(verdict), Classification: verdict.ConcernTagId,
+                Finding: LocalAspectFinding(verdict), Classification: verdict.ReviewClassification ?? verdict.ConcernTagId,
                 InfrastructureFailure: verdict.IsInfraFailure, ReportBody: verdict.Body)).ToArray(),
             ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
             ConfiguredMaxConcernRounds(entry.Name), cardBudget, roundSeed, localAttemptId,
@@ -3658,11 +3657,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var attempt = _pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1;
         var attemptId = $"local-review-{attempt}";
+        var findings = report.Verdicts.Where(verdict => verdict.Status == AspectStatus.Block)
+            .Select(verdict => new ReviewFollowUpFinding(
+                verdict.Aspect, "block", verdict.Summary, verdict.EvidenceChecked,
+                LocalAspectFinding(verdict), verdict.ReviewClassification ?? verdict.ConcernTagId))
+            .ToArray();
         var followUp =
             $"# Review finding fix round ({attemptId})\n\n" +
-            "Auto-review found one or more blocking aspect verdicts. Address each item below, " +
-            "then re-run the task and end with [[TASK_DONE]]:\n\n" +
-            report.FollowUpSummary;
+            "Address each blocking finding below, then re-run the task and end with [[TASK_DONE]].\n\n" +
+            AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings);
 
         var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-block", workspace);
         if (moved == null)
@@ -3747,7 +3750,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var previousVerdicts = report.Verdicts.Select(verdict => new ReviewVerdictDto(
             verdict.Aspect,
             AspectVerdictParsing.StatusToken(verdict.Status),
-            verdict.ConcernTagId ?? "local-aspect",
+            verdict.ReviewClassification ?? verdict.ConcernTagId ?? "local-aspect",
             verdict.Summary,
             EvidenceChecked: verdict.EvidenceChecked,
             Missing: LocalAspectFinding(verdict))).ToArray();
@@ -3789,7 +3792,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var previousVerdicts = report.Verdicts.Select(verdict => new ReviewVerdictDto(
             verdict.Aspect,
             AspectVerdictParsing.StatusToken(verdict.Status),
-            verdict.ConcernTagId ?? "local-aspect",
+            verdict.ReviewClassification ?? verdict.ConcernTagId ?? "local-aspect",
             verdict.Summary,
             EvidenceChecked: verdict.EvidenceChecked,
             Missing: LocalAspectFinding(verdict))).ToArray();
@@ -4141,9 +4144,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 $"_Carried over from review {ledger.ReviewAttemptId}; the fix delta did not touch this aspect's evidence._\n",
                 verdict.Status.Equals("pass", StringComparison.OrdinalIgnoreCase)
                     ? null
-                    : verdict.Classification)
+                    : CodeQualityReviewPolicy.IsCodeQuality(verdict.Aspect)
+                        ? "quality:concerns"
+                        : verdict.Classification)
                 {
                     EvidenceChecked = verdict.EvidenceChecked,
+                    ReviewClassification = verdict.Classification,
                 })
             .ToArray();
         return new LocalScopedReviewPlan(
@@ -7668,7 +7674,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
     }
 
-    private IReadOnlyList<string>? ResolveLocalVisualChangedPaths(WatchPathEntry entry, TaskInfo job)
+    private IReadOnlyList<string>? ResolveLocalReviewChangedPaths(WatchPathEntry entry, TaskInfo job)
     {
         if (_git is null) return null;
         try
@@ -7677,13 +7683,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var resultSha = ResolveBuildTestGateSubject(job, entry.Path).Sha;
             if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(resultSha))
                 return null;
-            var configuredBase = _projectSettings?.Get(entry.Name)?.IntegrationBranch;
-            var baseBranch = _git.ResolveIntegrationBranch(repoRoot, configuredBase);
+            var integrationRef = TaskIntegrationBranch.Resolve(
+                job, _projectSettings?.Get(entry.Name)?.IntegrationBranch ?? "develop");
+            var baseBranch = _git.ResolveIntegrationBranch(repoRoot, integrationRef);
             return _git.ChangedPathsAgainstMergeBase(repoRoot, baseBranch, resultSha);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Visual review changed paths could not be resolved for {JobId}", job.Id);
+            _logger.LogWarning(ex, "Local review changed paths could not be resolved for {JobId}", job.Id);
             return null;
         }
     }

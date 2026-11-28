@@ -73,8 +73,7 @@ public class ReviewFollowUpPolicyTests
     public void Concrete_behavioral_concern_opens_one_bounded_fix_round(string summary, string missing)
     {
         var finding = new ReviewFollowUpFinding("code-quality", "concerns", summary,
-            EvidenceChecked: "reviewed result", Finding: missing,
-            Classification: ReviewVerdictCitationPolicy.BlockWithoutCitation);
+            EvidenceChecked: "reviewed result", Finding: missing);
 
         Assert.True(ReviewFollowUpPolicy.IsActionableConcern(finding));
         Assert.Equal(ReviewConcernActionability.Actionable, ReviewFollowUpPolicy.Classify(finding));

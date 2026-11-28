@@ -700,16 +700,25 @@ public static class ReviewVerdictCitationPolicy
 
     public static ReviewReportRequest NormalizeReport(
         ReviewReportRequest request,
-        IEnumerable<string> semanticAspects)
+        IEnumerable<string> semanticAspects,
+        ReviewPlanDto? plan = null)
     {
         var aspects = semanticAspects.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var qualityPrompt = plan?.Commands.FirstOrDefault(command =>
+            ReviewCommandKinds.IsAgent(command.ExecutionKind)
+            && CodeQualityReviewPolicy.IsCodeQuality(command.Aspect))?.Prompt;
         var verdicts = request.Verdicts
-            .Select(verdict => Normalize(verdict, aspects.Contains(verdict.Aspect)))
+            .Select(verdict => aspects.Contains(verdict.Aspect)
+                ? Normalize(CodeQualityReviewPolicy.Normalize(verdict, qualityPrompt), semanticAspect: true)
+                : verdict)
             .ToArray();
-        var downgraded = verdicts.Any(verdict => string.Equals(
-            verdict.Classification,
-            BlockWithoutCitation,
-            StringComparison.Ordinal));
+        var downgrade = verdicts.FirstOrDefault(verdict => verdict.Classification == BlockWithoutCitation)
+            ?? verdicts.Where((verdict, index) =>
+                CodeQualityReviewPolicy.IsCodeQuality(verdict.Aspect)
+                && CodeQualityReviewPolicy.IsHumanFeedback(verdict.Classification)
+                && ReviewGradingPolicy.IsBlockingToken(request.Verdicts[index].Status)
+                && ReviewGradingPolicy.IsConcernToken(verdict.Status)).FirstOrDefault();
+        var downgraded = downgrade is not null;
         var stillBlocked = verdicts.Any(verdict => ReviewGradingPolicy.IsBlockingToken(verdict.Status));
         return request with
         {
@@ -719,7 +728,7 @@ public static class ReviewVerdictCitationPolicy
                     ? "Pass"
                     : request.Outcome,
             FailureClassification = downgraded && !stillBlocked
-                ? BlockWithoutCitation
+                ? downgrade!.Classification
                 : request.FailureClassification,
         };
     }
@@ -745,7 +754,7 @@ public static class ReviewVerdictCitationPolicy
         => Meaningful(verdict.EvidenceChecked)
            && Meaningful(verdict.Missing);
 
-    private static bool Meaningful(string? value)
+    internal static bool Meaningful(string? value)
         => !string.IsNullOrWhiteSpace(value)
            && !string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(value.Trim(), "n/a", StringComparison.OrdinalIgnoreCase);
