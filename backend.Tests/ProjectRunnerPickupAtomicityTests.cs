@@ -265,7 +265,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         _ = method.Invoke(runner, [info]);
 
-        Assert.Equal("sol-xhigh", selection.Floor?.Id);
+        Assert.Equal("sol-high", selection.Floor?.Id);
     }
 
     [Fact]

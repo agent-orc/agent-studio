@@ -41,7 +41,11 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
 
         var opened = Assert.Single(store.Read(project.Id).Incidents!);
         Assert.Single(scanner.ScanAllJobs(), card => card.Id == opened.RepairCardId);
-        Assert.Equal(TaskStates.Ready, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
+        var created = scanner.FindJob(opened.RepairCardId, projectPath)!;
+        Assert.Equal(TaskStates.Ready, created.State);
+        Assert.Equal(CliTypes.Codex, created.CliType);
+        Assert.Equal(ModelIds.Gpt62Sol, created.Model);
+        Assert.Equal("medium", created.ThinkingLevel);
         Assert.Null(opened.RedMinutes);
         if (noRelevantMerges)
         {
@@ -291,6 +295,9 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         Assert.Null(store.Read(project.Id).LineStop);
         var repair = scanner.FindJob(entry.Card, project.StorageLocation)!;
         Assert.Equal("Repair red test: Demo.Tests.Fails", repair.Title);
+        Assert.Equal(CliTypes.Codex, repair.CliType);
+        Assert.Equal(ModelIds.Gpt62Sol, repair.Model);
+        Assert.Equal("medium", repair.ThinkingLevel);
         Assert.Equal(TaskStates.Ready, repair.State);
         Assert.Equal(repair.Id, scanner.ScanAllJobs().Where(card => card.State == TaskStates.Ready).MinBy(card => card.Order)!.Id);
         var quarantine = Quarantines(store).Read(project.Id);

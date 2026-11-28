@@ -182,6 +182,9 @@ public class TaskSpawnerPostStepTests : IDisposable
         Assert.NotNull(spawned);
         Assert.Equal("web", spawned!.ProjectName);
         Assert.Equal(TaskStates.Backlog, spawned.State);
+        Assert.Equal(CliTypes.Codex, spawned.CliType);
+        Assert.Equal(ModelIds.Gpt62Sol, spawned.Model);
+        Assert.Equal("medium", spawned.ThinkingLevel);
         var jobJson = Path.Combine(spawned.FolderPath, "task.json");
         Assert.True(File.Exists(jobJson));
         Assert.Contains($"{Path.DirectorySeparatorChar}tasks{Path.DirectorySeparatorChar}", spawned.FolderPath);

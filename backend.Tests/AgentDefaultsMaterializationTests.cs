@@ -22,8 +22,6 @@ public class AgentDefaultsMaterializationTests : IDisposable
 
     public AgentDefaultsMaterializationTests()
     {
-        // Start from the "no gpt-5.6 detected" baseline so codex defaults resolve
-        // to the account-valid gpt-5.5 unless a test opts into detection.
         ModelMetadataRegistry.SetDetectedCodexDefault(null);
         _workspace = Path.Combine(Path.GetTempPath(), "rdo-agent-defaults-" + Guid.NewGuid().ToString("N"));
         _watchPath = Path.Combine(_workspace, "projects", Project);
@@ -134,18 +132,13 @@ public class AgentDefaultsMaterializationTests : IDisposable
         Assert.NotNull(info);
         Assert.Equal("codex", info!.Agent);
         Assert.Equal("codex", info.CliType);
-        Assert.Equal(ModelIds.Gpt55, info.Model);
-        // Codex default reasoning is now the biggest value the CLI ladder
-        // advertises for the model (AGT-2025); with no gpt-5.6 detected the
-        // fallback default is gpt-5.5, whose ladder tops out at xhigh.
-        Assert.Equal("xhigh", info.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt62Sol, info.Model);
+        Assert.Equal("medium", info.ThinkingLevel);
     }
 
     [Fact]
-    public void CreateJob_Codex_UsesDetectedGpt56Default_WhenCliReportsIt()
+    public void CreateJob_Codex_KeepsPolicyDefault_WhenLocalCliReportsAnOlderModel()
     {
-        // Detection on: a codex task created with no model follows the CLI to
-        // gpt-5.6-sol + ultra (AGT-2025), everywhere gpt-5.5 was drawn before.
         var (_, scanner, mutations) = Build(defaultCliType: "claude", defaultModel: "claude-opus-4-8");
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
 
@@ -162,8 +155,8 @@ public class AgentDefaultsMaterializationTests : IDisposable
         var info = scanner.FindJob("task-codex-56", _watchPath);
         Assert.NotNull(info);
         Assert.Equal("codex", info!.CliType);
-        Assert.Equal(ModelIds.Gpt56Sol, info.Model);
-        Assert.Equal("ultra", info.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt62Sol, info.Model);
+        Assert.Equal("medium", info.ThinkingLevel);
     }
 
     [Fact]
@@ -185,7 +178,7 @@ public class AgentDefaultsMaterializationTests : IDisposable
         Assert.NotNull(info);
         Assert.Equal("codex", info!.Agent);
         Assert.Equal("codex", info.CliType);
-        Assert.Equal(ModelIds.Gpt55, info.Model);
+        Assert.Equal(ModelIds.Gpt62Sol, info.Model);
     }
 
     [Fact]
@@ -208,7 +201,7 @@ public class AgentDefaultsMaterializationTests : IDisposable
     }
 
     [Fact]
-    public void CreateJob_FallsBackToRequestDefaults_WhenOwnerHasNoDefaults()
+    public void CreateJob_UsesStandardRoute_WhenOwnerHasNoDefaults()
     {
         var (_, scanner, mutations) = Build(defaultCliType: null, defaultModel: null);
 
@@ -222,9 +215,10 @@ public class AgentDefaultsMaterializationTests : IDisposable
 
         var info = scanner.FindJob("no-defaults", _watchPath);
         Assert.NotNull(info);
-        Assert.Equal("claude", info!.Agent);
-        Assert.Null(info.CliType);
-        Assert.Null(info.Model);
+        Assert.Equal("codex", info!.Agent);
+        Assert.Equal("codex", info.CliType);
+        Assert.Equal(ModelIds.Gpt62Sol, info.Model);
+        Assert.Equal("medium", info.ThinkingLevel);
     }
 
     [Fact]

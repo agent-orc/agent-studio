@@ -59,14 +59,14 @@ public sealed class ModelQualificationTests
     }
 
     [Fact]
-    public void Gpt62IsNeverAPolicyRecommendation()
+    public void SolIsRecommendedAndAstraRequiresAnExplicitPin()
     {
         foreach (var type in new[] { TaskTypes.Feature, TaskTypes.Bug })
         {
             var task = Task("gpt62-policy-" + type, type, modelExplicit: false, thinkingExplicit: false);
             var result = Service(economyMode: false).Qualify(task, "Add a bounded settings panel.", Catalogue, []);
-            Assert.DoesNotContain("gpt-6.2", result.RecommendedModel ?? "");
-            Assert.DoesNotContain("gpt-6.2", result.SelectedModel ?? "");
+            Assert.Equal(ModelIds.Gpt62Sol, result.RecommendedModel);
+            Assert.Equal(ModelIds.Gpt62Sol, result.SelectedModel);
         }
     }
 
@@ -78,9 +78,9 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Add a bounded settings panel.", Catalogue, []);
 
-        Assert.Equal("2026-10-11", result.PolicyVersion);
+        Assert.Equal("2026-11-28", result.PolicyVersion);
         Assert.Equal("sol-medium", result.PolicyTier);
-        Assert.Equal("gpt-6-sol", result.RecommendedModel);
+        Assert.Equal(ModelIds.Gpt62Sol, result.RecommendedModel);
         Assert.Equal("medium", result.RecommendedThinkingLevel);
         Assert.Equal(result.RecommendedModel, result.SelectedModel);
         Assert.Equal("policy", result.SelectionSource);
@@ -99,7 +99,7 @@ public sealed class ModelQualificationTests
         Assert.True(result.EconomyDowngraded);
         // AGT-2903: Sol/medium lowers one step to Terra/medium, above the sonnet-low economy floor.
         Assert.Equal("terra-medium", result.PolicyTier);
-        Assert.Equal("gpt-5.6-terra", result.SelectedModel);
+        Assert.Equal(ModelIds.Gpt62Sol, result.SelectedModel);
         Assert.Equal("policy-economy", result.SelectionSource);
     }
 
@@ -115,11 +115,11 @@ public sealed class ModelQualificationTests
         Assert.True(result.EconomyDowngraded);
         Assert.Equal("terra-medium", result.PolicyTier);
         Assert.Equal("terra-medium", result.CorrectnessFloorTier);
-        Assert.Equal("gpt-5.6-terra", result.SelectedModel);
+        Assert.Equal(ModelIds.Gpt62Sol, result.SelectedModel);
     }
 
     [Fact]
-    public void CriticalWorkStaysSolXhighWithEconomyMode()
+    public void CriticalWorkStaysSolHighWithEconomyMode()
     {
         var service = Service(economyMode: true);
         var task = Task("critical", TaskTypes.Feature, modelExplicit: false, thinkingExplicit: false);
@@ -131,10 +131,10 @@ public sealed class ModelQualificationTests
             []);
 
         Assert.False(result.EconomyDowngraded);
-        Assert.Equal("sol-xhigh", result.PolicyTier);
-        Assert.Equal("sol-xhigh", result.CorrectnessFloorTier);
-        Assert.Equal("gpt-6-sol", result.SelectedModel);
-        Assert.Equal("xhigh", result.SelectedThinkingLevel);
+        Assert.Equal("sol-high", result.PolicyTier);
+        Assert.Equal("sol-high", result.CorrectnessFloorTier);
+        Assert.Equal(ModelIds.Gpt62Sol, result.SelectedModel);
+        Assert.Equal("high", result.SelectedThinkingLevel);
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Polish CSS spacing.", Catalogue, []);
 
-        Assert.Equal("gpt-6-luna", result.RecommendedModel);
+        Assert.Equal(ModelIds.Gpt62Sol, result.RecommendedModel);
         Assert.Equal("gpt-5.6-sol", result.SelectedModel);
         Assert.Equal("xhigh", result.SelectedThinkingLevel);
         Assert.Equal("task-override", result.SelectionSource);
@@ -166,7 +166,7 @@ public sealed class ModelQualificationTests
     {
         Id = id,
         Label = id,
-        Vendor = "test",
+        Vendor = "openai",
         Available = true,
         ThinkingLevels = thinkingLevels.ToList(),
         DefaultThinkingLevel = thinkingLevels.FirstOrDefault(),

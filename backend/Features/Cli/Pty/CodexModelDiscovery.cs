@@ -282,7 +282,8 @@ public sealed class CodexModelDiscovery
     private static (List<string> Levels, string? Default) StaticLadderFor(string id)
     {
         var levels = ModelMetadataRegistry.StaticThinkingLevelsFor(CliTypes.Codex, id);
-        return ([.. levels], levels.Count > 0 ? levels[^1] : null);
+        return ([.. levels], ModelMetadataRegistry.Find(id)?.DefaultThinkingLevel
+            ?? (levels.Count > 0 ? levels[^1] : null));
     }
 
     /// <summary>
@@ -340,68 +341,24 @@ public sealed class CodexModelDiscovery
         };
     }
 
-    /// <summary>
-    /// Registry-backed static catalog used when the codex CLI cannot be queried
-    /// and no cache exists (task item 1's "fall back to today's static list").
-    /// Mirrors <c>ClaudeModelDiscovery.FallbackCatalog</c>. Contains no gpt-5.6:
-    /// <c>gpt-5.6-sol</c> has no registry entry at all, and the onboarded
-    /// <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c> entries carry an
-    /// <c>Available:false</c> baseline (AGT-2707 round 2), so this static list
-    /// never assumes a gpt-5.6 model is offered without a live CLI answer and a
-    /// Publish of this catalog keeps the default on the account-valid gpt-5.5
-    /// baseline.
-    /// </summary>
+    /// <summary>Registry metadata for a Codex policy preview.</summary>
     public static CliModelCatalog FallbackCatalog(string source = "registry-fallback")
     {
-        var models = ModelMetadataRegistry.ForVendor("openai")
-            .Select(m => ModelMetadataRegistry.ToCliModelInfo(m, CliTypes.Codex))
-            .Where(m => m.Available)
-            .ToList();
-        if (models.Count > 0 && models.All(m => !m.IsDefault))
-            models[0] = models[0] with { IsDefault = true };
         return new CliModelCatalog
         {
-            Models = models,
+            Models = ModelMetadataRegistry.ForVendor("openai")
+                .Select(model => ModelMetadataRegistry.ToCliModelInfo(model, CliTypes.Codex))
+                .Where(model => model.Available || model.IsDefault)
+                .ToList(),
             Source = source,
             FetchedAt = DateTime.UtcNow
         };
     }
 
-    /// <summary>
-    /// Codex default preference (AGT-2903, policy 2026-10-04): gpt-6-sol when
-    /// the installed CLI offers it, else gpt-5.6-sol. Null when neither is
-    /// listed so the caller keeps the static gpt-5.5 baseline. The CLI's own
-    /// flagged default does not override this order: gpt-6.1-sol is selectable
-    /// when discovered, but has not been selected as the product default.
-    /// </summary>
-    private static readonly string[] DefaultPreference = [ModelIds.Gpt6Sol, ModelIds.Gpt56Sol];
+    internal static string? PickDetectedDefault(CliModelCatalog catalog)
+        => catalog.Models.FirstOrDefault(model => model.Available
+            && string.Equals(model.Id, ModelIds.Gpt62Sol, StringComparison.OrdinalIgnoreCase))?.Id;
 
-    /// <summary>
-    /// Derive the Codex product default from a live/cached catalog by walking
-    /// <see cref="DefaultPreference"/> against the models the CLI marks
-    /// available. Merged-in registry entries are unavailable and never win.
-    /// </summary>
-    internal static string? PickDetectedDefault(CliModelCatalog cat)
-    {
-        var models = cat.Models;
-        if (models == null || models.Count == 0) return null;
-
-        foreach (var preferred in DefaultPreference)
-        {
-            var match = models.FirstOrDefault(m =>
-                m.Available && string.Equals(m.Id, preferred, StringComparison.OrdinalIgnoreCase));
-            if (match != null) return match.Id;
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Publish the detected Codex default into the shared registry so task
-    /// creation, cli-type switches, and client-default materialization all
-    /// follow the CLI, then return the catalog unchanged. Called on every path
-    /// that yields a catalog (fresh, mem-cache, disk-cache) so a null result
-    /// (no gpt-6-sol or gpt-5.6-sol) correctly clears back to the gpt-5.5 baseline.
-    /// </summary>
     private CliModelCatalog Publish(CliModelCatalog cat)
     {
         cat = WithKnownButUnavailableModels(cat, _versionTracker?.CurrentVersion(CliTypes.Codex));

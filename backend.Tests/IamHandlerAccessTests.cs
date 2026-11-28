@@ -374,7 +374,7 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
     }
 
     [Fact]
-    public async Task Scoped_cli_reads_use_static_models_and_do_not_start_refresh()
+    public async Task Scoped_codex_catalogue_uses_host_evidence_and_forbids_refresh()
     {
         var factory = Ready();
         using var viewer = Client(factory, Invite(factory, "cli.viewer",
@@ -383,7 +383,11 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
         using var models = await viewer.GetAsync("/api/cli/codex/models");
         Assert.Equal(HttpStatusCode.OK, models.StatusCode);
         using var catalog = JsonDocument.Parse(await models.Content.ReadAsStringAsync());
-        Assert.Equal("scoped-registry", catalog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("execution-hosts", catalog.RootElement.GetProperty("source").GetString());
+        var standard = Assert.Single(catalog.RootElement.GetProperty("models").EnumerateArray(),
+            model => model.GetProperty("isDefault").GetBoolean());
+        Assert.Equal(ModelIds.Gpt62Sol, standard.GetProperty("id").GetString());
+        Assert.False(standard.GetProperty("available").GetBoolean());
         using var refresh = await viewer.GetAsync("/api/cli/codex/models?refresh=true");
         Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
         using var quota = await viewer.GetAsync("/api/cli/quota");

@@ -405,7 +405,7 @@ public sealed partial class PostMergeIncidentService
 
     private ModelRoutingTier RepairTier(RedTestModelRung rung)
     {
-        var rank = rung switch { RedTestModelRung.Medium => 2, RedTestModelRung.High => 3, _ => 4 };
+        var rank = rung == RedTestModelRung.Medium ? 3 : 4;
         if (_routingMode?.EconomyMode == true) rank = Math.Max(2, rank - _routing.Policy.EconomyMode.DowngradeSteps);
         return _routing.Policy.Tiers.Where(tier => tier.Rank <= rank).MaxBy(tier => tier.Rank)!;
     }

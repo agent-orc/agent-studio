@@ -16,12 +16,13 @@ export interface ThinkingLevelMapping {
  * Resolves a pinned thinking level against a model's discovered ladder with
  * the backend's rule (AGT-2903): an offered level wins, a known rung the model
  * does not offer maps to the highest offered rung below it, and anything else
- * lands on the model default. No mapping is hard-coded per model.
+ * lands on the model default. GPT-6.2 maps unoffered levels to its provider default.
  */
 export function mapThinkingLevel(
   levels: readonly string[] | null | undefined,
   defaultLevel: string | null | undefined,
   requested: string | null | undefined,
+  modelId?: string,
 ): ThinkingLevelMapping {
   const ladder = levels ?? [];
   const pinned = requested?.trim().toLowerCase() || null;
@@ -30,6 +31,9 @@ export function mapThinkingLevel(
 
   const exact = ladder.find((level) => level.toLowerCase() === pinned);
   if (exact !== undefined) return { level: exact, mappedFrom: null };
+  if (modelId === 'gpt-6.2-sol' || modelId === 'gpt-6.2-astra') {
+    return { level: 'low', mappedFrom: pinned };
+  }
 
   const pinnedRank = RUNG_ORDER.indexOf(pinned);
   const lower = pinnedRank <= 0

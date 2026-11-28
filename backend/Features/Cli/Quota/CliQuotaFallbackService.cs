@@ -92,7 +92,15 @@ public sealed class CliQuotaFallbackService
 
     private CliModelRouteProfile? Profile(string cliType)
     {
-        lock (_lock) return _profiles.TryGetValue(cliType, out var profile) ? profile : null;
+        lock (_lock) return _profiles.GetValueOrDefault(cliType)
+            ?? (cliType == CliTypes.Codex
+                ? new CliModelRouteProfile
+                {
+                    CliType = CliTypes.Codex,
+                    PrimaryModel = CodexRoutingPolicy.StandardModel,
+                    PrimaryThinkingLevel = CodexRoutingPolicy.StandardThinkingLevel,
+                }
+                : null);
     }
 
     /// <summary>
@@ -106,8 +114,7 @@ public sealed class CliQuotaFallbackService
     {
         var cli = Clean(cliType)?.ToLowerInvariant() ?? CliTypes.Claude;
         EnsureLoaded();
-        CliModelRouteProfile? profile;
-        lock (_lock) _profiles.TryGetValue(cli, out profile);
+        var profile = Profile(cli);
         if (profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel)) return profile;
 
         var otherFamily = ModelSelectionPlanner.OtherFamily(cli);

@@ -75,9 +75,8 @@ public sealed class ModelMigrationCatalogRegistryTests
 
     [Theory]
     [InlineData(ModelIds.ClaudeOpus5, ModelIds.ClaudeOpus55)]
-    [InlineData(ModelIds.Gpt56Sol, ModelIds.Gpt6Sol)]
-    [InlineData(ModelIds.Gpt56Luna, ModelIds.Gpt6Luna)]
-    [InlineData(ModelIds.Gpt6Sol, ModelIds.Gpt61Sol)]
+    [InlineData(ModelIds.Gpt56Sol, ModelIds.Gpt62Sol)]
+    [InlineData(ModelIds.Gpt56Luna, ModelIds.Gpt62Sol)]
     public void New_generations_are_proposed_but_never_auto_applied(string oldId, string newId)
     {
         var registry = BuildEmbedded();

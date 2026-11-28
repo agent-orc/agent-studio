@@ -1,3 +1,4 @@
+using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Shared;
 using AgentStudio.Tags;
@@ -192,21 +193,8 @@ public sealed class WatcherProposalDraftingService
         }
     }
 
-    /// <summary>
-    /// A tier-only catalogue (no live CLI process): the routing policy's own
-    /// tier model ids, always available. Building proposal drafts is a
-    /// background, offline-friendly operation - it must not depend on a live
-    /// CLI subprocess succeeding just to attach a display recommendation.
-    /// </summary>
-    private static readonly CliModelCatalog FallbackCatalogue = new()
-    {
-        Models =
-        [
-            new CliModelInfo { Id = ModelIds.Gpt6Luna, Label = "GPT-6 Luna", Available = true, ThinkingLevels = ["low", "medium", "high", "xhigh", "max"], DefaultThinkingLevel = "medium" },
-            new CliModelInfo { Id = ModelIds.Gpt56Terra, Label = "GPT-5.6 Terra", Available = true, ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"], DefaultThinkingLevel = "medium" },
-            new CliModelInfo { Id = ModelIds.Gpt6Sol, Label = "GPT-6 Sol", Available = true, ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"], DefaultThinkingLevel = "medium" },
-        ],
-    };
+    // Proposal drafting uses the policy catalogue without starting a local CLI.
+    private static readonly CliModelCatalog FallbackCatalogue = CodexModelDiscovery.FallbackCatalog();
 
     private static string BuildTitle(WatcherCase watcherCase) =>
         $"[Watcher] {DetectorClassLabel(watcherCase.DetectorClass)}: {Truncate(watcherCase.LastSummary, 80)}";

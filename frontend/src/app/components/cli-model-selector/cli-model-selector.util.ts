@@ -10,13 +10,13 @@ export function normalizeThinkingLevel(
 ): string | null {
   if (!modelId) return null;
   const model = models.find((candidate) => candidate.id === modelId);
-  return mapThinkingLevel(model?.thinkingLevels, model?.defaultThinkingLevel, requested ?? model?.defaultThinkingLevel).level;
+  return mapThinkingLevel(model?.thinkingLevels, model?.defaultThinkingLevel, requested ?? model?.defaultThinkingLevel, modelId).level;
 }
 
 /** AGT-2903: note shown when the pinned level is not offered by the model and runs at another rung. */
 export function levelMappingNote(model: CliModelInfo | null, pinned: string | null): string | null {
   if (!model) return null;
-  return mappedThinkingLevelNote(mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned), model.id);
+  return mappedThinkingLevelNote(mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned, model.id), model.id);
 }
 
 export function modelAvailabilityNote(model: CliModelInfo): string | null {

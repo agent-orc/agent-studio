@@ -11,6 +11,7 @@ internal static class ModelAcceptanceTestSupport
 {
     private static readonly (string Provider, string Model)[] RoutedModels =
     [
+        ("codex", CodexRoutingPolicy.StandardModel), ("codex", CodexRoutingPolicy.StrongModel),
         ("codex", "gpt-6-sol"), ("codex", "gpt-6-luna"), ("codex", "gpt-5.6-sol"),
         ("codex", "gpt-5.6-terra"), ("codex", "gpt-5.6-luna"), ("codex", "gpt-5.5"),
         ("claude", "claude-opus-5"), ("claude", "claude-sonnet-5"), ("claude", "claude-haiku-4-5"),

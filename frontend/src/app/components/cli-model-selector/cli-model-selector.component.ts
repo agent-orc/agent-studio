@@ -379,7 +379,7 @@ export class CliModelSelectorComponent {
       );
       return;
     }
-    const defaultModel = selectable.find((model) => model.available !== false && model.isDefault)
+    const defaultModel = selectable.find((model) => model.isDefault)
       ?? selectable.find((model) => model.available !== false);
     this.draftModel.set(defaultModel?.id ?? '');
     this.draftThinkingLevel.set(defaultModel?.defaultThinkingLevel ?? null);

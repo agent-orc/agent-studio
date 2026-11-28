@@ -11,6 +11,17 @@ namespace AgentStudio.Tests;
 
 public sealed class ModelSelectionPolicyStoreTests
 {
+    [Theory]
+    [InlineData(SelectionConsumers.ReviewAspect)]
+    [InlineData(SelectionConsumers.ReviewDeep)]
+    [InlineData(SelectionConsumers.ReviewGrade)]
+    public void Shipped_review_policy_uses_the_standard_Codex_route(string consumer)
+    {
+        var policy = new ModelSelectionPolicy().Consumers[consumer];
+        Assert.Equal(new ConsumerPolicyRoute(CliTypes.Codex, ModelIds.Gpt62Sol, "medium"), policy.Primary);
+        Assert.True(policy.SameClassOnly);
+    }
+
     [Fact]
     public void Migration_preserves_other_step_settings_across_twelve_projects_and_three_pipeline_types()
     {

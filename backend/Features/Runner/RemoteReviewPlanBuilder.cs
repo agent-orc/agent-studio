@@ -845,7 +845,7 @@ public sealed partial class RemoteReviewPlanBuilder
         var selectedDeepThinking = matching?.ThinkingLevel ?? deepSetting?.ThinkingLevel;
         var ruleSelection = matching is null ? (bool?)null
             : matching.CandidateActions.Contains(Contract.DecisionActionKinds.Prepare, StringComparer.Ordinal);
-        var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-xhigh"
+        var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-high"
             || task.Tags.Any(tag => tag.Equals("p0", StringComparison.OrdinalIgnoreCase)
             || tag.Contains("security", StringComparison.OrdinalIgnoreCase)
             || tag.Contains("data-loss", StringComparison.OrdinalIgnoreCase));

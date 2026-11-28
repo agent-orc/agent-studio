@@ -55,20 +55,11 @@ internal static class RunnerCapabilityProbe
         // A server-supplied primary list otherwise hides the built-in routes.
         var fallbackCandidates = options.Role == "coding" ? baseline.SelectMany(route => route switch
         {
-            (CliSelection.CodexCli, "gpt-6-sol") => new[]
-            {
-                (CliSelection.CodexCli, "gpt-5.6-sol"),
-                (CliSelection.ClaudeCli, "claude-sonnet-5"),
-                (CliSelection.ClaudeCli, "claude-opus-5"),
-            },
-            (CliSelection.CodexCli, "gpt-5.6-sol") => new[]
+            (CliSelection.CodexCli, CodexRoutingPolicy.StandardModel or CodexRoutingPolicy.StrongModel
+                or "gpt-6-sol" or "gpt-6.1-sol" or "gpt-5.6-sol") => new[]
             {
                 (CliSelection.ClaudeCli, "claude-sonnet-5"),
                 (CliSelection.ClaudeCli, "claude-opus-5"),
-            },
-            (CliSelection.CodexCli, "gpt-6-luna") => new[]
-            {
-                (CliSelection.CodexCli, "gpt-5.6-luna"),
             },
             _ => Array.Empty<(string, string)>(),
         }).Where(route => providers.Contains(route.Item1))
@@ -98,7 +89,8 @@ internal static class RunnerCapabilityProbe
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
-                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-sol",
+                string[] routes = [CodexRoutingPolicy.StandardModel, CodexRoutingPolicy.StrongModel,
+                    "gpt-6-sol", CodexCliRelease.Gpt61Sol, "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);
