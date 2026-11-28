@@ -640,12 +640,13 @@ public class OrchestratorChatService
             var contextReceipt = promptComposition.ContextReceipt;
             await AppendTurnAsync(projectName, watchPath, context, userTurn, ct).ConfigureAwait(false);
             var requestedModel = string.IsNullOrWhiteSpace(req.Model)
-                ? ModelMetadataRegistry.DefaultForCli(CliTypes.Codex) ?? ModelIds.Gpt55
+                ? PipelineStepModelDefaults.QualityModel
                 : req.Model.Trim();
             if (!requestedModel.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The Orchestrator composer accepts GPT models only.");
             var thinkingLevel = string.IsNullOrWhiteSpace(req.ThinkingLevel)
-                ? ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, requestedModel)
+                ? ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, requestedModel,
+                    PipelineStepModelDefaults.QualityThinkingLevel)
                 : req.ThinkingLevel.Trim();
             var workingDirectory = ResolveWorkingDirectory(projectName, watchPath);
             var startedAt = DateTime.UtcNow;

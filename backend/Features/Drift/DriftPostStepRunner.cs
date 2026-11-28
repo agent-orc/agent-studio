@@ -35,8 +35,8 @@ public sealed class DriftPostStepRunner
 {
     /// <summary>Model used when neither the step nor the project sets one.</summary>
     public const string DefaultCli = CliTypes.Codex;
-    public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
-    public const string DefaultThinkingLevel = "high";
+    public const string DefaultModel = PipelineStepModelDefaults.QualityModel;
+    public const string DefaultThinkingLevel = PipelineStepModelDefaults.QualityThinkingLevel;
 
     private static readonly TimeSpan PerDimensionTimeout = TimeSpan.FromMinutes(5);
 
@@ -202,15 +202,15 @@ public sealed class DriftPostStepRunner
             var pipelineRecord = EnsureRunRecord(jobFolderPath, project, jobId);
             using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath, pipelineRecord.Attempt);
             var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? DefaultCli;
-            var modelResolution = PipelineStepConfigResolver.ResolveModelWithSource(settings, step, DefaultModel);
-            var model = modelResolution.Model;
-            var thinkingLevel = PipelineStepConfigResolver.ResolveThinkingLevel(
+            var modelResolution = PipelineStepModelDefaults.Resolve(settings, step);
+            var model = modelResolution?.Model;
+            var thinkingLevel = model is null ? null : PipelineStepConfigResolver.ResolveThinkingLevel(
                 settings, step, cliType, model, DefaultThinkingLevel);
             try
             {
                 var promptOverride = PipelineStepConfigResolver.ResolvePrompt(settings, step);
                 await RunDimensionAsync(step, cliType, model, thinkingLevel, promptOverride, project, jobId, jobFolderPath, projectRoot, repoRoot, workspace!, ct,
-                        modelResolution.Source)
+                        modelResolution?.Source)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -224,7 +224,7 @@ public sealed class DriftPostStepRunner
     private async Task RunDimensionAsync(
         PipelineStep step,
         string cliType,
-        string model,
+        string? model,
         string? thinkingLevel,
         string? promptOverride,
         string project,
@@ -254,6 +254,7 @@ public sealed class DriftPostStepRunner
             return;
         }
 
+        if (model is null) return;
         var (prompt, persist) = BuildDimension(
             step.Id,
             project,
@@ -326,7 +327,7 @@ public sealed class DriftPostStepRunner
     private void RegisterGenerated(
         string jobFolderPath,
         string stepId,
-        string model,
+        string? model,
         OrchestratorTokenUsage? usage,
         string? cli,
         DateTime startedAt,
@@ -461,7 +462,7 @@ public sealed class DriftPostStepRunner
     private void RecordStep(
         string jobFolderPath,
         string stepId,
-        string model,
+        string? model,
         PipelineStepStatus status,
         OrchestratorTokenUsage? usage,
         string? reason,

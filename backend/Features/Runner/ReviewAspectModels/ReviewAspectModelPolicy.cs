@@ -23,15 +23,30 @@ public sealed record ReviewAspectModelChoice(string CliType, string Model, strin
 public static class ReviewAspectModelPolicy
 {
     public const string CliSetting = "ReviewDecisionOrchestrator:Cli";
+    public const string DefaultThinkingLevel = PipelineStepModelDefaults.QualityThinkingLevel;
     public const string ModelSetting = "ReviewDecisionOrchestrator:AspectModel";
 
+    public static ReviewAspectModelChoice ResolveHost(IConfiguration configuration) =>
+        ResolveDefault(configuration[CliSetting],
+            configuration[ModelSetting] ?? configuration["ReviewDecisionOrchestrator:Model"]);
+
+    internal static (ReviewAspectModelChoice Choice, string? Thinking, string Source) ResolveRoute(
+        ReviewAspectModelChoice host, ProjectSettings? settings, PipelineStep step)
+    {
+        var resolution = PipelineStepConfigResolver.ResolveModelWithSource(settings, step, host.Model);
+        var choice = ResolveStep(host, step.Id, PipelineStepConfigResolver.ResolveCliType(settings, step), resolution);
+        var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(settings, step, choice.CliType, choice.Model,
+            choice.CliType == CliTypes.Codex ? DefaultThinkingLevel : null);
+        return (choice, thinking, choice.Fault is null ? resolution.Source : PipelineStepConfigResolver.ModelSourceRuntime);
+    }
+
     /// <summary>
-    /// The default aspect model of a review CLI: the bounded support model
+    /// The default aspect model of a review CLI: the Studio review model
     /// when it belongs to the CLI, otherwise the registry default of the CLI.
     /// </summary>
     public static string DefaultModelFor(string cliType)
     {
-        var support = PipelineStepModelDefaults.SupportModel;
+        var support = PipelineStepModelDefaults.QualityModel;
         return ModelMetadataRegistry.IsCompatibleWithCli(cliType, support)
             ? support
             : ModelMetadataRegistry.DefaultForCli(cliType) ?? support;

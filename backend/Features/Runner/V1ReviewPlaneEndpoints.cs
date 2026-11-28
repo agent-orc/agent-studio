@@ -2940,8 +2940,9 @@ public static class V1ReviewPlaneEndpoints
             }
             launchedPlan ??= plan;
             if (!plan.IsFallback) return command with { ModelSelection = plan.Selection };
-            if (!operatorSwitch
-                && string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
+                && !MonolithTransitionAdapter.MayReplaceFrozenDeepReviewRoute(
+                    operatorSwitch, subject.Plan.DeepReviewDecision?.Grounds))
             {
                 // This plan froze the deep-review correctness floor. A quota
                 // sibling may be useful for ordinary aspects, but accepting a
@@ -3848,15 +3849,16 @@ public static class V1ReviewPlaneEndpoints
         IEnumerable<ReviewAttemptDto> pending, IConfiguration configuration,
         IEnumerable<CliModelRouteProfile>? profiles = null)
     {
-        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
-            configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
-            configuration[ReviewAspectModelPolicy.ModelSetting]);
+        var hostDefault = ReviewAspectModelPolicy.ResolveHost(configuration);
         var routes = new List<Contract.ConfiguredModelRouteDto>
         {
             new(hostDefault.CliType, hostDefault.Model),
         };
         if (configuration["DeepReview:Mode"] == DeepReviewPolicy.Active)
+        {
             routes.Add(new Contract.ConfiguredModelRouteDto("codex", DeepReviewPolicy.Model));
+            routes.Add(new Contract.ConfiguredModelRouteDto("codex", DeepReviewPolicy.CriticalModel));
+        }
         routes.AddRange(pending.SelectMany(attempt => attempt.Subject.Plan?.Commands ?? [])
             .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && !string.IsNullOrWhiteSpace(command.CliType)

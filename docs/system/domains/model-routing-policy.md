@@ -194,9 +194,9 @@ policy route. A running process keeps its selected model.
 | `gpt-6-sol` / `medium` (`sol-medium`) | Default for new feature and bug cards, including demanding implementation, investigation, or analysis with several interacting concepts. | Correctness-critical control-plane work that meets a hard floor. | The GPT-6 route is provisional. Its predecessor Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-6-sol` / `xhigh` (`sol-xhigh`) | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
 
-Deep review uses the same floor: `gpt-6-sol` at `medium` for discretionary
-large-diff or history-triggered review, and `xhigh` for P0 or critical touched
-areas. Its frozen decision is attached to the remote ReviewSubject. Shadow
+Deep review uses `gpt-6.2-sol` at `medium` for discretionary large-diff or
+history-triggered review and `gpt-6.2-astra` at `xhigh` for P0 or critical
+touched areas. Its frozen decision is attached to the remote ReviewSubject. Shadow
 mode records the decision without spending review tokens; active mode executes
 on the review host and attributes usage to the review command. Quota can defer
 the critical command, but cannot substitute a route below its frozen floor.
@@ -253,13 +253,9 @@ refresh, TE policy `2026-09-25`):
   about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
   is priced and selectable with TokenEconomy `0.3.7` when the installed CLI
   offers it. It is not a default route.
-- `gpt-6.2-sol` and `gpt-6.2-astra` (released 2026-11-17, AGT-3958) are
-  explicit-pin only. No tier, default, family resolver, migration or
-  provider-rejection fallback points at either: 6.2 Sol's coding-agent index
-  is reported three points below 6.1 Sol, and the owner decides after the
-  Studio's own comparison. A provider refusal of a 6.2 pin is therefore not
-  rerouted to a sibling, so a blind comparison never silently runs another
-  model.
+- `gpt-6.2-sol` and `gpt-6.2-astra` (AGT-3958) are selectable by exact id.
+  These models can meet the existing Sol correctness tiers at the required
+  effort. The pipeline workload defaults below choose their own routes.
 
 **Unpriced legacy pins (2026-10-11).** GPT-4.1 and GPT-4o are absent from
 TokenEconomy 0.3.7. Studio no longer includes them in the curated CLI registry
@@ -349,10 +345,8 @@ For core task execution, map the total to the ladder:
 | `51-69` | Sol / medium (GPT-6 Sol) |
 | `70-100` | Sol / xhigh (GPT-6 Sol) |
 
-Luna/high is a role exception for bounded pipeline decisions with structured
-evidence and a parseable output contract. It is not the bottom rung of the
-core-task ladder. GPT-5.4 Mini was retired on 2026-09-11 and is retained only
-as a historical identifier.
+The pipeline workload defaults are listed in [Built-in Codex workload defaults](#built-in-codex-workload-defaults-agt-4385).
+GPT-5.4 Mini was retired on 2026-09-11 and remains a historical identifier.
 
 ### Automated card convention
 
@@ -565,8 +559,8 @@ Available/Deprecated flags when discovery has not run yet:
 | `gpt-mini` compatibility id | gpt-5.6-luna | gpt-5.6-luna |
 | `gpt-flagship` | detected gpt-6-sol, else gpt-5.6-sol, else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
 
-The explicit-pin registry includes these newly onboarded models. Neither changes
-a default route or family resolver:
+The explicit-pin registry includes these model ids. The effort in this table
+is the provider default:
 
 | Model | Picker availability | Thinking ladder | Context window |
 |---|---|---|---:|
@@ -587,19 +581,23 @@ automatic subagent delegation). The API has no `none` effort for 6.2, so a
 stored `none` resolves to the model default. The context column is the Codex
 default window; both models support 1M through `model_context_window`.
 
-Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
-default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
-`TitleGenerationService`, `PromptEnhancementService`, `WikiSearchService`,
-`SoftReasoningHostedService`, `CodePatternDriftAnalysisService`,
-`ProjectProposalDraftingService`, `GenericCliExecutionService.DefaultOpusModel`,
-`WikiMaintenanceModelService.DefaultModel`, `PipelineStepModelDefaults.SupportModel`,
-`DriftPostStepRunner.DefaultModel`, `GitService`'s commit-message model, and both
-Codex supporting-call defaults in `ReviewDecisionOrchestrator`) now resolves
-through this family layer instead of a pinned literal. The `gpt-mini`
-compatibility family now resolves to Luna, so no runtime default selects the
-retired Mini model. Configuration keys
-(e.g. `ClaudeCli:SummaryModel`) still win when an operator sets one - a
-configuration pin is an explicit choice and is never overridden.
+### Built-in Codex workload defaults (AGT-4385)
+
+| Workload | Model | Studio effort |
+|---|---|---|
+| Review aspects, report requirement fit, automatic grade and manual review | `gpt-6.2-sol` | `medium` |
+| Evidence synthesis for review decisions, shadow decision jobs, visual verdicts, task spawner, semantic drift, conflict resolution and orchestrator chat | `gpt-6.2-sol` | `medium` |
+| Commit-message generation and bounded support defaults | `gpt-6.2-sol` | `low` |
+| Discretionary deep review | `gpt-6.2-sol` | `medium` |
+| Critical deep review | `gpt-6.2-astra` | `xhigh` |
+
+Studio sets these effort values when it resolves the workload. Step, project,
+and deployment overrides retain their existing precedence. Code-pattern drift
+runs the deterministic check. Review budgets classify both exact GPT-6.2 ids
+as flagship and weight `ultra` at 2.3, above `max` at 2.0. Deep-review rule
+overrides accept the existing `medium`, `high`, and `xhigh` choices.
+The `gpt-mini` compatibility family continues to resolve to Luna for callers
+using that family.
 
 There is deliberately no Haiku-5 entry: the 2026-09-06 fact check against the
 installed Claude Code 2.1.263 `/model` picker found no Haiku generation beyond
@@ -716,8 +714,8 @@ silently used to rewrite the initial estimate.
 | AGT-2243, aggregate model history across storage variants | 12 | 14 | 20 | 6 | 10 | 5 | `67`, Sol/medium | The source change is a script, but correctness depends on broad task-schema history, legacy fields, lane semantics, idempotency, and data-quality interpretation. The observed Terra run required reissues and ended grade D, which is consistent with choosing a stronger initial route, not proof of causality. |
 | AGT-2182, persist restart-safe RunAttempt and ReviewAttempt fencing | 35 | 20 | 20 | 10 | 10 | 5 | `100`, Sol/xhigh | P0 distributed authority, stale-write rejection, leases, idempotency, restart behavior, and many interacting runtime paths trigger the hard floor independently of quota. |
 
-For every one of these cards, bounded supporting aspect and orchestrator calls
-may still use Luna/high. The table selects the core implementation route.
+The table selects the core implementation route. Supporting calls use the
+[built-in workload defaults](#built-in-codex-workload-defaults-agt-4385).
 
 ## Quota and provider handling
 
@@ -750,7 +748,7 @@ load-bearing boundary is recorded in
 [ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
 
 The operator's expiring fallback preference now reaches review aspects (including
-deep review), review grade, one-shots, orchestrator chat, merge resolution, and
+discretionary deep review), review grade, one-shots, orchestrator chat, merge resolution, and
 the model recommendation for new cards. It switches at the next launch or
 claim and expires at the selected quota reset; existing card settings are not
 rewritten. Review routes require a fallback in the same Token Economy

@@ -118,7 +118,7 @@ public static class LeaseEndpoints
             provider == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
         AgentStudio.TaskServer.Contracts.ProviderModelFallback? policyEquivalent = null;
         if (provider == CliTypes.Codex
-            && model is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
+            && model is ModelIds.Gpt62Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
             && string.Equals(thinking, "xhigh", StringComparison.OrdinalIgnoreCase)
             && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
                 ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)

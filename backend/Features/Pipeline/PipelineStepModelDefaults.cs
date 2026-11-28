@@ -1,75 +1,28 @@
-
-
 namespace AgentStudio.Pipeline;
 
-/// <summary>
-/// Maps a catalogue <see cref="PipelineStep"/> to the runtime-default model its
-/// LLM-backed work falls back to when neither a per-step nor a per-project
-/// override is set. It mirrors the exact constant each runtime call site already
-/// passes to <see cref="PipelineStepConfigResolver.ResolveModel(ProjectSettings?, PipelineStep, string, string?)"/>,
-/// so the pre-run pipeline view can show the same effective model the run would
-/// actually use. Bounded supporting steps use Codex gpt-5.4-mini/high; the
-/// operator-facing grade and task-spawner judgments use the live-discovered
-/// Codex flagship and its top advertised reasoning level.
-/// The Result summary and assessment step defaults to Claude Haiku 5.5 at low
-/// reasoning (AGT-3046).
-///
-/// <para>
-/// Deterministic steps (loop guard, reissue check, git-commit attribution,
-/// lint-scss, regression radar, the early post-core completeness gate) and the
-/// core agent run do not resolve a per-step LLM model through the resolver -
-/// the core run uses the task's own model and the deterministic gate rows are
-/// policy code - so they return null here and the pre-run view shows no
-/// resolved model for them.
-/// </para>
-/// </summary>
+/// <summary>Built-in pipeline routes shared by preview and runtime.</summary>
 public static class PipelineStepModelDefaults
 {
     public const string DefaultCli = CliTypes.Codex;
+    public const string SupportModel = ModelIds.Gpt62Sol;
+    public const string SupportThinkingLevel = "low";
+    public const string QualityModel = ModelIds.Gpt62Sol;
+    public const string QualityThinkingLevel = "medium";
 
-    public static string SupportModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
-
-    public const string SupportThinkingLevel = "high";
-
-    public static string QualityModel =>
-        ModelMetadataRegistry.DefaultForCli(DefaultCli) ?? ModelIds.Gpt55;
-
-    public static string QualityThinkingLevel =>
-        ModelMetadataRegistry.DefaultThinkingLevelForCli(DefaultCli, QualityModel) ?? "high";
-
-    /// <summary>
-    /// The runtime-default model for a step, or null when the step does not
-    /// resolve a per-step LLM model through <see cref="PipelineStepConfigResolver"/>.
-    /// </summary>
+    /// <summary>The built-in model for a step that exposes model configuration.</summary>
     public static string? RuntimeDefaultFor(PipelineStep step) => step.Kind switch
     {
         StepKind.Orchestrator when IsSummaryAssessment(step) => ModelIds.ClaudeHaiku55,
-        StepKind.Aspect => SupportModel,
-        StepKind.Drift => SupportModel,
-        StepKind.Module when string.Equals(
-            step.Id, PipelineCatalogue.PreOrchestratorPrepStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.CodeReviewGradeStepId, StringComparison.OrdinalIgnoreCase)
-            => QualityModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.OrchestratorDecisionStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.ConflictResolutionStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.PostAbortReviewStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.UiVisualVerdictStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.TaskSpawnerStepId, StringComparison.OrdinalIgnoreCase)
-            => QualityModel,
-        StepKind.Orchestrator when string.Equals(
-            step.Id, PipelineCatalogue.FailureInterventionStepId, StringComparison.OrdinalIgnoreCase)
-            => SupportModel,
+        StepKind.Aspect => QualityModel,
+        StepKind.Drift when step.Id != PipelineCatalogue.DriftCodePatternStepId => QualityModel,
+        StepKind.Module when step.Id == PipelineCatalogue.PreOrchestratorPrepStepId => SupportModel,
+        StepKind.Orchestrator when step.Id is PipelineCatalogue.CodeReviewGradeStepId
+            or PipelineCatalogue.OrchestratorDecisionStepId
+            or PipelineCatalogue.ConflictResolutionStepId
+            or PipelineCatalogue.PostAbortReviewStepId
+            or PipelineCatalogue.UiVisualVerdictStepId
+            or PipelineCatalogue.TaskSpawnerStepId
+            or PipelineCatalogue.FailureInterventionStepId => QualityModel,
         _ => null,
     };
 
@@ -82,10 +35,56 @@ public static class PipelineStepModelDefaults
     {
         if (!UsesModel(step)) return null;
         if (IsSummaryAssessment(step)) return PipelineCatalogue.SummaryAssessmentThinkingLevel;
-        return string.Equals(step.Id, PipelineCatalogue.CodeReviewGradeStepId, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(step.Id, PipelineCatalogue.TaskSpawnerStepId, StringComparison.OrdinalIgnoreCase)
-            ? QualityThinkingLevel
-            : SupportThinkingLevel;
+        return step.Id == PipelineCatalogue.PreOrchestratorPrepStepId
+            ? SupportThinkingLevel
+            : QualityThinkingLevel;
+    }
+
+    internal static ((string CliType, string Model, string? ThinkingLevel) Route, string Source) ResolveRoute(
+        ProjectSettings? settings, PipelineStep step, IConfiguration configuration, ReviewAspectModelChoice? host = null)
+    {
+        if (step.Kind == StepKind.Aspect)
+        {
+            var (choice, thinking, source) = ReviewAspectModelPolicy.ResolveRoute(host ?? ReviewAspectModelPolicy.ResolveHost(configuration), settings, step);
+            return ((choice.CliType, choice.Model, thinking), source);
+        }
+
+        if (IsSummaryAssessment(step))
+        {
+            var summary = SummaryGenerationService.ResolveStepSelection(settings);
+            return ((summary.Cli, summary.Model, summary.ThinkingLevel), summary.ModelSource);
+        }
+
+        var model = RuntimeDefaultFor(step)!;
+        var cli = RuntimeDefaultCliFor(step)!;
+        var thinkingDefault = RuntimeDefaultThinkingLevelFor(step);
+        switch (step.Id)
+        {
+            case PipelineCatalogue.CodeReviewGradeStepId:
+                (model, cli) = CodeReviewGradeModelSelector.Resolve(
+                    configuration["CodeReviewStep:DefaultModel"], configuration["CodeReviewStep:DefaultCli"]);
+                break;
+            case PipelineCatalogue.TaskSpawnerStepId:
+                (model, cli, thinkingDefault) = TaskSpawnerModelSelector.Resolve(
+                    configuration["TaskSpawnerStep:DefaultModel"], configuration["TaskSpawnerStep:DefaultCli"],
+                    configuration["TaskSpawnerStep:DefaultThinkingLevel"]);
+                break;
+            case PipelineCatalogue.OrchestratorDecisionStepId:
+                cli = ReviewDecisionOrchestrator.NormalizeReviewCliType(configuration[ReviewAspectModelPolicy.CliSetting]);
+                model = configuration["ReviewDecisionOrchestrator:Model"] ?? ReviewAspectModelPolicy.DefaultModelFor(cli);
+                break;
+        }
+
+        var resolution = PipelineStepConfigResolver.ResolveModelWithSource(settings, step, model);
+        cli = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? cli;
+        if (step.Id == PipelineCatalogue.CodeReviewGradeStepId)
+            thinkingDefault = CodeReviewGradeModelSelector.ThinkingDefault(
+                cli, configuration["CodeReviewStep:DefaultThinkingLevel"]);
+        if (step.Id == PipelineCatalogue.OrchestratorDecisionStepId)
+            thinkingDefault = configuration["ReviewDecisionOrchestrator:ThinkingLevel"]
+                ?? (cli == CliTypes.Codex ? QualityThinkingLevel : null);
+        var level = PipelineStepConfigResolver.ResolveThinkingLevel(settings, step, cli, resolution.Model, thinkingDefault);
+        return ((cli, resolution.Model, level), resolution.Source);
     }
 
     private static bool IsSummaryAssessment(PipelineStep step) =>

@@ -60,7 +60,7 @@ public class CodeReviewDefaultsEndpointTests
         Assert.Equal(TaskCodeReviewEndpoints.DefaultCliFallback, cli);
         Assert.Equal(TaskCodeReviewEndpoints.DefaultModelFallback, model);
         Assert.Equal(CliTypes.Codex, cli);
-        Assert.Equal(ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), model);
+        Assert.Equal(ModelIds.Gpt62Sol, model);
     }
 
     [Fact]

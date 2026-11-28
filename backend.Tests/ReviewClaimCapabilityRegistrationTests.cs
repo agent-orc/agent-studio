@@ -120,7 +120,8 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
             }]);
 
         Assert.Contains(new Contract.ConfiguredModelRouteDto("claude", "claude-opus-5-5"), routes);
-        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6-sol"), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", Contract.CodexCliRelease.Gpt62Sol), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", Contract.CodexCliRelease.Gpt62Astra), routes);
         Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6.3-sol"), routes);
         Assert.True(routes.Count <= 4);
     }

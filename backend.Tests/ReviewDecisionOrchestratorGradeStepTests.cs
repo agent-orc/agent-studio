@@ -60,7 +60,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
     }
 
     [Fact]
-    public async Task GradeStep_RunsEndToEnd_InvokesCodexFlagshipNotMini_StampsGradeTag_AndRecordsPipelineRow()
+    public async Task GradeStep_RunsEndToEnd_UsesSolAtMedium_AndRecordsTheGrade()
     {
         SeedReviewJobWithDone("grade-e2e", CleanStatus, taskType: TaskTypes.Chore, withScreenshot: true);
 
@@ -86,11 +86,8 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         var folder = Path.Combine(_watchPath, TaskStates.HumanReview, "grade-e2e");
         Assert.True(Directory.Exists(folder), "a clean accepted task should land in 5-human-review");
 
-        // 1. The grade step ran on the strong model and demonstrably NOT on the
-        //    bounded aspect model: aspects stay economical, the grade uses the flagship.
-        Assert.Equal(ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), gradeModel);
-        Assert.Equal(ModelIds.Gpt56Luna, aspectModel);
-        Assert.NotEqual(aspectModel, gradeModel);
+        Assert.Equal(ModelIds.Gpt62Sol, gradeModel);
+        Assert.Equal(ModelIds.Gpt62Sol, aspectModel);
 
         // 2. The pipeline records a post-code-review-grade row with the parsed grade.
         var pipelineJson = File.ReadAllText(Path.Combine(folder, PipelineExecutionLog.FileName));

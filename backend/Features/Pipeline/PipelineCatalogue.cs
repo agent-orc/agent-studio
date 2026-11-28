@@ -423,9 +423,8 @@ public static class PipelineCatalogue
     /// in a log. It extends the existing user-triggered
     /// <see cref="AgentStudio.Review.CodeReviewStepService"/> (a
     /// grade mode), runs after the parallel aspect verdicts and before the final
-    /// orchestrator decision, and uses a quality-first model
-    /// (<c>CodeReviewStep:DefaultModel</c>, the live Codex flagship by default)
-    /// rather than the bounded aspect model. Default-on; the recording lives in
+    /// orchestrator decision. The model defaults to GPT-6.2 Sol at medium.
+    /// The recording lives in
     /// <c>ReviewDecisionOrchestrator</c>. Reporting only - the grade never gates
     /// the lane decision, so a low grade surfaces for the human without forcing a
     /// reissue.
@@ -433,13 +432,11 @@ public static class PipelineCatalogue
     public const string CodeReviewGradeStepId = "post-code-review-grade";
 
     /// <summary>
-    /// Opt-in post-step (AGT-2028) that, after a task settles, asks the best
-    /// available model whether the change set is relevant to another project
+    /// Opt-in post-step (AGT-2028) that, after a task settles, asks a model whether the change set is relevant to another project
     /// (a new feature, a removed capability, ...) and, on a conservative yes,
     /// SPAWNS a follow-up card there with a generated prompt and a
-    /// <c>relatedTo</c> reference back to the source task. The relevance +
-    /// prompt-generation model is quality-first (defaults to the live Codex
-    /// flagship at its top advertised reasoning level); the spawned card is
+    /// <c>relatedTo</c> reference back to the source task. Relevance and prompt
+    /// generation default to GPT-6.2 Sol at medium. The spawned card is
     /// worked by the target project's default model. Generic, not
     /// website-hardwired: the target project, relevance question, and spawn lane
     /// come from <c>ProjectSettings.TaskSpawner</c>. Reporting-only - it never
@@ -621,7 +618,6 @@ public static class PipelineCatalogue
                 Idempotent = true,
                 PromptTemplate = def.PromptTemplate,
                 CliType = aspectId == "aspect-visual-review" ? CliTypes.Codex : null,
-                Model = aspectId == "aspect-visual-review" ? PipelineStepModelDefaults.SupportModel : null,
             });
         }
 
@@ -1209,8 +1205,7 @@ public static class PipelineCatalogue
     // The opt-in drift post-steps. They run after the auto-review decision (so
     // the task's own work is settled before drift is measured) and default off
     // - an absent override leaves them disabled. Four are LLM dimensions that
-    // accept a per-step model; code-pattern is rule-based but still carries a
-    // model so an operator can opt into the optional LLM verdict-enrichment pass.
+    // accept a per-step model; code-pattern is rule-based.
     private static IEnumerable<PipelineStep> BuildDriftSteps()
     {
         var dependsOnReview = new[] { OrchestratorDecisionStepId };

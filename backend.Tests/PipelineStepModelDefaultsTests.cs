@@ -1,18 +1,7 @@
-
-
 using Xunit;
 
 namespace AgentStudio.Tests;
 
-/// <summary>
-/// Tests for <see cref="PipelineStepModelDefaults"/>: the pre-run effective
-/// model the Overview pipeline shows for each step. It must mirror the runtime
-/// default each call site already passes to the resolver (bounded support steps
-/// -> gpt-5.6-luna, quality judgments -> live Codex flagship) and layer the
-/// per-project + per-step overrides over it via
-/// <see cref="PipelineStepConfigResolver"/>, so what the operator sees before a
-/// run is what the run would actually use.
-/// </summary>
 public class PipelineStepModelDefaultsTests
 {
     private static PipelineStep Step(string id) =>
@@ -22,6 +11,7 @@ public class PipelineStepModelDefaultsTests
     [Fact]
     public void DeterministicAndCoreSteps_ResolveNoModel()
     {
+        Assert.Null(PipelineStepModelDefaults.Resolve(null, Step(PipelineCatalogue.DriftCodePatternStepId)));
         Assert.Null(PipelineStepModelDefaults.Resolve(null, Step(PipelineCatalogue.CoreAgentRunStepId)));
         Assert.Null(PipelineStepModelDefaults.Resolve(null, Step(PipelineCatalogue.LoopGuardStepId)));
         Assert.Null(PipelineStepModelDefaults.Resolve(null, Step(PipelineCatalogue.LintScssStepId)));
@@ -63,7 +53,7 @@ public class PipelineStepModelDefaultsTests
     }
 
     [Fact]
-    public void SupportingOrchestratorSteps_FallBackToMini_WhenNoOverride()
+    public void SupportingOrchestratorSteps_FallBackToSol_WhenNoOverride()
     {
         Assert.Equal(PipelineStepModelDefaults.SupportModel,
             PipelineStepModelDefaults.Resolve(null, Step(PipelineCatalogue.OrchestratorDecisionStepId))!.Model);
@@ -74,7 +64,7 @@ public class PipelineStepModelDefaultsTests
     }
 
     [Fact]
-    public void QualitySteps_UseLiveCodexFlagship_AndTopReasoning()
+    public void QualitySteps_UseSolAtMedium()
     {
         foreach (var step in new[]
                  {
@@ -91,12 +81,12 @@ public class PipelineStepModelDefaultsTests
     }
 
     [Fact]
-    public void SupportingSteps_ProjectCodexLunaHighRoute()
+    public void AspectUsesSolAtMedium()
     {
         var step = Step("aspect-code-quality");
         Assert.Equal(CliTypes.Codex, PipelineStepModelDefaults.RuntimeDefaultCliFor(step));
-        Assert.Equal(ModelIds.Gpt56Luna, PipelineStepModelDefaults.RuntimeDefaultFor(step));
-        Assert.Equal("high", PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
+        Assert.Equal(ModelIds.Gpt62Sol, PipelineStepModelDefaults.RuntimeDefaultFor(step));
+        Assert.Equal("medium", PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
     }
 
     [Fact]

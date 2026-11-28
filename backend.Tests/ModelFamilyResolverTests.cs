@@ -121,13 +121,9 @@ public sealed class ModelFamilyResolverTests : IDisposable
     [Fact]
     public void RuntimeDefaultsThatUsedToHardcodeHaiku_NowResolveViaTheFamily()
     {
-        // Regression guard for the AGT-2716 literal sweep: every former
-        // Claude defaults follow their current family while retired GPT-5.4
-        // Mini defaults resolve through the compatibility family to Luna.
+        // Regression guard for Claude defaults that follow their current family.
         Assert.Equal(ModelIds.ClaudeHaiku45, OrchestratorRunner.DefaultModel);
         Assert.Equal(ModelIds.ClaudeSonnet5, AgentStudio.Docs.WikiMaintenanceModelService.DefaultModel);
         Assert.Equal(ModelIds.ClaudeOpus5, AgentStudio.Cli.GenericCliExecutionService.DefaultOpusModel);
-        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
-        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Drift.DriftPostStepRunner.DefaultModel);
     }
 }

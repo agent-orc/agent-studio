@@ -733,7 +733,8 @@ public static class ModelSelectionPlanner
     {
         "claude-opus-4-8" or "claude-opus-4-7" or "claude-opus-4-6" or "claude-opus-4-5" => "claude-opus-5",
         "claude-sonnet-4-6" or "claude-sonnet-4-5" => "claude-sonnet-5",
-        "gpt-5.6-sol" => "gpt-6-sol",
+        "gpt-5.6-sol" or CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt62Sol
+            or CodexCliRelease.Gpt62Astra => "gpt-6-sol",
         "gpt-5.6-luna" => "gpt-6-luna",
         _ => value ?? string.Empty,
     };

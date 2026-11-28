@@ -2345,7 +2345,7 @@ public class ProjectRunner
         var resolverCliType = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveCliType(settings, step)
             ?? AgentStudio.Pipeline.PipelineStepModelDefaults.DefaultCli;
         var resolverModelResolution = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModelWithSource(
-            settings, step, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+            settings, step, AgentStudio.Pipeline.PipelineStepModelDefaults.QualityModel);
         var resolverModel = resolverModelResolution.Model;
         var resolverModelSource = resolverModelResolution.Source;
         var resolverThinkingLevel = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveThinkingLevel(
@@ -2353,7 +2353,7 @@ public class ProjectRunner
             step,
             resolverCliType,
             resolverModel,
-            AgentStudio.Pipeline.PipelineStepModelDefaults.SupportThinkingLevel);
+            AgentStudio.Pipeline.PipelineStepModelDefaults.QualityThinkingLevel);
         var resolverAdmission = _modelSelection?.Select(new ModelSelectionCall(
             new AgentStudio.TaskServer.Contracts.SelectionRequest
             {
@@ -8140,7 +8140,7 @@ public class ProjectRunner
         var modelResolution = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModelWithSource(
             settings,
             AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep,
-            runtimeDefault: AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+            runtimeDefault: AgentStudio.Pipeline.PipelineStepModelDefaults.QualityModel);
         var model = modelResolution.Model;
         var reviewCliType = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveCliType(
             settings,
@@ -8151,7 +8151,7 @@ public class ProjectRunner
             AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep,
             reviewCliType,
             model,
-            AgentStudio.Pipeline.PipelineStepModelDefaults.SupportThinkingLevel);
+            AgentStudio.Pipeline.PipelineStepModelDefaults.QualityThinkingLevel);
 
         var phase = _phaseByJob.TryGetValue(jobKey, out var snap) ? snap.Phase.ToString() : RunPhase.Unknown.ToString();
         var request = new PostAbortReviewRequest(

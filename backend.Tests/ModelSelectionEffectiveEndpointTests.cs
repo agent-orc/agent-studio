@@ -407,6 +407,33 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
             Assert.All(ReviewRoutes(selection.Get(project, type)), row => Assert.Equal(CliTypes.Claude, row.Effective?.CliType));
     }
 
+    [Fact]
+    public void Clean_project_preview_matches_the_frozen_review_step_and_admission()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(Path.Combine(_root, "prompt.md"), "Review the delivered change.");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseEnvironment("Test").ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })));
+        var services = factory.Services;
+        var preview = services.GetRequiredService<ModelSelectionEffectiveService>().Get("clean-project", PipelineTypes.Task);
+        var task = new TaskInfo { Id = "AGT-1", ProjectName = "clean-project", FolderPath = _root };
+        var plan = services.GetRequiredService<RemoteReviewPlanBuilder>().Build(
+            task, null, new ProjectSettings(), "develop", "0123456789abcdef", ["backend/Program.cs"]);
+        var command = Assert.Single(plan.Commands, item => item.StepId == "aspect-code-quality");
+        var row = Assert.Single(preview, item => item.StepId == command.StepId);
+        var quota = services.GetRequiredService<QuotaAdmissionService>();
+        var admitted = quota.Plan(new QuotaAdmissionRequest(
+            command.CliType, command.Model, command.ThinkingLevel, task.ProjectName, 0,
+            "remote-review-claim", SameClassOnly: true, StepId: command.StepId));
+        Assert.True(admitted.ShouldLaunch, admitted.Reason);
+        Assert.Equal(new EffectiveModelRoute("codex", CodexCliRelease.Gpt62Sol, "medium"), row.Effective);
+        Assert.Equal(row.Effective, new EffectiveModelRoute(admitted.CliType, admitted.Model, admitted.ThinkingLevel));
+        Assert.Equal(row.Effective, new EffectiveModelRoute(command.CliType!, command.Model, command.ThinkingLevel));
+        var grade = Assert.Single(preview, item => item.StepId == PipelineCatalogue.CodeReviewGradeStepId);
+        Assert.Equal(row.Effective, grade.Effective);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }

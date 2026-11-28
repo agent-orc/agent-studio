@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestrationDecisions;
 
@@ -37,7 +38,13 @@ public sealed record DeepReviewDecision(
 public static class DeepReviewPolicy
 {
     public const int MaximumDeepRounds = 3;
-    public const string Model = "gpt-6-sol";
+    public const string Model = CodexCliRelease.Gpt62Sol;
+    public const string CriticalModel = CodexCliRelease.Gpt62Astra;
+    public const string DefaultThinkingLevel = "medium";
+    public const string CriticalThinkingLevel = "xhigh";
+    private const string CardRiskCritical = "card-risk-critical";
+    private const string CriticalTouchedArea = "critical-touched-area";
+
     public const string Shadow = "shadow";
     public const string Active = "active";
 
@@ -48,17 +55,17 @@ public static class DeepReviewPolicy
         var grounds = new List<string>();
         var critical = facts.RiskClass.Equals("critical", StringComparison.OrdinalIgnoreCase)
             || facts.RiskClass.Equals("p0", StringComparison.OrdinalIgnoreCase);
-        if (critical) grounds.Add("card-risk-critical");
+        if (critical) grounds.Add(CardRiskCritical);
         if (facts.ChangedPaths.Any(CriticalPath))
         {
             critical = true;
-            grounds.Add("critical-touched-area");
+            grounds.Add(CriticalTouchedArea);
         }
         if (facts.ChangedLines >= 500) grounds.Add("large-diff");
         if (facts.ChangedLines < 0) grounds.Add("diff-size-unavailable");
         if (facts.PreviousBlocks > 0) grounds.Add("previous-review-block");
         if (facts.GateFailures > 0) grounds.Add("gate-failure-history");
-        if (critical && !string.Equals(facts.ProducingEffort, "xhigh", StringComparison.OrdinalIgnoreCase))
+        if (critical && !ProducerMeetsEffortFloor(facts.ProducingEffort))
             grounds.Add("producer-below-critical-floor");
         if (critical && facts.ProducingModel is not null
             && !facts.ProducingModel.Contains("sol", StringComparison.OrdinalIgnoreCase)
@@ -82,13 +89,19 @@ public static class DeepReviewPolicy
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             string.Join('\n', JsonSerializer.Serialize(facts), selectedMode, ruleVersionId ?? "",
                 ruleSelection?.ToString() ?? "", ruleModel ?? "", ruleThinkingLevel ?? ""))));
-        var model = critical || string.IsNullOrWhiteSpace(ruleModel) ? Model : ruleModel;
-        var thinking = critical ? "xhigh" : ruleThinkingLevel is "medium" or "high" or "xhigh"
-            ? ruleThinkingLevel : "medium";
+        var model = critical ? CriticalModel : string.IsNullOrWhiteSpace(ruleModel) ? Model : ruleModel;
+        var thinking = critical ? CriticalThinkingLevel : ruleThinkingLevel is "medium" or "high" or "xhigh"
+            ? ruleThinkingLevel : DefaultThinkingLevel;
         return new("deep-review-" + digest[..24], selectedMode, selected,
             selected && selectedMode == Active, model, thinking,
             grounds, ruleVersionId);
     }
+
+    public static bool MayReplaceFrozenRoute(bool operatorSwitch, IReadOnlyList<string>? grounds) =>
+        operatorSwitch && grounds?.Any(ground => ground is CardRiskCritical or CriticalTouchedArea) != true;
+
+    private static bool ProducerMeetsEffortFloor(string? effort) =>
+        effort?.Trim().ToLowerInvariant() is CriticalThinkingLevel or "max" or "ultra";
 
     private static bool CriticalPath(string path)
     {

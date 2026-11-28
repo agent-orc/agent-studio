@@ -218,8 +218,7 @@ public static class ModelIds
     /// <see cref="Gpt56Sol"/> and the <see cref="Gpt55"/> baseline (AGT-2903).</summary>
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt61Sol = "gpt-6.1-sol";
-    /// <summary>GPT-6.2 (2026-11-17). Explicit-pin only: no default, tier or
-    /// fallback points at either until the owner's own comparison decides.</summary>
+    /// <summary>GPT-6.2 model identities shared with runner capability checks.</summary>
     public const string Gpt62Sol = CodexCliRelease.Gpt62Sol;
     public const string Gpt62Astra = CodexCliRelease.Gpt62Astra;
     public const string Gpt6Luna = "gpt-6-luna";
@@ -639,7 +638,7 @@ public static class ModelMetadataRegistry
         var canonical = trimmed is null ? null : NormalizeId(trimmed);
         // Preserve historic alias storage for existing models. New generation
         // spellings must become the exact ids accepted by their CLIs.
-        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.ClaudeHaiku55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.ClaudeHaiku55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt62Sol or ModelIds.Gpt62Astra or ModelIds.Gpt6Luna
             ? canonical
             : trimmed;
         if (string.IsNullOrWhiteSpace(cliType)) return normalized;

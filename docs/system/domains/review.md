@@ -364,15 +364,16 @@ and its verdict is reported as `deep-review` beside the aspect verdicts.
 The run-completion timeline names the receipt, and report projection records a
 `post-deep-review-decision` pipeline row before the deep-review verdict row.
 
-The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
+The shared policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
 the card's Token Economy correctness floor, changed paths and line count, prior
 blocks, gate failures, delivered rounds, and quota admission. It defaults to
-`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security
+`gpt-6.2-sol` at `medium`. P0, critical correctness floors, and touched security
 or auth feature code, attempt authority, transition decisions, or deep-review
-policy require `xhigh`. Unknown diff size is recorded in the receipt without
+policy require `gpt-6.2-astra` at `xhigh`. Unknown diff size is recorded in the receipt without
 selecting review. Available quota never raises the effort. A capped route can suppress
 discretionary review, but a critical review retains its floor and waits for
-quota. The plan refuses a quota fallback that would replace its frozen route.
+quota. The plan defers a quota fallback that would replace its frozen route. The
+critical route also retains its floor during an operator fallback switch.
 Quota-deferred attempts have a short claim cooldown so other queued reviews can run.
 The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
 `review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
@@ -816,8 +817,7 @@ sections, operator directions, recommendations for open
 decisions, and implementation-card source data. A contradiction is a blocking
 finding. The project pipeline-step setting `aspect-concept-fit` resolves its
 enabled state, prompt override, CLI, model, and thinking level like other
-aspects. Its default route is the bounded support aspect route from
-`PipelineStepModelDefaults`. A Dossier-only plan whose `concept-fit` is
+aspects. Its Codex default is `gpt-6.2-sol` at `medium`. A Dossier-only plan whose `concept-fit` is
 disabled carries the completion-only command, so the subject stays admissible
 and settles `Inconclusive` for the missing aspect.
 

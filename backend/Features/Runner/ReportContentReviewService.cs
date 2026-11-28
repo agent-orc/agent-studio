@@ -182,25 +182,18 @@ public sealed class ReportContentReviewService
             ContentRunAttemptId = run?.AttemptId,
         };
 
-        var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex)!;
-        var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model",
-            ModelFamilyResolver.Resolve(ModelFamilies.GptMini))!;
-        var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model)!;
-        var stepModel = PipelineStepConfigResolver.ResolveModelWithSource(settings, step.Id, aspectModel);
-        var stepCli = PipelineStepConfigResolver.ResolveCliType(settings, step)
-            ?? ReviewDecisionOrchestrator.NormalizeReviewCliType(cliBinary);
-        var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(settings, step.Id, stepCli, stepModel.Model);
-        var timeout = TimeSpan.FromSeconds(ReviewAspectTimeoutPolicy.Derive(stepCli, stepModel.Model, thinking,
+        var host = ReviewAspectModelPolicy.ResolveHost(_configuration);
+        var (choice, thinking, source) = ReviewAspectModelPolicy.ResolveRoute(host, settings, step);
+        var (stepCli, stepModel) = (choice.CliType, choice.Model);
+        var timeout = TimeSpan.FromSeconds(ReviewAspectTimeoutPolicy.Derive(stepCli, stepModel, thinking,
             Contract.ReviewAspectBudgetPolicy.MaterialCharacters(
                 inputs.TaskBody + inputs.ResultsInventory + inputs.StatusSummary + inputs.RecentLog),
             _configuration).Seconds);
 
-        var report = await _aspects.RunAsync(inputs, [AspectId], cliBinary, aspectModel, timeout, ct,
-            modelForAspect: _ => stepModel.Model,
+        var report = await _aspects.RunAsync(inputs, [AspectId], stepCli, stepModel, timeout, ct,
             thinkingLevelForAspect: _ => thinking,
             promptForAspect: _ => PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
-            cliForAspect: _ => stepCli,
-            modelSourceForAspect: _ => stepModel.Source);
+            modelSourceForAspect: _ => source);
         if (report.HasQuotaDeferred)
             return new(false, null, "The requirement-fit review waits for model quota.", QuotaDeferred: true);
         if (report.HasHostWaiting)

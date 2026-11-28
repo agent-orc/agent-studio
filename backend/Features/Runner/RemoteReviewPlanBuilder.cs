@@ -474,9 +474,7 @@ public sealed partial class RemoteReviewPlanBuilder
         };
         var inputs = Inputs(task, integrationRef);
         // AGT-3420: the default aspect model belongs to the review CLI in use.
-        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
-            _configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
-            _configuration[ReviewAspectModelPolicy.ModelSetting]);
+        var hostDefault = ReviewAspectModelPolicy.ResolveHost(_configuration);
         if (hostDefault.Fault is not null)
             _logger?.LogError(
                 "remote-review-plan-model-pair-rejected task={TaskKey} setting={Setting} cli={Cli} model={Model}: {Fault}",
@@ -545,9 +543,7 @@ public sealed partial class RemoteReviewPlanBuilder
                 ? ConceptFitDefinition
                 : AspectRunnerService.Catalogue[aspectId];
 
-            var choice = ReviewAspectModelPolicy.ResolveStep(hostDefault, step.Id,
-                PipelineStepConfigResolver.ResolveCliType(settings, step),
-                PipelineStepConfigResolver.ResolveModelWithSource(settings, step, hostDefault.Model));
+            var (choice, thinking, _) = ReviewAspectModelPolicy.ResolveRoute(hostDefault, settings, step);
             if (choice.Fault is not null)
                 _logger?.LogWarning(
                     "remote-review-plan-model-pair-fallback task={TaskKey} step={StepId} cli={Cli} model={Model}: {Fault}",
@@ -555,12 +551,6 @@ public sealed partial class RemoteReviewPlanBuilder
                     step.Id, choice.CliType, choice.Model, choice.Fault);
             var model = choice.Model;
             var cliType = choice.CliType;
-            var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(
-                settings,
-                step,
-                cliType,
-                model,
-                PipelineStepModelDefaults.SupportThinkingLevel);
             var dossier = isConcept ? ConceptDossierReviewMaterial.Render(task.FolderPath, conceptDossier) : null;
             var prompt = _aspects.BuildAspectPrompt(
                 definition,

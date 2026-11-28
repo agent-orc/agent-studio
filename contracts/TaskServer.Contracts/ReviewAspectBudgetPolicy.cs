@@ -160,6 +160,7 @@ public static class ReviewAspectBudgetPolicy
     private static double ThinkingWeight(string? thinkingLevel) =>
         (thinkingLevel ?? string.Empty).Trim().ToLowerInvariant() switch
         {
+            "ultra" => 2.3,
             "max" => 2.0,
             "xhigh" => 1.7,
             "high" => 1.4,

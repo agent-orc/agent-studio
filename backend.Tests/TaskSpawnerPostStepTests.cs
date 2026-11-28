@@ -148,12 +148,12 @@ public class TaskSpawnerPostStepTests : IDisposable
     // ---- best-available model default ----------------------------------
 
     [Fact]
-    public void ModelSelector_DefaultsToLiveCodexFlagship_AtTopEffort()
+    public void ModelSelector_DefaultsToSolAtMedium()
     {
         var (model, cli, thinking) = TaskSpawnerModelSelector.Resolve(null, null, null);
-        Assert.Equal(ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), model);
+        Assert.Equal(ModelIds.Gpt62Sol, model);
         Assert.Equal(CliTypes.Codex, cli);
-        Assert.Equal(ModelMetadataRegistry.DefaultThinkingLevelForCli(cli, model), thinking);
+        Assert.Equal("medium", thinking);
 
         var overridden = TaskSpawnerModelSelector.Resolve("claude-opus-4-7", "claude", "high");
         Assert.Equal(("claude-opus-4-7", "claude", "high"), overridden);

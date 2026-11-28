@@ -58,6 +58,7 @@ public sealed class BatchGateAdvisorService
             {
                 Timeout = TimeSpan.FromSeconds(advisor.TimeoutSeconds),
                 Source = "batch-plan-advisor",
+                ThinkingLevel = advisor.CliType == CliTypes.Codex ? PipelineStepModelDefaults.QualityThinkingLevel : null,
                 Project = project,
                 StepId = "batch-plan-advisor",
                 ExtraArgs = advisor.CliType == CliTypes.Claude

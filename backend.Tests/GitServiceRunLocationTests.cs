@@ -80,6 +80,8 @@ public class GitServiceRunLocationTests : IDisposable
         Assert.NotNull(oneShot.Request);
         Assert.Equal("commit-message", oneShot.Request.Source);
         Assert.Equal("commit-message", oneShot.Request.StepId);
+        Assert.Equal(ModelIds.Gpt62Sol, oneShot.Request.Model);
+        Assert.Equal("low", oneShot.Request.ThinkingLevel);
         Assert.Equal(jobId, oneShot.Request.JobId);
     }
 
@@ -114,7 +116,10 @@ public class GitServiceRunLocationTests : IDisposable
         var result = await git.GenerateCommitMessageAsync(jobId, watchPath);
 
         Assert.Equal("Describe the change", result.Message);
-        Assert.Equal(CliTypes.Codex, Assert.Single(recorder.ReadAll()).CliType);
+        var receipt = Assert.Single(recorder.ReadAll());
+        Assert.Equal(CliTypes.Codex, receipt.CliType);
+        Assert.Equal(ModelIds.Gpt62Sol, receipt.Model);
+        Assert.Equal("low", receipt.ThinkingLevel);
     }
 
     private sealed class CommitMessageOneShot : ICliOneShot

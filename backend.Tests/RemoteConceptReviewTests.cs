@@ -24,8 +24,8 @@ public sealed class RemoteConceptReviewTests : IDisposable
 
         var aspect = Assert.Single(plan.Commands, command => command.Aspect == "concept-fit");
         Assert.Equal(ReviewCommandKinds.AgentAspect, aspect.ExecutionKind);
-        Assert.Equal(PipelineStepModelDefaults.SupportModel, aspect.Model);
-        Assert.Equal(PipelineStepModelDefaults.SupportThinkingLevel, aspect.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt62Sol, aspect.Model);
+        Assert.Equal("medium", aspect.ThinkingLevel);
         Assert.Contains(brief, aspect.Prompt);
         Assert.Contains("contradict", aspect.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("concept-fit", plan.RequiredAspects);

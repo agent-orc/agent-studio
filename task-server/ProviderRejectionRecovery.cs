@@ -246,7 +246,7 @@ public sealed partial class TaskServerStore
         // The versioned policy declares the same-class Anthropic route,
         // including Opus xhigh for the Sol xhigh floor (D5).
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
-            && model is "gpt-6-sol" or "gpt-5.6-sol")
+            && model is CodexCliRelease.Gpt62Sol or CodexCliRelease.Gpt61Sol or "gpt-6-sol" or "gpt-5.6-sol")
         {
             var tier = ThinkingRank(thinking) >= ThinkingRank("xhigh") ? "sol-xhigh" : "sol-medium";
             if (policy.AnthropicRoutes.TryGetValue(tier, out var equivalent))
@@ -320,8 +320,12 @@ public sealed partial class TaskServerStore
             : 0;
         if (CriticalProviderFallbackFloor.IsMatch(taskText)) floor = Math.Max(floor, 4);
         var thinkingRank = ThinkingRank(thinking);
-        var comparable = string.Equals(model, "gpt-5.6-sol", StringComparison.OrdinalIgnoreCase)
-            ? "gpt-6-sol" : model;
+        var comparable = model.ToLowerInvariant() switch
+        {
+            CodexCliRelease.Gpt62Astra or CodexCliRelease.Gpt62Sol or CodexCliRelease.Gpt61Sol
+                or "gpt-5.6-sol" => "gpt-6-sol",
+            _ => model,
+        };
         var routeRank = policy.Tiers
             .Where(tier => thinkingRank >= ThinkingRank(tier.ThinkingLevel)
                 && (string.Equals(tier.Model, comparable, StringComparison.OrdinalIgnoreCase)

@@ -182,6 +182,8 @@ public static class MonolithTransitionAdapter
         string? ruleThinkingLevel = null)
         => DeepReviewPolicy.Decide(facts, mode, ruleVersionId, ruleSelection,
             ruleModel, ruleThinkingLevel);
+    public static bool MayReplaceFrozenDeepReviewRoute(bool operatorSwitch, IReadOnlyList<string>? grounds)
+        => DeepReviewPolicy.MayReplaceFrozenRoute(operatorSwitch, grounds);
 
     public static IReadOnlyList<ReviewFollowUpFinding> MergeReviewFindings(
         IEnumerable<ReviewFollowUpFinding> findings)

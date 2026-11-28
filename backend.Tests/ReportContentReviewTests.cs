@@ -75,7 +75,6 @@ public sealed class ReportContentReviewTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ReviewDecisionOrchestrator:Cli"] = "codex",
-            ["ReviewDecisionOrchestrator:AspectModel"] = "gpt-6-sol",
             ["Security:Profile"] = "networked",
         }).Build();
         var remote = new RemoteCliOneShot("codex", new UnusedClients(), config,
@@ -87,14 +86,14 @@ public sealed class ReportContentReviewTests : IDisposable
 
         var waiting = await review.RunAsync(task, "PROJ-FIXTURE", CancellationToken.None);
         Assert.True(waiting.HostWaiting);
-        Assert.Contains("waiting for a host with model-acceptance:codex:gpt-6-sol", waiting.Reason);
+        Assert.Contains("waiting for a host with model-acceptance:codex:gpt-6.2-sol", waiting.Reason);
         Assert.True(review.IsMissing(task));
 
         await jobs.RegisterAsync("runner-a", new RegisterRunnerRequest("runner", "host-a", "instance-a",
             "1.0.0", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), default);
         await jobs.AdvertiseAsync(new CapabilityAdvertisementRequest("runner-a", "instance-a",
             CapabilityProtocol.CurrentSchemaVersion, clock.GetUtcNow().UtcDateTime, 300, 1,
-            [new AdvertisedCapabilityDto(CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
+            [new AdvertisedCapabilityDto(CapabilityProtocol.ModelAcceptance("codex", CodexCliRelease.Gpt62Sol),
                 "model-acceptance", "ready", CredentialGeneration: "fixture-login",
                 CredentialObservedAt: clock.GetUtcNow().UtcDateTime, ProbeSequence: 1)]), default);
 
@@ -106,6 +105,8 @@ public sealed class ReportContentReviewTests : IDisposable
             if (work is null) await Task.Delay(10);
         }
         Assert.NotNull(work);
+        Assert.Equal(CodexCliRelease.Gpt62Sol, work.Request.Model);
+        Assert.Equal("medium", work.Request.ThinkingLevel);
         Assert.Contains("results/report.html", work.Request.Prompt);
         Assert.True(await jobs.CompleteAsync(new OneShotJobCompletion("runner-a", "instance-a",
             work.JobId, work.ClaimToken, true,

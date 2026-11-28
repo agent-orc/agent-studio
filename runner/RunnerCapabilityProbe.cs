@@ -61,7 +61,7 @@ internal static class RunnerCapabilityProbe
                 (CliSelection.ClaudeCli, "claude-sonnet-5"),
                 (CliSelection.ClaudeCli, "claude-opus-5"),
             },
-            (CliSelection.CodexCli, "gpt-5.6-sol") => new[]
+            (CliSelection.CodexCli, CodexCliRelease.Gpt62Sol or CodexCliRelease.Gpt61Sol or "gpt-5.6-sol") => new[]
             {
                 (CliSelection.ClaudeCli, "claude-sonnet-5"),
                 (CliSelection.ClaudeCli, "claude-opus-5"),
@@ -98,7 +98,8 @@ internal static class RunnerCapabilityProbe
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
-                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-sol",
+                string[] routes = [CodexCliRelease.Gpt62Sol, CodexCliRelease.Gpt62Astra, CodexCliRelease.Gpt61Sol,
+                    "gpt-6-sol", "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);

@@ -380,9 +380,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string project,
         CancellationToken ct)
     {
-        var cliType = NormalizeReviewCliType(cli);
+        var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(project), task);
+        var step = PipelineCatalogue.FindStep(PipelineCatalogue.OrchestratorDecisionStepId)!;
+        var (route, _) = PipelineStepModelDefaults.ResolveRoute(settings, step, _configuration);
+        var cliType = route.CliType;
+        model = route.Model!;
+        var thinking = route.ThinkingLevel;
         var oneShot = _oneShotRegistry?.Get(cliType);
-        if (oneShot == null) return await CliRunner(cli, model, prompt, timeout, ct);
+        if (oneShot is null) return await CliRunner(cliType, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
             CliType: cliType,
@@ -390,6 +395,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Prompt: prompt)
         {
             Timeout = timeout,
+            ThinkingLevel = thinking,
             Source = AgentStudio.Shared.AdHocUsageSources.ReviewDecision,
             RecordUsage = false,
             Project = project,
@@ -505,12 +511,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
         var model = _configuration.GetValue(
-            "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
-        var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
+            "ReviewDecisionOrchestrator:Model", ReviewAspectModelPolicy.DefaultModelFor(NormalizeReviewCliType(cliBinary)));
+        var aspectModel = ReviewAspectModelPolicy.ResolveHost(_configuration).Model;
         // AGT-2820: the budget is derived from the toolchain and the routed
         // model, not from one flat number that starved every strong model.
         var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy
-            .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
+            .Derive(cliBinary, aspectModel, thinkingLevel: NormalizeReviewCliType(cliBinary) == CliTypes.Codex
+                ? ReviewAspectModelPolicy.DefaultThinkingLevel : null, materialCharacters: 0, _configuration)
             .Seconds;
         var maxParallelReviews = ParallelSlotPolicy.ClampMax(
             _configuration.GetValue("ReviewDecisionOrchestrator:MaxParallelReviews", DefaultMaxParallelReviews));
@@ -758,12 +765,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
         var model = _configuration.GetValue(
-            "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
-        var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
+            "ReviewDecisionOrchestrator:Model", ReviewAspectModelPolicy.DefaultModelFor(NormalizeReviewCliType(cliBinary)));
+        var aspectModel = ReviewAspectModelPolicy.ResolveHost(_configuration).Model;
         // AGT-2820: the budget is derived from the toolchain and the routed
         // model, not from one flat number that starved every strong model.
         var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy
-            .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
+            .Derive(cliBinary, aspectModel, thinkingLevel: NormalizeReviewCliType(cliBinary) == CliTypes.Codex
+                ? ReviewAspectModelPolicy.DefaultThinkingLevel : null, materialCharacters: 0, _configuration)
             .Seconds;
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
 
@@ -1498,7 +1506,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 callUsage,
                 sw.ElapsedMilliseconds,
                 ok: true,
-                cliType: CliTypes.Claude,
+                cliType: callUsage?.CliType ?? NormalizeReviewCliType(cliBinary),
                 project: entry.Name,
                 jobId: pending.Job.Id);
             response = parsedText;
@@ -1846,7 +1854,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     callUsage,
                     sw.ElapsedMilliseconds,
                     ok: true,
-                    cliType: CliTypes.Claude,
+                    cliType: callUsage?.CliType ?? NormalizeReviewCliType(cliBinary),
                     project: entry.Name,
                     jobId: pending.Job.Id);
                 RecordRateLimitedCall();
@@ -2992,34 +3000,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 if (recommendation is not null) economyRecommendations[aspectId] = recommendation;
             }
         }
-        Func<string, string>? modelForAspect = settings is null
-            ? null
-            : aspectId => economyRecommendations.TryGetValue(aspectId, out var recommendation)
-                ? recommendation.Model
-                : PipelineStepConfigResolver.ResolveModel(settings, $"aspect-{aspectId}", aspectModel);
-        Func<string, string?>? cliForAspect = settings is null
-            ? null
-            : aspectId => economyRecommendations.TryGetValue(aspectId, out var recommendation)
-                ? recommendation.CliType
-                : PipelineStepConfigResolver.ResolveCliType(settings, $"aspect-{aspectId}") ?? NormalizeReviewCliType(cliBinary);
-        Func<string, string?>? thinkingLevelForAspect = settings is null
-            ? null
-            : aspectId =>
-            {
-                if (economyRecommendations.TryGetValue(aspectId, out var recommendation))
-                    return recommendation.ThinkingLevel;
-                var resolvedModel = modelForAspect?.Invoke(aspectId) ?? aspectModel;
-                return PipelineStepConfigResolver.ResolveThinkingLevel(
-                    settings,
-                    $"aspect-{aspectId}",
-                    cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary),
-                    resolvedModel);
-            };
-        Func<string, string?>? modelSourceForAspect = settings is null
-            ? null
-            : aspectId => economyRecommendations.ContainsKey(aspectId)
-                ? "economy"
-                : PipelineStepConfigResolver.ResolveModelWithSource(settings, $"aspect-{aspectId}", aspectModel).Source;
+        var host = ReviewAspectModelPolicy.ResolveHost(_configuration);
+        var routes = enabledAspects.ToDictionary(id => id, id =>
+        {
+            if (economyRecommendations.TryGetValue(id, out var recommendation))
+                return (Model: recommendation.Model, Cli: recommendation.CliType,
+                    Thinking: recommendation.ThinkingLevel, Source: "economy");
+
+            var step = PipelineCatalogue.FindStep($"aspect-{id}")!;
+            var (choice, thinking, source) = ReviewAspectModelPolicy.ResolveRoute(host, settings, step);
+            return (Model: choice.Model, Cli: choice.CliType, Thinking: thinking, Source: source);
+        });
+        string ModelForAspect(string id) => routes[id].Model;
+        string? CliForAspect(string id) => routes[id].Cli;
+        string? ThinkingLevelForAspect(string id) => routes[id].Thinking;
+        string ModelSourceForAspect(string id) => routes[id].Source;
         Func<string, string?>? promptForAspect = settings is null
             ? null
             : aspectId => PipelineStepConfigResolver.ResolvePrompt(settings, $"aspect-{aspectId}");
@@ -3033,7 +3028,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     || !scopedReview.PreviousByAspect.TryGetValue(aspectId, out var previous)
                     || !AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition))
                     return configuredPrompt;
-                var model = modelForAspect?.Invoke(aspectId) ?? aspectModel;
+                var model = ModelForAspect(aspectId);
                 var basePrompt = _aspectRunner.BuildAspectPrompt(
                     definition,
                     inputs,
@@ -3049,12 +3044,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             var stepId = $"aspect-{aspectId}";
             if (RefuseSpendBudget(current, stepId, StepKind.Aspect)) return;
-            var aspectCli = cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary);
-            var candidateModel = modelForAspect?.Invoke(aspectId) ?? aspectModel;
-            var aspectThinking = thinkingLevelForAspect?.Invoke(aspectId);
+            var aspectCli = CliForAspect(aspectId);
+            var candidateModel = ModelForAspect(aspectId);
+            var aspectThinking = ThinkingLevelForAspect(aspectId);
             var admission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
                 aspectCli, candidateModel, aspectThinking, entry.Name, 0,
-                $"local-review:{stepId}", SameClassOnly: true));
+                $"local-review:{stepId}", SameClassOnly: true, StepId: stepId));
             if (admission is not { ShouldLaunch: false }) continue;
             _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
             {
@@ -3076,7 +3071,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ReviewRoundId = aspectSubject.AttemptChainId ?? $"local-review-{pipelineRecord?.Attempt ?? 1}",
         };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
-            modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
+            ModelForAspect, ThinkingLevelForAspect, promptForAspect, CliForAspect, ModelSourceForAspect);
         if (report.HasQuotaDeferred) return;
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
         var localReviewEvidence = CompletionContentEvidence.CaptureLocalReviewEvidence(
@@ -5673,7 +5668,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Run the automatic post-CORE quality-grade code-review step (ASS-1657)
     /// and record it on the pipeline. It assigns an A/B/C/D grade and structured
     /// findings to the task's full change set with a quality-first model
-    /// (<c>CodeReviewStep:DefaultModel</c>, the live Codex flagship by default)
+    /// (<c>CodeReviewStep:DefaultModel</c>, GPT-6.2 Sol at medium by default)
     /// and hangs a
     /// <c>code-review:grade-*</c> tag on the card so the grade shows in the
     /// Overview and as a card badge. The caller applies the council policy to
@@ -5740,21 +5735,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? selectedModelSource = null;
         try
         {
-            // Quality over cost: the grade pass defaults to the live Codex
-            // flagship, while the bounded aspect reviews use the support model.
-            // Configurable so a deployment can dial the grade model without
-            // touching the aspects.
-            var (defaultModel, defaultCli) = AgentStudio.Review.CodeReviewGradeModelSelector.Resolve(
-                _configuration["CodeReviewStep:DefaultModel"],
-                _configuration["CodeReviewStep:DefaultCli"]);
-            var modelResolution = catalogueStep is null
-                ? null
-                : PipelineStepConfigResolver.ResolveModelWithSource(projectSettings, catalogueStep, defaultModel);
-            var model = modelResolution?.Model ?? defaultModel;
-            var cli = PipelineStepConfigResolver.ResolveCliType(projectSettings, stepId) ?? defaultCli;
-            var thinkingLevel = catalogueStep is null
-                ? null
-                : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
+            var (route, modelSource) = PipelineStepModelDefaults.ResolveRoute(projectSettings,
+                catalogueStep ?? PipelineCatalogue.FindStep(stepId)!, _configuration);
+            var (cli, model, thinkingLevel) = route;
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
 
             var request = new AgentStudio.Review.CodeReviewStepRequest(
@@ -5797,7 +5780,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             if (RefuseSpendBudget(job, stepId, StepKind.Orchestrator)) return null;
             var gradeAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
-                cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true));
+                cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true, StepId: stepId));
             if (gradeAdmission is { ShouldLaunch: false })
             {
                 _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
@@ -5821,7 +5804,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             selectedThinkingLevel = thinkingLevel;
             selectedModelSource = gradeAdmission?.IsFallback == true
                 ? gradeAdmission.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
-                : modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
+                : modelSource;
 
             request = request with { CliType = cli!, Model = model!, ThinkingLevel = thinkingLevel };
             // RunAsync renders and keys the admitted reviewer's actual prompt.
@@ -6088,21 +6071,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var startedAt = DateTime.UtcNow;
         try
         {
-            // Quality-first: the spawn evaluation defaults to the best available
-            // model at max effort, layered under any per-project override.
-            var (defaultModel, defaultCli, defaultThinking) = TaskSpawnerModelSelector.Resolve(
-                _configuration["TaskSpawnerStep:DefaultModel"],
-                _configuration["TaskSpawnerStep:DefaultCli"],
-                _configuration["TaskSpawnerStep:DefaultThinkingLevel"]);
-            var modelResolution = catalogueStep is null
-                ? null
-                : PipelineStepConfigResolver.ResolveModelWithSource(settings, catalogueStep, defaultModel);
-            var model = modelResolution?.Model ?? defaultModel;
-            var modelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
-            var cli = PipelineStepConfigResolver.ResolveCliType(settings, stepId) ?? defaultCli;
-            var thinking = catalogueStep is null
-                ? defaultThinking
-                : PipelineStepConfigResolver.ResolveThinkingLevel(settings, catalogueStep, cli, model, defaultThinking);
+            var (route, modelSource) = PipelineStepModelDefaults.ResolveRoute(settings,
+                catalogueStep ?? PipelineCatalogue.FindStep(stepId)!, _configuration);
+            var (cli, model, thinking) = route;
 
             var runCtx = new TaskSpawnerRunContext
             {
@@ -6116,7 +6087,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 StatusSummary = statusSummary,
                 DiffSummary = diffSummary,
                 ResultsInventory = resultsInventory,
-                Model = model,
+                Model = model!,
                 Cli = cli,
                 ThinkingLevel = thinking,
             };

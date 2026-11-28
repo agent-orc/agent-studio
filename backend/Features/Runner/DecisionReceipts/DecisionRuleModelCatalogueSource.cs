@@ -1,4 +1,5 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.TaskServer.Contracts;
 using TokenEconomy;
 
 namespace AgentStudio.Runner;
@@ -13,6 +14,9 @@ public static class DecisionRuleModelCatalogueSource
     private static readonly IReadOnlyList<DecisionModelOptionV1> Options = ModelRoutingKnowledgeBase.Default.Models
         .SelectMany(model => new[] { model.CanonicalId }.Concat(model.Aliases ?? [])
             .Select(id => new DecisionModelOptionV1(id, NormalizeCli(model.CliId), Trusted(model))))
+        .Concat(new[] { CodexCliRelease.Gpt62Sol, CodexCliRelease.Gpt62Astra }
+            .Select(id => new DecisionModelOptionV1(id, CliTypes.Codex, true)))
+        .DistinctBy(option => option.Model, StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
     public static DecisionRuleModelCatalogue For(IConfiguration configuration)

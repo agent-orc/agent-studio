@@ -23,44 +23,20 @@ public sealed class ModelSelectionEffectiveService(
             ? null : PipelineTypeSettings.ForType(projects.Get(project), pipelineType);
         var pipeline = PipelineCatalogue.ForType(pipelineType);
         var rows = new List<EffectiveModelSelection>();
-        var hostDefault = ReviewAspectModelPolicy.ResolveDefault(
-            configuration[ReviewAspectModelPolicy.CliSetting] ?? PipelineStepModelDefaults.DefaultCli,
-            configuration[ReviewAspectModelPolicy.ModelSetting]);
-
+        var hostDefault = ReviewAspectModelPolicy.ResolveHost(configuration);
         foreach (var step in pipeline.AllSteps.Where(PipelineStepModelDefaults.UsesModel))
         {
-            var consumer = step.Kind == StepKind.Aspect ? "review-aspect"
-                : step.Id == PipelineCatalogue.CodeReviewGradeStepId ? "review-grade"
-                : step.Id == PipelineCatalogue.ConflictResolutionStepId ? "merge-resolver"
-                : "one-shot";
-            string cli;
-            string model;
-            string? thinking;
-            var gradeDefault = AgentStudio.Review.CodeReviewGradeModelSelector.Resolve(
-                configuration["CodeReviewStep:DefaultModel"], configuration["CodeReviewStep:DefaultCli"]);
-            var runtimeModel = step.Id == PipelineCatalogue.CodeReviewGradeStepId
-                ? gradeDefault.Model : PipelineStepModelDefaults.RuntimeDefaultFor(step)!;
-            var resolution = PipelineStepConfigResolver.ResolveModelWithSource(settings, step, runtimeModel);
-            if (step.Kind == StepKind.Aspect)
+            var consumer = step.Id switch
             {
-                var choice = ReviewAspectModelPolicy.ResolveStep(hostDefault, step.Id,
-                    PipelineStepConfigResolver.ResolveCliType(settings, step), resolution);
-                cli = choice.CliType;
-                model = choice.Model;
-                thinking = PipelineStepConfigResolver.ResolveThinkingLevel(settings, step, cli, model,
-                    PipelineStepModelDefaults.SupportThinkingLevel);
-            }
-            else
-            {
-                cli = PipelineStepConfigResolver.ResolveCliType(settings, step)
-                    ?? (step.Id == PipelineCatalogue.CodeReviewGradeStepId
-                        ? gradeDefault.Cli : PipelineStepModelDefaults.RuntimeDefaultCliFor(step)!);
-                model = resolution.Model;
-                thinking = PipelineStepConfigResolver.ResolveThinkingLevel(settings, step, cli, model,
-                    PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
-            }
-            rows.Add(Select(consumer, step.Id, cli, model, thinking, project,
-                resolution.Source == PipelineStepConfigResolver.ModelSourceStep, pipelineType));
+                PipelineCatalogue.RemoteConceptFitStepId => SelectionConsumers.ConceptFit,
+                PipelineCatalogue.CodeReviewGradeStepId => SelectionConsumers.ReviewGrade,
+                PipelineCatalogue.ConflictResolutionStepId => SelectionConsumers.MergeResolver,
+                _ when step.Kind == StepKind.Aspect => SelectionConsumers.ReviewAspect,
+                _ => "one-shot",
+            };
+            var (route, source) = PipelineStepModelDefaults.ResolveRoute(settings, step, configuration, hostDefault);
+            rows.Add(Select(consumer, step.Id, route.CliType, route.Model, route.ThinkingLevel, project,
+                source == PipelineStepConfigResolver.ModelSourceStep, pipelineType));
         }
 
         var deepSetting = settings?.PipelineSteps?.GetValueOrDefault("post-deep-review");
@@ -68,10 +44,10 @@ public sealed class ModelSelectionEffectiveService(
         var deepCli = deepSetting?.CliType
             ?? (deepModel.StartsWith("claude-", StringComparison.OrdinalIgnoreCase) ? CliTypes.Claude : CliTypes.Codex);
         rows.Add(Select("review-deep", "post-deep-review", deepCli, deepModel,
-            deepSetting?.ThinkingLevel ?? "medium",
+            deepSetting?.ThinkingLevel ?? AgentStudio.OrchestrationDecisions.DeepReviewPolicy.DefaultThinkingLevel,
             project, deepSetting is not null, pipelineType));
         rows.Add(Select("chat", null, CliTypes.Codex,
-            ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), null, project, false, pipelineType));
+            PipelineStepModelDefaults.QualityModel, PipelineStepModelDefaults.QualityThinkingLevel, project, false, pipelineType));
         rows.Add(Select("one-shot:title", "title-generation", CliTypes.Claude,
             configuration["TitleGeneration:Model"] ?? configuration["ClaudeCli:SummaryModel"]
                 ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku),
@@ -101,7 +77,7 @@ public sealed class ModelSelectionEffectiveService(
             StepId = stepId,
             IsExplicitPin = pinned,
             Pins = new SelectionPins(cli, model, thinking),
-            Required = new SelectionRequirements(SameClassOnly: consumer.StartsWith("review-", StringComparison.Ordinal)),
+            Required = new SelectionRequirements(SameClassOnly: SelectionConsumers.IsReview(consumer)),
         }, $"effective:{consumer}", Preview: true)).Admission;
         var rule = plan.IsFallback
             ? plan.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"

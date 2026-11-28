@@ -52,6 +52,11 @@ public sealed class DeepReviewDecisionTests
         Assert.Equal(selected, decision.Selected);
         Assert.Equal(selected, decision.Dispatched);
         Assert.Equal(effort, decision.ThinkingLevel);
+        Assert.Equal(effort == "xhigh" ? CodexCliRelease.Gpt62Astra : CodexCliRelease.Gpt62Sol, decision.Model);
+        var host = MonolithTransitionAdapter.DeepReview(
+            Facts(risk, [path], lines, blocks, gates: gates, quota: quota), DeepReviewPolicy.Active);
+        Assert.Equal(decision.Grounds, host.Grounds);
+        Assert.Equal(decision, host with { Grounds = decision.Grounds });
     }
 
     [Fact]
@@ -74,8 +79,9 @@ public sealed class DeepReviewDecisionTests
         var critical = DeepReviewPolicy.Decide(Facts(risk: "critical"), DeepReviewPolicy.Active,
             ruleSelection: false, ruleModel: "gpt-6-luna", ruleThinkingLevel: "medium");
         Assert.True(critical.Dispatched);
-        Assert.Equal("gpt-6-sol", critical.Model);
+        Assert.Equal(CodexCliRelease.Gpt62Astra, critical.Model);
         Assert.Equal("xhigh", critical.ThinkingLevel);
+        Assert.False(DeepReviewPolicy.MayReplaceFrozenRoute(operatorSwitch: true, critical.Grounds));
         Assert.Equal("xhigh", DeepReviewPolicy.Decide(Facts(lines: 600), DeepReviewPolicy.Active,
             ruleThinkingLevel: "xhigh").ThinkingLevel);
         var capped = DeepReviewPolicy.Decide(Facts(risk: "critical", rounds: 3), DeepReviewPolicy.Active);
@@ -159,7 +165,7 @@ public sealed class DeepReviewDecisionTests
     {
         var rule = new DecisionRuleV1("deep-size", DecisionRuleTriggers.DeepReview,
             "review.changed-lines", "500", [DecisionActionKinds.Prepare], "A1",
-            "gpt-6-sol", "signal", ThinkingLevel: "medium");
+            CodexCliRelease.Gpt62Sol, "signal", ThinkingLevel: "medium");
         var models = DecisionRuleModelCatalogueSource.For("codex");
         Assert.True(DecisionRulePolicy.Validate([rule], false, models).Accepted);
         Assert.False(DecisionRulePolicy.Validate([rule with
@@ -197,7 +203,7 @@ public sealed class DeepReviewDecisionTests
             var active = new RemoteReviewPlanBuilder(aspects, activeConfig)
                 .Build(task, null, null, "develop", "0123456789abcdef", ["backend/Auth.cs"]);
             var command = Assert.Single(active.Commands, item => item.Aspect == "deep-review");
-            Assert.Equal("gpt-6-sol", command.Model);
+            Assert.Equal(CodexCliRelease.Gpt62Astra, command.Model);
             Assert.Equal("xhigh", command.ThinkingLevel);
             Assert.Equal(ReviewCommandKinds.AgentAspect, command.ExecutionKind);
             Assert.Contains($"Decision receipt: {active.DeepReviewDecision!.ReceiptId}", command.Prompt);

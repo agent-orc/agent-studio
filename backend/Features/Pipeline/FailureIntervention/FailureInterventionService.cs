@@ -285,10 +285,10 @@ public sealed class FailureInterventionService
             : await _economy.SuggestModelAsync(settings, step.Id, ct, forceEconomy: true);
         var resolved = PipelineStepModelDefaults.Resolve(settings, step);
         var cli = economy?.CliType ?? PipelineStepModelDefaults.RuntimeDefaultCliFor(step) ?? CliTypes.Codex;
-        var model = economy?.Model ?? resolved?.Model ?? PipelineStepModelDefaults.SupportModel;
+        var model = economy?.Model ?? resolved?.Model ?? PipelineStepModelDefaults.QualityModel;
         var thinking = economy?.ThinkingLevel
             ?? PipelineStepConfigResolver.ResolveThinkingLevel(settings, step, cli, model,
-                PipelineStepModelDefaults.SupportThinkingLevel);
+                PipelineStepModelDefaults.QualityThinkingLevel);
         var oneShot = _oneShots?.Get(cli);
         if (oneShot is null)
             return FailureInterventionPolicy.FromFallback(evidence, FailureDomains.Infrastructure,

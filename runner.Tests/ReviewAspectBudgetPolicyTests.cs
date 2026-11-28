@@ -67,6 +67,17 @@ public sealed class ReviewAspectBudgetPolicyTests
         Assert.True(level.Seconds >= floor.Seconds);
     }
 
+    [Theory]
+    [InlineData(CodexCliRelease.Gpt62Sol)]
+    [InlineData(CodexCliRelease.Gpt62Astra)]
+    public void Gpt62_aspects_get_explicit_flagship_and_ultra_weights(string model)
+    {
+        Assert.Equal(288, ReviewAspectBudgetPolicy.Derive("codex", model, "medium", 0).Seconds);
+        Assert.Equal(408, ReviewAspectBudgetPolicy.Derive("codex", model, "xhigh", 0).Seconds);
+        Assert.Equal(480, ReviewAspectBudgetPolicy.Derive("codex", model, "max", 0).Seconds);
+        Assert.Equal(552, ReviewAspectBudgetPolicy.Derive("codex", model, "ultra", 0).Seconds);
+    }
+
     /// <summary>
     /// An unrecognized model is more likely to be a new flagship than a new
     /// economy model, and a budget that is too short produces a false

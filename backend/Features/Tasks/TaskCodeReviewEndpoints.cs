@@ -33,8 +33,7 @@ public static class TaskCodeReviewEndpoints
     public const string DefaultCliFallback = CliTypes.Codex;
 
     /// <summary>Hard fallback when neither config nor request specifies a model.</summary>
-    public static string DefaultModelFallback =>
-        ModelMetadataRegistry.DefaultForCli(DefaultCliFallback) ?? ModelIds.Gpt55;
+    public const string DefaultModelFallback = CodeReviewGradeModelSelector.DefaultModel;
 
     /// <summary>Default per-run wall-clock cap when configuration omits it.</summary>
     public const int DefaultTimeoutSecondsFallback = 600;
@@ -46,11 +45,9 @@ public static class TaskCodeReviewEndpoints
     /// </summary>
     public static (string CliType, string Model) ResolveDefaults(IConfiguration configuration)
     {
-        var cli = configuration[DefaultCliConfigKey];
-        var model = configuration[DefaultModelConfigKey];
-        return (
-            string.IsNullOrWhiteSpace(cli) ? DefaultCliFallback : cli!,
-            string.IsNullOrWhiteSpace(model) ? DefaultModelFallback : model!);
+        var (model, cli) = CodeReviewGradeModelSelector.Resolve(
+            configuration[DefaultModelConfigKey], configuration[DefaultCliConfigKey]);
+        return (cli, model);
     }
 
     public static void MapTaskCodeReviewEndpoints(this RouteGroupBuilder group)
@@ -226,13 +223,13 @@ public static class TaskCodeReviewEndpoints
                 _ => git.GetCommitDiff(jobId, resolvedWatchPath, scope.Shas[0], path: null),
             };
 
-            var cli = !string.IsNullOrWhiteSpace(body?.CliType)
-                ? body!.CliType!
-                : configuration[DefaultCliConfigKey] ?? DefaultCliFallback;
-            var model = !string.IsNullOrWhiteSpace(body?.Model)
-                ? body!.Model!
-                : configuration[DefaultModelConfigKey] ?? DefaultModelFallback;
-            var thinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(cli, model, body?.ThinkingLevel);
+            var (model, cli) = CodeReviewGradeModelSelector.Resolve(
+                string.IsNullOrWhiteSpace(body?.Model) ? configuration[DefaultModelConfigKey] : body!.Model,
+                string.IsNullOrWhiteSpace(body?.CliType) ? configuration[DefaultCliConfigKey] : body!.CliType);
+            var thinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(cli, model,
+                string.IsNullOrWhiteSpace(body?.ThinkingLevel)
+                    ? CodeReviewGradeModelSelector.ThinkingDefault(cli, configuration["CodeReviewStep:DefaultThinkingLevel"])
+                    : body!.ThinkingLevel);
             var timeoutSeconds = configuration.GetValue<int?>(TimeoutSecondsConfigKey)
                 ?? DefaultTimeoutSecondsFallback;
 

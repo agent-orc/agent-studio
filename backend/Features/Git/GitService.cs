@@ -3120,7 +3120,8 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
-        var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
+        const string model = PipelineStepModelDefaults.SupportModel;
+        const string thinking = PipelineStepModelDefaults.SupportThinkingLevel;
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
             {
@@ -3147,6 +3148,7 @@ public partial class GitService
             {
                 Timeout = TimeSpan.FromSeconds(60),
                 Source = AdHocUsageSources.CommitMessage,
+                ThinkingLevel = thinking,
                 StepId = "commit-message",
                 JobId = jobId,
             }, ct);
@@ -3174,7 +3176,7 @@ public partial class GitService
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
-        foreach (var arg in new[] { "exec", "--experimental-json", "--sandbox", "read-only", "-m", model, "-" })
+        foreach (var arg in new[] { "exec", "--experimental-json", "--sandbox", "read-only", "-m", model, "-c", $"model_reasoning_effort=\"{thinking}\"", "-" })
             psi.ArgumentList.Add(arg);
 
         var sw = Stopwatch.StartNew();
@@ -3193,12 +3195,12 @@ public partial class GitService
             sw.Stop();
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId);
+                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: false, cliType: CliTypes.Codex, jobId: jobId, thinkingLevel: thinking);
                 return new GenerateMessageResult(null, $"codex exited {p.ExitCode}: {stderr.Trim()}");
             }
 
             var text = ParseCodexAgentMessage(stdout);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId);
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.CommitMessage, model, null, sw.ElapsedMilliseconds, ok: true, cliType: CliTypes.Codex, jobId: jobId, thinkingLevel: thinking);
 
             var (msg, suspicious) = ParseCommitReview(text);
             if (!string.IsNullOrWhiteSpace(suspicious))

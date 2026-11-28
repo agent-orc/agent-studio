@@ -40,8 +40,8 @@ public sealed record VisualQaResult(
         new VisualQaVerdict(VisualQaVerdictStatus.Acceptable, "Visual QA is not applicable.", []),
         new VisualQaDecision(VisualQaAction.ProceedToHumanReview, "Visual QA is not applicable."),
         [], [], null, null,
-        PipelineStepModelDefaults.SupportModel,
-        PipelineStepModelDefaults.SupportThinkingLevel,
+        PipelineStepModelDefaults.QualityModel,
+        PipelineStepModelDefaults.QualityThinkingLevel,
         0, 0);
 }
 
@@ -151,7 +151,7 @@ public sealed class VisualQaService : IVisualQaService
         var modelResolution = PipelineStepConfigResolver.ResolveModelWithSource(
             projectSettings,
             PipelineCatalogue.UiVisualVerdictStepId,
-            PipelineStepModelDefaults.SupportModel);
+            PipelineStepModelDefaults.QualityModel);
         var model = modelResolution.Model;
         OrchestratorTokenUsage? reviewUsage = null;
         DateTime? reviewStartedAt = null;
@@ -165,7 +165,7 @@ public sealed class VisualQaService : IVisualQaService
                            PipelineCatalogue.UiVisualVerdictStepId,
                            cli,
                            model)
-                       ?? PipelineStepModelDefaults.SupportThinkingLevel;
+                       ?? PipelineStepModelDefaults.QualityThinkingLevel;
         var priorRetries = CountPriorAutomaticRetries(visualRoot);
 
         VisualQaVerdict verdict;

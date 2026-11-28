@@ -198,6 +198,9 @@ public sealed class ModelRoutingPolicyGuardTests
             "Prevent stale-write data-loss in the runner.");
 
         Assert.Equal("sol-xhigh", critical!.Id);
+        Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt62Astra, "xhigh", critical));
+        Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt62Sol, "xhigh", critical));
+        Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt62Sol, "medium", critical));
         Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt6Sol, "xhigh", critical));
         Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt6Sol, "medium", critical));
         // The declared gpt-5.6 sibling inherits the GPT-6 tier it replaces.
