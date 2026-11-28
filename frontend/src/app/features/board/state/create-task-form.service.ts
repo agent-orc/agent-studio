@@ -525,9 +525,9 @@ export class CreateTaskFormService {
    * sends. An empty field let the server pick one the chip never showed.
    */
   private applyCatalogueDefaults(models: readonly CliModelInfo[]): void {
-    if (this.modelSelectionExplicit() && !this.newModel()) return;
-    if (!this.modelSelectionExplicit()
-      && models.some((model) => model.id === this.newModel() && model.available === false)) {
+    const modelId = this.newModel();
+    if (this.modelSelectionExplicit() && !modelId) return;
+    if (!this.modelSelectionExplicit() && modelId && this.isUnavailableModel(models, modelId)) {
       this.newModel.set('');
       this.newThinkingLevel.set(null);
     }
@@ -539,6 +539,11 @@ export class CreateTaskFormService {
       const selected = models.find((m) => m.id === this.newModel());
       if (selected?.defaultThinkingLevel) this.newThinkingLevel.set(selected.defaultThinkingLevel);
     }
+  }
+
+  private isUnavailableModel(models: readonly CliModelInfo[], modelId: string): boolean {
+    const model = models.find((entry) => entry.id === modelId);
+    return model ? model.available === false : this.catalogStore.hasFresh(this.newCliType());
   }
 
   private refreshPolicySuggestion(): void {
@@ -569,10 +574,11 @@ export class CreateTaskFormService {
     if (this.modelSelectionExplicit()) return;
     const suggestion = this.policySuggestion();
     if (typeof suggestion?.model !== 'string' || !suggestion.model.trim()) return;
-    if (this.availableModels().some((model) => model.id === suggestion.model && model.available === false)) return;
+    const models = this.availableModels();
+    if (this.isUnavailableModel(models, suggestion.model)) return;
     this.newModel.set(suggestion.model);
     this.newThinkingLevel.set(suggestion.thinkingLevel ?? null);
-    this.applyCatalogueDefaults(this.availableModels());
+    this.applyCatalogueDefaults(models);
   }
 
   private async uploadCreateAttachments(

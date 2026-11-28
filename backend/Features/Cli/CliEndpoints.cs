@@ -94,7 +94,7 @@ public static class CliEndpoints
 
         cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router,
             IConfiguration configuration, IHttpClientFactory clients,
-            AgentStudio.Runner.V1ReviewExecutorRegistry executionHosts, CancellationToken ct) =>
+            AgentStudio.Runner.V1ReviewExecutorRegistry executionHosts, TimeProvider clock, CancellationToken ct) =>
         {
             if (!CliTypes.IsValid(cliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
@@ -104,7 +104,7 @@ public static class CliEndpoints
                     AgentStudio.Security.PermissionTarget.WorkspaceWide);
             if (scoped && refresh == true) return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase))
-                return Results.Ok(await CodexExecutionModelCatalogue.GetAsync(configuration, clients, executionHosts, ct));
+                return Results.Ok(await CodexExecutionModelCatalogue.GetAsync(configuration, clients, executionHosts, clock, ct));
             if (scoped)
             {
                 // A project member receives a static catalogue. Even a normal

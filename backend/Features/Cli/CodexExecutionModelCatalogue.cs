@@ -11,10 +11,10 @@ internal static class CodexExecutionModelCatalogue
 {
     public static async Task<CliModelCatalog> GetAsync(
         IConfiguration configuration, IHttpClientFactory clients,
-        V1ReviewExecutorRegistry registry, CancellationToken ct)
+        V1ReviewExecutorRegistry registry, TimeProvider clock, CancellationToken ct)
     {
         if (!TaskServerPlaneProxy.IsConfigured(configuration))
-            return Build(registry.ListCapabilitySnapshots(), DateTime.UtcNow);
+            return Build(registry.ListCapabilitySnapshots(), clock.GetUtcNow().UtcDateTime);
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
@@ -22,12 +22,12 @@ internal static class CodexExecutionModelCatalogue
         {
             var hosts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
                 .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts", deadline.Token);
-            return Build(hosts ?? [], DateTime.UtcNow);
+            return Build(hosts ?? [], clock.GetUtcNow().UtcDateTime);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested
             && ex is HttpRequestException or OperationCanceledException or JsonException)
         {
-            return Build([], DateTime.UtcNow);
+            return Build([], clock.GetUtcNow().UtcDateTime);
         }
     }
 

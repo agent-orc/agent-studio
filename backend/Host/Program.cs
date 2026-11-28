@@ -2007,7 +2007,8 @@ app.Use(async (context, next) =>
 // handlers still use TaskRepository; keep them closed. Studio's receipt reads,
 // runner decision-job routes and the rule routes (which answer a typed 409)
 // stay on the Studio receipt plane. The operator-intent POST moves cards
-// through TaskRepository and stays closed.
+// through TaskRepository and stays closed. The Codex catalogue is a Studio
+// read backed by the Task Server host inventory.
 if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
 {
     app.Use(async (context, next) =>
@@ -2019,9 +2020,12 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
             || path.StartsWithSegments("/api/runner/orchestrator-decisions")
             || path.StartsWithSegments("/api/runner/personas")
             || segments is ["api", "workspaces", _, "decision-rules", ..];
+        var codexCatalogueRead = HttpMethods.IsGet(context.Request.Method)
+            && string.Equals(path.Value?.TrimEnd('/'), "/api/cli/codex/models", StringComparison.OrdinalIgnoreCase);
         if (context.Request.Path.StartsWithSegments("/api")
             && !context.Request.Path.StartsWithSegments("/api/v1")
-            && !studioDecisionPath)
+            && !studioDecisionPath
+            && !codexCatalogueRead)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             await context.Response.WriteAsJsonAsync(new { code = "route-not-on-task-server" });

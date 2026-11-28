@@ -22,7 +22,7 @@ describe('CreateTaskFormService', () => {
       providers: [
         CreateTaskFormService,
         { provide: TaskService, useValue: { createJob } },
-        { provide: CliCatalogStore, useValue: { modelsFor: () => [] } },
+        { provide: CliCatalogStore, useValue: { modelsFor: () => [], hasFresh: () => false } },
         { provide: ErrorDialogService, useValue: {} },
         { provide: QuotaApiService, useValue: {} },
       ],
@@ -67,12 +67,12 @@ describe('CreateTaskFormService', () => {
   });
 
   it.each([
-    { source: 'catalogue default', explicit: false, settleRefresh: true },
-    { source: 'recommendation', explicit: false, settleRefresh: true },
-    { source: 'catalogue default', explicit: false, settleRefresh: false },
-    { source: 'project pin', explicit: true, settleRefresh: true },
-  ])('submits the resolved route after a refresh for $source (settled: $settleRefresh)',
-    ({ source, explicit, settleRefresh }) => {
+    { source: 'catalogue default', explicit: false, settleRefresh: true, omitted: false },
+    { source: 'recommendation', explicit: false, settleRefresh: true, omitted: true },
+    { source: 'catalogue default', explicit: false, settleRefresh: false, omitted: true },
+    { source: 'project pin', explicit: true, settleRefresh: true, omitted: true },
+  ])('submits the resolved route after a refresh for $source (settled: $settleRefresh, omitted: $omitted)',
+    ({ source, explicit, settleRefresh, omitted }) => {
       const sol: CliModelInfo = {
         id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', vendor: 'openai', multiplier: null,
         isDefault: true, available: true, defaultThinkingLevel: 'medium',
@@ -104,7 +104,7 @@ describe('CreateTaskFormService', () => {
       expect(form.newThinkingLevel()).toBe('medium');
 
       catalogue.set([
-        { ...sol, available: false },
+        ...(omitted ? [] : [{ ...sol, available: false }]),
         { ...sol, id: 'gpt-6.2-astra', isDefault: false },
       ]);
       if (settleRefresh) {

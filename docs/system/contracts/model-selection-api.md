@@ -25,8 +25,8 @@ Each effective route has `consumer`, nullable `stepId`, `configured` (`cliType`,
 `GET /api/cli/codex/models` returns a `CliModelCatalog` with `models`,
 `source: "execution-hosts"`, and `fetchedAt` (the time the projection was built).
 Each request reads the latest coding and review host advertisements already
-recorded by the installation. In a split installation the API reads Task
-Server's host inventory with a five-second deadline.
+recorded by the installation. In a split installation Studio serves this
+GET route and reads Task Server's host inventory with a five-second deadline.
 
 `?refresh=true` lets the picker bypass its own cache. The API uses the same
 host-inventory read for both request forms. Probe schedules and CLI process
@@ -43,7 +43,7 @@ be read, the API returns HTTP 200 with the relevant registry entries marked
 `available: false`. `isDefault` identifies the policy default independently
 of `available`. Pickers use both fields when preselecting a model. The create
 form also reevaluates its automatic selection when a refreshed catalogue
-marks the selected model unavailable. If no available policy default is
+omits the selected model or marks it unavailable. If no available policy default is
 listed, the form delegates the selection to the server and omits the model
 and thinking level from the create request. Explicit selections remain
 visible with their availability status.
