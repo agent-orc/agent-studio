@@ -72,3 +72,13 @@
 .details__legend li { display: flex; align-items: center; gap: var(--studio-spacing-2); }
 .details__legend--layers { flex-direction: column; color: var(--studio-fg); }
 .details__legend strong { font-weight: 600; }
+
+.details__trend, .details__slots { display: flex; align-items: center; gap: var(--studio-spacing-2); font-variant-numeric: tabular-nums; }
+.details__trend { justify-content: space-between; margin: var(--studio-spacing-1) 0; }
+.details__trend svg { width: 5rem; height: 1.5rem; color: var(--studio-accent-teal); }
+.details__trend path { fill: none; stroke: currentColor; stroke-width: 2; }
+.details__slots { flex-wrap: wrap; }
+[data-slot] { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); }
+[data-slot] i { width: var(--studio-spacing-3); height: var(--studio-spacing-3); border: 1px solid var(--studio-border-strong); }
+[data-slot='In use'] i { background: var(--studio-accent-teal); }
+[data-slot='Held back'] i { background: var(--studio-status-warning); }

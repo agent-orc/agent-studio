@@ -55,7 +55,7 @@ public sealed class ModelSelectionEffectiveEndpointTests : IDisposable
         var json = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
         var claim = new ModelRouteAdmissionRequest(new SelectionRequest { Consumer = SelectionConsumers.Coding,
-            Pins = new("codex", "gpt-6-sol", "high"), IsExplicitPin = true }, [new("codex", "gpt-6-sol", "high")], []);
+            Pins = new("codex", "gpt-6.2-sol", "high"), IsExplicitPin = true }, [new("codex", "gpt-6.2-sol", "high")], []);
         async Task<SelectionResult> Plan()
         {
             using var response = await runner.PostAsJsonAsync("/api/model-selection/plan", claim);

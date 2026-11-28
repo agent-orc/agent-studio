@@ -51,8 +51,8 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await CompleteCapacityAsync(first, "gpt-6-sol", 0);
         var sibling = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", sibling.Status);
-        Assert.Equal("gpt-5.6-sol", sibling.ModelFallback?.To);
-        await CompleteCapacityAsync(sibling, "gpt-5.6-sol", 1);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, sibling.ModelFallback?.To);
+        await CompleteCapacityAsync(sibling, CodexRoutingPolicy.StandardModel, 1);
         var equivalent = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", equivalent.Status);
         Assert.Equal("claude", equivalent.ModelFallback?.CliType);
@@ -894,7 +894,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Equal(delta.DeliverySha, next.MechanicalDelta?.DeliverySha);
         Assert.Equal(delta.ConflictPaths, next.MechanicalDelta?.ConflictPaths);
         Assert.Equal("pending-mechanical-continuation", next.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-5.6-terra", next.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, next.MechanicalFreshRoute?.Model);
         await restarted.CompleteRunAsync(next.Run!.RunId, new CompleteRunRequest(
             "runner-a", "instance-a", next.Lease!.LeaseId, next.Lease.Fence,
             ExecutionOutcomeKind.LaunchFailure.ToString(),
@@ -965,7 +965,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var fresh = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Null(fresh.MechanicalDelta);
         Assert.Equal("semantic-conflict", fresh.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-6-sol", fresh.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, fresh.MechanicalFreshRoute?.Model);
         Assert.Equal("medium", fresh.MechanicalFreshRoute?.ThinkingLevel);
         Assert.Equal("semantic-conflict", fresh.PreviousSession?.FallbackReason);
         Assert.Equal("refs/heads/result", fresh.ContinuationBaseRef);
@@ -991,7 +991,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
 
     [Theory]
     [InlineData("Resolve a public protocol conflict.", "medium")]
-    [InlineData("Resolve a security boundary conflict.", "xhigh")]
+    [InlineData("Resolve a security boundary conflict.", "high")]
     public async Task Mechanical_claim_respects_the_task_text_correctness_floor(
         string body, string expectedThinking)
     {
@@ -1008,7 +1008,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(store, task.CreatedAt);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        Assert.Equal("gpt-6-sol", claim.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, claim.MechanicalFreshRoute?.Model);
         Assert.Equal(expectedThinking, claim.MechanicalFreshRoute?.ThinkingLevel);
     }
 
@@ -2641,7 +2641,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var continuation = await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("gpt-6-astra", continuation.ModelFallback!.From);
-        Assert.Equal("gpt-5.6-sol", continuation.ModelFallback.To);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, continuation.ModelFallback.To);
         Assert.Equal("high", continuation.ModelFallback.ThinkingLevel);
         Assert.False(continuation.ModelFallback.CardPinned);
         Assert.Equal(salvageRef, continuation.ContinuationBaseRef);
@@ -2661,7 +2661,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var (_, project, task) = await SeedReadyTaskAsync(store);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        var decision = ProviderRefusalDecision(claim.Run!.RunId, "gpt-5.5");
+        var decision = ProviderRefusalDecision(claim.Run!.RunId, CodexRoutingPolicy.StandardModel);
 
         await store.CompleteRunAsync(
             claim.Run.RunId,
@@ -3110,7 +3110,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         await store.RegisterRunnerAsync("runner-b", Runner("instance-b") with { HostId = "host-b" }, "test", default);
         await AdvertiseModelsAsync(store, clock, 1, 1,
-            ("codex", "gpt-6-astra", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+            ("codex", "gpt-6-astra", "ready"), ("codex", CodexRoutingPolicy.StandardModel, "ready"));
         await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
             "runner-b", "instance-b", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
             [new AdvertisedCapabilityDto(
@@ -3135,7 +3135,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
 
         Assert.Equal("claimed", claim.Status);
-        Assert.Equal("gpt-5.6-sol", claim.ModelFallback?.To);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, claim.ModelFallback?.To);
     }
 
     [Fact]

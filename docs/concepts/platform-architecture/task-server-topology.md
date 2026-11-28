@@ -169,7 +169,7 @@ profile (see [monolith hosted services](../../system/architecture/monolith-hoste
 | Resources | `GET|POST /api/v1/workspaces`, `GET|POST /api/v1/projects`, `GET|POST /api/v1/projects/{projectId}/tasks`, `GET|PUT /api/v1/projects/{projectId}/tasks/{taskIdentity}`, `GET .../attempts`, `GET .../history?after=` |
 | Orchestrator contexts | `GET|PUT|POST /api/v1/orchestrator-contexts/projects/{projectIdentity}[/tasks/{taskIdentity}][/turns]`, `POST .../legacy-import` |
 | Hosts | `GET|PUT /api/v1/hosts/{hostId}/runtime-capacity`, `GET|PUT /api/v1/hosts/{hostId}/project-policy` |
-| Runners | `GET /api/v1/runners`, `PUT /api/v1/runners/{runnerId}`, `PUT .../capabilities`, `POST .../capability-failures`, `POST .../reports`, `POST .../claims`, `PUT .../outbox-status`, `POST .../review-claims` |
+| Runners | `GET /api/v1/runners`, `PUT /api/v1/runners/{runnerId}`, `PUT .../capabilities`, `POST .../capability-failures`, `POST .../reports`, `POST .../claims`, `PUT .../outbox-status`, `POST .../review-claims`, `POST .../clean-context/terminal` |
 | Permits | `POST /api/v1/work-permits/{permitId}/accept` |
 | Runs | `POST /api/v1/runs/{runId}/reconcile`, `POST .../post-steps/{stepExecutionId}/claim`, `.../complete`, `POST .../lease/renew`, `.../lease/release`, `POST .../result-finalization`, `POST .../completion`, `GET|PUT .../result-handoff`, `GET|POST .../events`, `GET|POST .../artifacts`, `GET .../artifacts/{artifactId}/content` |
 | Reviews | `POST /api/v1/reviews/subjects`, `GET /api/v1/reviews/subjects/{subjectId}`, `GET /api/v1/reviews/attempts/{attemptId}`, `POST .../lease/renew`, `.../report`, `.../cleanup` |
@@ -180,6 +180,31 @@ profile (see [monolith hosted services](../../system/architecture/monolith-hoste
 
 Modes are `Normal`, `Draining`, `ReadOnly`, `Maintenance`
 (`contracts/TaskServer.Contracts/ManagementContracts.cs`).
+
+#### Runner clean-context lifecycle lookup
+
+`POST /api/v1/runners/{runnerId}/clean-context/terminal` is a read-only
+lookup on the standalone Task Server. It requires a Runner principal with
+`runs:write` bound to the route's exact runner ID.
+
+Send a JSON array of up to 512 SHA-256 task-key hashes as strings, using
+lowercase hex. Hash the UTF-8 task key after trimming whitespace, using the
+canonical key issued in the claim and preserving its case. The server validates
+each string as 64 ASCII hexadecimal characters and compares hashes
+case-sensitively.
+
+HTTP 200 returns a JSON array of distinct matching hashes in unspecified order.
+A match requires a completed or archived card and a recorded run for that runner.
+An empty array is valid in either direction. An omitted hash gives no lifecycle
+information and does not authorize immediate terminal cleanup. The response
+contains hashes only.
+
+A well-formed array that exceeds the limit or contains an invalid hash returns
+HTTP 400 with `clean-context-hashes-invalid`. Missing or invalid credentials
+return HTTP 401. Insufficient scope returns HTTP 403 with `insufficient-scope`.
+A principal that is not a Runner, or whose bound runner ID differs from the
+route ID, receives HTTP 403 with `runner-identity-mismatch` when the scope check
+passes.
 
 #### Provider-refusal fleet rollup
 

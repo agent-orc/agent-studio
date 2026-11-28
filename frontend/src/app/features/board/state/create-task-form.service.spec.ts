@@ -1,9 +1,10 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { EMPTY, NEVER, Subject, of } from 'rxjs';
 import type { CreateTaskRequest } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
-import { CliCatalogStore } from '../../cli';
+import { CliCatalogStore, type CliModelInfo } from '../../cli';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { QuotaApiService } from '../../quota';
 import { CreateTaskFormService } from './create-task-form.service';
@@ -21,7 +22,7 @@ describe('CreateTaskFormService', () => {
       providers: [
         CreateTaskFormService,
         { provide: TaskService, useValue: { createJob } },
-        { provide: CliCatalogStore, useValue: {} },
+        { provide: CliCatalogStore, useValue: { modelsFor: () => [] } },
         { provide: ErrorDialogService, useValue: {} },
         { provide: QuotaApiService, useValue: {} },
       ],
@@ -64,6 +65,61 @@ describe('CreateTaskFormService', () => {
     form.onCreateCliTypeChange(form.newCliType() === 'codex' ? 'claude' : 'codex');
     expect(form.modelSelectionExplicit()).toBe(false);
   });
+
+  it.each([
+    { source: 'catalogue default', explicit: false, settleRefresh: true },
+    { source: 'recommendation', explicit: false, settleRefresh: true },
+    { source: 'catalogue default', explicit: false, settleRefresh: false },
+    { source: 'project pin', explicit: true, settleRefresh: true },
+  ])('submits the resolved route after a refresh for $source (settled: $settleRefresh)',
+    ({ source, explicit, settleRefresh }) => {
+      const sol: CliModelInfo = {
+        id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', vendor: 'openai', multiplier: null,
+        isDefault: true, available: true, defaultThinkingLevel: 'medium',
+      };
+      const catalogue = signal<readonly CliModelInfo[]>([sol]);
+      const createJob = vi.fn(() => of({ id: 'created' }));
+      TestBed.configureTestingModule({ providers: [
+        CreateTaskFormService,
+        { provide: TaskService, useValue: { createJob, getRegistryProjects: () => of([{
+          storageLocation: '/workspace/demo', cliDefault: 'codex', modelDefault: explicit ? sol.id : null,
+        }]) } },
+        { provide: CliCatalogStore, useValue: {
+          hasFresh: () => true, modelsFor: (cli: string) => cli === 'codex' ? catalogue() : [],
+        } },
+        { provide: ErrorDialogService, useValue: {} },
+        { provide: QuotaApiService, useValue: {
+          getModelRoutingRecommendation: () => of(source === 'recommendation'
+            ? { model: sol.id, thinkingLevel: 'medium' } : null),
+        } },
+      ] });
+      const form = TestBed.inject(CreateTaskFormService);
+      form.open({
+        watchPaths: [{ name: 'Demo', path: '/workspace/demo', rootPath: '/workspace/demo' }],
+        activeProjects: new Set(['Demo']),
+      });
+      form.newTitle = 'Draft';
+      TestBed.tick();
+      expect(form.newModel()).toBe(sol.id);
+      expect(form.newThinkingLevel()).toBe('medium');
+
+      catalogue.set([
+        { ...sol, available: false },
+        { ...sol, id: 'gpt-6.2-astra', isDefault: false },
+      ]);
+      if (settleRefresh) {
+        TestBed.tick();
+        expect(form.newModel()).toBe(explicit ? sol.id : '');
+        expect(form.newThinkingLevel()).toBe(explicit ? 'medium' : null);
+      }
+      form.submit();
+
+      expect(createJob).toHaveBeenCalledWith(expect.objectContaining({
+        model: explicit ? sol.id : undefined,
+        thinkingLevel: explicit ? 'medium' : undefined,
+        modelExplicit: explicit,
+      }));
+    });
 
   it('settles defaults when a registry response arrives during open', () => {
     TestBed.configureTestingModule({ providers: [

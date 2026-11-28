@@ -11,7 +11,7 @@ export interface LiveRenderState {
   selected: string | null; selectedLink: string | null;
   hover: string | null; hoverLink: string | null;
 }
-export type LiveHit = { node: string; link?: undefined } | { link: string; node?: undefined };
+export type LiveHit = { node: string; card?: string; link?: undefined } | { link: string; node?: undefined; card?: undefined };
 
 const isFrame = (node: LiveNode): boolean => node.kind === 'machine' || node.kind === 'vm' || node.kind === 'group';
 const LAYER_COLOR: Readonly<Record<LiveLayer, keyof LivePalette>> = { perf: 'perf', network: 'net', storage: 'storage', backup: 'backup', warnings: 'warn' };
@@ -39,6 +39,7 @@ export class LiveRenderer {
   /** Number of frames drawn, so a test can prove an idle canvas draws nothing. */
   frames = 0;
   /** Route labels placed in this frame; a label that would cover one of them is left out. */
+  private cardHits: { node: string; card: string; rect: LiveRect }[] = [];
   private labels: LiveRect[] = [];
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly cam: LiveCamera) {
@@ -66,6 +67,7 @@ export class LiveRenderer {
     this.state = state;
     this.frames++;
     this.labels = [];
+    this.cardHits = [];
     p.begin(this.width, this.height);
     p.ctx.fillStyle = pal.outside; p.ctx.fillRect(0, 0, this.width, this.height);
     const b = this.rect(scene.boundary.rect), k = this.cam.k;
@@ -145,7 +147,13 @@ export class LiveRenderer {
     if (warnings) { p.tri(nameEnd + 14, cy, 5.5, pal.warn); p.text(String(warnings), nameEnd + 23, cy, p.font(600, 11.5, true), pal.warn); }
     let left = nameEnd + badge + 18;
     // Performance layer at the far level: a load gauge without text.
-    if (level < 2 && this.state.layers.perf && node.perf?.cpu != null && right - left >= 44) this.gauge(right - 44, cy - 2, 44, 4, node.perf.cpu);
+    if (level < 2 && this.state.layers.perf && node.perf) {
+      const perf = node.perf, room = right - left;
+      const specs = [perf.cores ? perf.cores + ' cores' : '', perf.memTotal ? gib(perf.memTotal) : ''].filter(Boolean).join(' · ');
+      const value = p.pick([specs, perf.cpu != null ? percent(perf.cpu) : null], room, subFont);
+      if (value) p.text(value, right, cy, subFont, pal.ink2, 'right');
+      else if (perf.cpu != null && room >= 44) this.gauge(right - 44, cy - 2, 44, 4, perf.cpu);
+    }
     if (two) {
       const role = p.pick([node.role, node.role.split(' · ')[0]], right - x, subFont);
       if (role) { p.text(role, x, cy + ts / 2 + 10, subFont, pal.ink2); left = Math.max(left, x + p.tw(role, subFont) + 18); }
@@ -263,7 +271,27 @@ export class LiveRenderer {
     y += lines * line + 2;
     const role = y + 14 <= bottom && (!chip || r.h >= 88) ? p.pick([node.role, node.role.split(' · ')[0]], w, subFont) : null;
     if (role) { p.text(role, x, y + 7, subFont, node.kind === 'target' && layers.backup && node.health.tone !== 'success' ? pal.backup : pal.ink2); y += 18; }
-    if (level < 2) return;
+    if (level < 2) {
+      if (node.source?.facts?.sample && y + 14 <= bottom) {
+        const facts = canvasFacts(node, this.scene!, 2, this.state.order);
+        const headline = facts.find(fact => fact.key === 'slots') ?? facts.find(fact => fact.meter != null || fact.key === 'memory');
+        if (headline?.cells) {
+          const { busy, total, held } = headline.cells, cell = Math.min(8, Math.floor(w / total) - 1);
+          if (cell > 1 && y + cell + 14 <= bottom) {
+            for (let index = 0; index < total; index++) {
+              ctx.fillStyle = index < busy ? pal.perf : index >= total - (held ?? 0) ? pal.warn : pal.track;
+              ctx.fillRect(x + index * (cell + 1), y, cell, cell);
+            }
+            y += cell + 1;
+          }
+          const value = p.pick([busy + ' / ' + total + ' slots'], w, subFont);
+          if (value) { p.text(value, x, y + 7, subFont, pal.ink); this.shown.set(node.id, 1); }
+        } else if (headline && this.factRow(headline, x, y, w, 14)) this.shown.set(node.id, 1);
+      }
+      return;
+    }
+    if (level >= 3 && layers.perf && node.slots?.cards.length && node.source?.facts?.sample)
+      y = this.cardSlots(node, x, y, w, bottom);
     // The first finding spans the node as a band; everything else is a row.
     const band = facts.find(fact => fact.band);
     if (band && y + 19 <= bottom + 0.5 && this.factRow(band, x, y, w, 19)) { y += 24; shown++; }
@@ -271,6 +299,24 @@ export class LiveRenderer {
     // the wording that fits the column, and a label stays close to its value.
     shown += this.flow(facts.filter(fact => !fact.band), canvasGaps(node, this.scene!, level, this.state.order), x, y, w, bottom - y, w >= 330 ? 2 : 1, w >= 520 ? 28 : 20);
     this.shown.set(node.id, shown);
+  }
+
+  private cardSlots(node: LiveNode, x: number, y: number, width: number, bottom: number): number {
+    const slots = node.slots!;
+    const { ctx, pal } = this.p, font = this.p.font(500, 11, true);
+    const cellWidth = Math.max(...slots.cards.map(card => this.p.tw(card, font))) + 24;
+    const columns = Math.floor(width / cellWidth);
+    if (!columns) return y;
+    const rows = Math.min(Math.ceil(slots.cards.length / columns), Math.floor((bottom - y - 36) / 20));
+    if (rows < 1) return y;
+    slots.cards.slice(0, rows * columns).forEach((card, index) => {
+      const left = x + index % columns * cellWidth, top = y + Math.floor(index / columns) * 20;
+      ctx.fillStyle = pal.track; ctx.fillRect(left, top, cellWidth - 4, 17);
+      ctx.fillStyle = pal.perf; ctx.fillRect(left + 4, top + 5, 7, 7);
+      this.p.text(card, left + 15, top + 8, font, pal.ink);
+      this.cardHits.push({ node: node.id, card, rect: { x: left, y: top, w: cellWidth - 4, h: 17 } });
+    });
+    return y + rows * 20;
   }
 
   private gauge(x: number, y: number, w: number, h: number, fraction: number): void {
@@ -301,7 +347,7 @@ export class LiveRenderer {
       if (!value) return false;
       this.layerGlyph(fact.layer, x, cy);
       const fits = glyph + cw + 10 + p.tw(value, valueFont) <= w;
-      if (fits) for (let i = 0; i < total; i++) { ctx.fillStyle = i < busy ? pal.perf : pal.track; ctx.fillRect(x + glyph + i * (s + gap), cy - s / 2, s, s); }
+      if (fits) for (let i = 0; i < total; i++) { ctx.fillStyle = i < busy ? pal.perf : i >= total - (fact.cells.held ?? 0) ? pal.warn : pal.track; ctx.fillRect(x + glyph + i * (s + gap), cy - s / 2, s, s); }
       else p.text(fact.label, x + glyph, cy, labelFont, pal.ink2);
       p.text(value, x + w, cy, valueFont, tone, 'right');
       return true;
@@ -364,7 +410,7 @@ export class LiveRenderer {
       const nameEnd = x + 16 + p.tw(node.name, titleFont) + 10;
       const pinned = layers.warnings && node.warnings.length ? 12 : 0;
       const value = worst ? p.pick([`${percent(diskUsed(worst))} · ${gib(worst.usedBytes)} of ${gib(worst.totalBytes)}`, percent(diskUsed(worst))], x + w - pinned - nameEnd, valueFont)
-        : p.pick(['disk use not observed', 'not observed'], x + w - pinned - nameEnd, valueFont);
+        : p.pick([node.source?.facts?.device?.sizeBytes != null ? gib(node.source.facts.device.sizeBytes) : null, 'disk use not observed', 'not observed'], x + w - pinned - nameEnd, valueFont);
       if (value) { p.text(value, x + w - pinned, y + 8, valueFont, !worst ? pal.ink3 : pressure && layers.warnings ? (pressure === 'danger' ? pal.danger : pal.warn) : pal.ink, 'right'); shown++; }
       const role = value ? p.pick([node.role], x + w - pinned - p.tw(value, valueFont) - 12 - nameEnd, p.font(400, 11, true)) : null;
       if (role) p.text(role, nameEnd, y + 8.5, p.font(400, 11, true), pal.ink2);
@@ -569,6 +615,8 @@ export class LiveRenderer {
   pick(sx: number, sy: number, state: LiveRenderState): LiveHit | null {
     const scene = this.scene, layout = this.layout;
     if (!scene || !layout) return null;
+    const slot = this.cardHits.find(({ rect }) => sx >= rect.x && sx <= rect.x + rect.w && sy >= rect.y && sy <= rect.y + rect.h);
+    if (slot) return { node: slot.node, card: slot.card };
     let best: LiveRoute | null = null, distance = 8;
     for (const route of layout.routes) {
       if (!(route.link.layer === 'backup' ? state.layers.backup : state.layers.network)) continue;

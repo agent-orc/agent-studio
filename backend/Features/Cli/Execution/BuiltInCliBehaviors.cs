@@ -534,14 +534,7 @@ internal static class BuiltInCliBehaviors
     // ════════════════════════════════════════════════════════════════════
 
     // Fallback Codex model when neither the task nor config specifies one.
-    // Must be an account-valid model: codex-cli 0.143 on a ChatGPT account
-    // rejects gpt-5-codex with a 400 invalid_request, so the default is
-    // gpt-5.5 (AGT-1941). Discovery of the live catalog does NOT self-correct
-    // an explicitly-requested stale model - ResolveInvocationModel only swaps
-    // out cross-vendor ids (claude-*/gemini-*), not a stale OpenAI id - so this
-    // fallback baseline is the single lever that keeps fresh Codex spawns on a
-    // valid model.
-    internal const string CodexFallbackModel = ModelIds.Gpt55;
+    internal const string CodexFallbackModel = ModelIds.Gpt62Sol;
 
     internal static CliBehavior Codex(
         CodexModelDiscovery modelDiscovery,
@@ -591,13 +584,7 @@ internal static class BuiltInCliBehaviors
         configured = configuration["CodexCli:DefaultModel"]?.Trim();
         if (!string.IsNullOrWhiteSpace(configured)) return configured;
 
-        // Follow the installed CLI: when discovery has detected a newer top
-        // model (gpt-5.6-*) it is the invocation default too, so a codex task
-        // that reaches spawn with no/foreign model runs on the current model
-        // rather than the gpt-5.5 floor (AGT-2025). Null => the account-valid
-        // gpt-5.5 baseline (AGT-1941).
-        var detected = ModelMetadataRegistry.DetectedCodexDefault;
-        return string.IsNullOrWhiteSpace(detected) ? CodexFallbackModel : detected;
+        return CodexFallbackModel;
     }
 
     private static bool IsForeignModelId(string? model)

@@ -53,12 +53,9 @@ public class CodeReviewGradeModelSelectorTests
     }
 
     [Fact]
-    public void GradeDefault_IsNotTheCheapAspectDefault()
+    public void Grade_default_is_Sol_medium()
     {
-        // The whole point of ASS-1657: bounded aspect verdicts use the mini model, the
-        // operator-facing quality grade runs on the strong model. If these two
-        // ever converge, the grade has been quietly downgraded — fail loudly.
-        Assert.NotEqual(PipelineStepModelDefaults.SupportModel, CodeReviewGradeModelSelector.DefaultModel);
-        Assert.Equal(ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), CodeReviewGradeModelSelector.DefaultModel);
+        Assert.Equal(ModelIds.Gpt62Sol, CodeReviewGradeModelSelector.DefaultModel);
+        Assert.Equal("medium", CodeReviewGradeModelSelector.DefaultThinkingLevel);
     }
 }

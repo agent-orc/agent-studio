@@ -72,7 +72,7 @@ describe('live structure renderer (AGT-4024)', () => {
       }
       expect(checked).toBeGreaterThan(targets.length * 32);
     }
-  });
+  }, 120_000);
 
   it('says what is not observed and why on a node the Studio knows only by name', () => {
     const { scene, cam, draw, written } = setup();

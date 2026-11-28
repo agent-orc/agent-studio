@@ -8,7 +8,7 @@ namespace AgentStudio.Tests;
 /// Tests for <see cref="PipelineStepModelDefaults"/>: the pre-run effective
 /// model the Overview pipeline shows for each step. It must mirror the runtime
 /// default each call site already passes to the resolver (bounded support steps
-/// -> gpt-5.6-luna, quality judgments -> live Codex flagship) and layer the
+/// and quality judgments use the standard Codex route) and layer the
 /// per-project + per-step overrides over it via
 /// <see cref="PipelineStepConfigResolver"/>, so what the operator sees before a
 /// run is what the run would actually use.
@@ -91,12 +91,12 @@ public class PipelineStepModelDefaultsTests
     }
 
     [Fact]
-    public void SupportingSteps_ProjectCodexLunaHighRoute()
+    public void SupportingSteps_ProjectCodexSolMediumRoute()
     {
         var step = Step("aspect-code-quality");
         Assert.Equal(CliTypes.Codex, PipelineStepModelDefaults.RuntimeDefaultCliFor(step));
-        Assert.Equal(ModelIds.Gpt56Luna, PipelineStepModelDefaults.RuntimeDefaultFor(step));
-        Assert.Equal("high", PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
+        Assert.Equal(ModelIds.Gpt62Sol, PipelineStepModelDefaults.RuntimeDefaultFor(step));
+        Assert.Equal("medium", PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
     }
 
     [Fact]

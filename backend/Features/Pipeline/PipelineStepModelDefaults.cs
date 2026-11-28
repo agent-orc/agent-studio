@@ -8,9 +8,7 @@ namespace AgentStudio.Pipeline;
 /// override is set. It mirrors the exact constant each runtime call site already
 /// passes to <see cref="PipelineStepConfigResolver.ResolveModel(ProjectSettings?, PipelineStep, string, string?)"/>,
 /// so the pre-run pipeline view can show the same effective model the run would
-/// actually use. Bounded supporting steps use Codex gpt-5.4-mini/high; the
-/// operator-facing grade and task-spawner judgments use the live-discovered
-/// Codex flagship and its top advertised reasoning level.
+/// actually use. Codex support, grade and task-spawner steps use the standard route.
 /// The Result summary and assessment step defaults to Claude Haiku 5.5 at low
 /// reasoning (AGT-3046).
 ///
@@ -29,10 +27,10 @@ public static class PipelineStepModelDefaults
 
     public static string SupportModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
 
-    public const string SupportThinkingLevel = "high";
+    public const string SupportThinkingLevel = "medium";
 
     public static string QualityModel =>
-        ModelMetadataRegistry.DefaultForCli(DefaultCli) ?? ModelIds.Gpt55;
+        ModelMetadataRegistry.DefaultForCli(DefaultCli) ?? ModelIds.Gpt62Sol;
 
     public static string QualityThinkingLevel =>
         ModelMetadataRegistry.DefaultThinkingLevelForCli(DefaultCli, QualityModel) ?? "high";

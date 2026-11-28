@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, afterNextRender, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { DisclosureMarkerComponent } from '@studio/ui/components/disclosure-marker/disclosure-marker.component';
 import { SegmentedControlComponent } from '@studio/ui/components/segmented-control/segmented-control.component';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { StudioIconComponent } from '@studio/ui/components/studio-icon/studio-icon.component';
 import { ModalStackService } from '@studio/ui/services/modal-stack.service';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import type { StructureData } from '../../structure.model';
 import { LiveStructureDetailsComponent } from '../live-structure-details/live-structure-details.component';
 import { LiveStructureJumpComponent } from '../live-structure-jump/live-structure-jump.component';
@@ -99,6 +100,8 @@ export class LiveStructureViewComponent {
   readonly selectedLinkModel = computed(() => { const id = this.selectedLink(); return id ? this.scene().links.find(link => link.id === id) ?? null : null; });
   readonly levelName = computed(() => LIVE_LEVELS[this.level() - 1]);
   readonly activeLayers = computed(() => LIVE_LAYERS.filter(layer => this.layers()[layer.id]).map(layer => layer.id).join(','));
+  private readonly injector = inject(Injector);
+  openCard(card: string): void { this.injector.get(TaskReferenceNavigationService).openReferenceOrNotify(card); }
   readonly sheetTitle = computed(() => this.selectedLinkModel()?.name ?? this.selectedNode()?.name ?? this.scene().boundary.name);
   /** One fact per layer for the switch, so a layer says something even while it is off. */
   readonly summaries = computed<Record<LiveLayer, string>>(() => {
@@ -106,7 +109,7 @@ export class LiveStructureViewComponent {
     const links = scene.links.filter(link => link.layer === 'network'), down = links.filter(link => link.health.tone === 'danger').length;
     const disks = scene.order.flatMap(node => node.disks);
     return {
-      perf: totals.totalSlots ? `${totals.busySlots} of ${totals.totalSlots} slots busy` : `${totals.reporting} hosts reporting`,
+      perf: scene.partialCapacity ? `${totals.busySlots} slots busy` : totals.totalSlots ? `${totals.busySlots} of ${totals.totalSlots} slots busy` : `${totals.reporting} hosts reporting`,
       network: links.length ? `${links.length} ${links.length === 1 ? 'route' : 'routes'}${down ? `, ${down} down` : ''}` : 'no route reported',
       storage: disks.length ? `fullest disk ${percent(Math.max(...disks.map(diskUsed)))}` : 'not observed',
       backup: !scene.backup.observed ? 'not observed' : scene.backup.locations ? `${scene.backup.covered} of ${scene.backup.locations} covered` : scene.backup.health.word,
@@ -276,6 +279,7 @@ export class LiveStructureViewComponent {
   private onHover(x: number, y: number): void {
     const hit = this.renderer?.pick(x, y, this.state()) ?? null;
     const node = hit?.node ?? null, link = hit?.link ?? null;
+    this.canvasRef().nativeElement.title = hit?.card ?? '';
     if (node === this.hover && link === this.hoverLink) return;
     this.hover = node; this.hoverLink = link;
     this.canvasRef().nativeElement.dataset['pointing'] = String(!!hit);
@@ -283,6 +287,7 @@ export class LiveStructureViewComponent {
   }
   private onTap(x: number, y: number, double: boolean): void {
     const hit = this.renderer?.pick(x, y, this.state()) ?? null;
+    if (hit?.card) { this.openCard(hit.card); return; }
     if (double) { if (hit?.node) this.jumpTo(hit.node); else { this.camera.zoomAt(x, y, 1.9); this.invalidate(); } return; }
     if (hit?.link) this.chooseLink(hit.link);
     else if (hit?.node) this.choose(hit.node);

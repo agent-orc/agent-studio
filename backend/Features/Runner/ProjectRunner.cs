@@ -5321,7 +5321,8 @@ public class ProjectRunner
     /// </summary>
     private TaskInfo ApplyAutoModelMigration(TaskInfo info)
     {
-        if (_modelMigrationCatalog == null) return info;
+        if (_modelMigrationCatalog == null || info.PinMode is "hard" or "strict"
+            || CodexRoutingPolicy.IsSupersededSolPreference(info.Model)) return info;
 
         var autoApplyEnabled = _orchestratorDefaults?.WorkspaceForProject(ProjectName).AutoApplyModelMigrations ?? true;
         var migration = AgentStudio.Pipeline.ModelMigrationPolicy.DecideAutoMigration(

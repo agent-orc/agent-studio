@@ -111,7 +111,7 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(ModelIds.Gpt56Sol, merged.Models[0].Id);
         Assert.All(merged.Models.Where(m => !m.Available), m => Assert.NotNull(m.AvailabilityNote));
         // A merged-in unavailable entry can never become the detected default.
-        Assert.Equal(ModelIds.Gpt56Sol, CodexModelDiscovery.PickDetectedDefault(merged));
+        Assert.Null(CodexModelDiscovery.PickDetectedDefault(merged));
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(["minimal", "low", "medium", "high", "xhigh"], sol.ThinkingLevels);
         Assert.Equal("xhigh", sol.DefaultThinkingLevel);
         Assert.Equal(1_050_000, ModelMetadataRegistry.ContextWindowFor(sol.Id));
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     // Shape of `codex debug models` on codex-cli 0.166.0 (runner-01, 2026-11-17).
@@ -207,17 +207,15 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void Gpt62_IsNeverTheCodexDefault_EvenWhenTheCliRanksItFirst()
+    public void Sol_is_the_standard_route_with_or_without_a_local_catalogue()
     {
         var current = CodexModelDiscovery.WithKnownButUnavailableModels(
             new CliModelCatalog { Models = CodexModelDiscovery.ParseDebugModelsJson(Gpt62DebugModels) }, "0.166.0");
 
-        Assert.Equal(ModelIds.Gpt6Sol, CodexModelDiscovery.PickDetectedDefault(current));
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
-        Assert.All(new[] { ModelIds.Gpt62Sol, ModelIds.Gpt62Astra },
-            id => Assert.False(ModelMetadataRegistry.Find(id)!.IsDefault));
-        Assert.DoesNotContain(CodexModelDiscovery.FallbackCatalog().Models,
-            m => m.Id is ModelIds.Gpt62Sol or ModelIds.Gpt62Astra && (m.Available || m.IsDefault));
+        Assert.Equal(ModelIds.Gpt62Sol, CodexModelDiscovery.PickDetectedDefault(current));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.True(ModelMetadataRegistry.Find(ModelIds.Gpt62Sol)!.IsDefault);
+        Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt62Astra)!.IsDefault);
     }
 
     [Theory]
@@ -228,14 +226,14 @@ public class CodexModelDiscoveryTests : IDisposable
         // Codex labels low as "Light" and xhigh as "Extra High"; Studio stores the CLI value.
         string[] ladder = ["low", "medium", "high", "xhigh", "max", "ultra"];
         Assert.Equal(ladder, ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, model));
-        Assert.Equal("low", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, model));
+        Assert.Equal("medium", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, model));
         foreach (var level in ladder)
             Assert.Equal(level, ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, model, level));
         Assert.Equal("ultra", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, model, "ULTRA"));
         Assert.Equal("low", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, model, "none"));
 
         ModelMetadataRegistry.SetDetectedCodexLadders(CodexModelDiscovery.ParseDebugModelsJson(Gpt62DebugModels));
-        Assert.True(ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(model));
+        Assert.False(ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(model));
         foreach (var level in ladder)
             Assert.Equal(level, ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, model, level));
     }
@@ -256,7 +254,7 @@ public class CodexModelDiscoveryTests : IDisposable
             new CliModelCatalog { Models = parsed }, "0.166.0");
         Assert.DoesNotContain(current.Models, m => m.Id == AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra);
         Assert.Null(ModelMetadataRegistry.Find(AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra));
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -385,7 +383,7 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(10.00m, price.InputPerMillion);
         Assert.Equal(50.00m, price.OutputPerMillion);
         // The product default is unchanged by onboarding astra.
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
     [Fact]
@@ -421,7 +419,7 @@ public class CodexModelDiscoveryTests : IDisposable
         // The product default and ladder/default resolution are unchanged by
         // onboarding any of these three (regression coverage for the ladder side
         // lives in CodexDetectedDefaultTests.Gpt56Ladder_And_Default_StayByteForByte_WhenCliReportsADifferentOne).
-        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
 
@@ -485,51 +483,48 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void PickDetectedDefault_ReturnsHighestPriorityGpt56_WhenNoneFlagged()
+    public void PickDetectedDefault_ReturnsNull_ForAnOlderCatalogue()
     {
         var cat = Catalog(
             Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-5.6-terra", isDefault: false),
             Model("gpt-5.5", isDefault: false));
 
-        Assert.Equal("gpt-5.6-sol", CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Null(CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]
-    public void PickDetectedDefault_PrefersGpt56Sol_OverAFlaggedGpt56Sibling()
+    public void PickDetectedDefault_ReturnsNull_WhenAnOlderModelIsFlaggedDefault()
     {
-        // AGT-2903: the default order is gpt-6-sol, then gpt-5.6-sol; a
-        // config.toml pin to another gpt-5.6 tier no longer becomes the default.
         var cat = Catalog(
             Model("gpt-5.6-terra", isDefault: true),
             Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-5.5", isDefault: false));
 
-        Assert.Equal("gpt-5.6-sol", CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Null(CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]
-    public void PickDetectedDefault_PrefersGpt6Sol_WhenDiscoveryOffersIt()
+    public void PickDetectedDefault_FindsSolEvenWhenAstraIsFlaggedDefault()
     {
-        // The newer model is available for explicit pins; the product default
-        // remains gpt-6-sol until a separate routing decision changes it.
         var cat = Catalog(
-            Model("gpt-6.1-sol", isDefault: true),
+            Model(ModelIds.Gpt62Astra, isDefault: true),
+            Model(ModelIds.Gpt62Sol, isDefault: false),
             Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-6-sol", isDefault: false),
             Model("gpt-6-luna", isDefault: false));
 
-        Assert.Equal(ModelIds.Gpt6Sol, CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Equal(ModelIds.Gpt62Sol, CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]
-    public void PickDetectedDefault_SkipsAnUnavailableGpt6Sol()
+    public void PickDetectedDefault_SkipsAnUnavailableGpt62Sol()
     {
         var cat = Catalog(
-            Model("gpt-6-sol", isDefault: false) with { Available = false },
+            Model(ModelIds.Gpt62Sol, isDefault: false) with { Available = false },
             Model("gpt-5.6-sol", isDefault: false));
 
-        Assert.Equal(ModelIds.Gpt56Sol, CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Null(CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]
@@ -543,21 +538,17 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void FallbackCatalog_OffersRegistryOpenAiModels_WithGpt55Default_AndNoGpt56()
+    public void FallbackCatalog_IdentifiesDefaultWithoutClaimingLiveAvailability()
     {
-        // Task item 1: with no CLI and no cache, the model surface falls back to
-        // today's static registry list. gpt-5.6 is detection-only (AGT-2025), so
-        // it must NOT appear here even now that gpt-5.6-terra/luna are registry
-        // entries (AGT-2707 round 2: their Available baseline is false for
-        // exactly this reason), and gpt-5.5 stays the default.
         var catalog = CodexModelDiscovery.FallbackCatalog();
 
         Assert.NotEmpty(catalog.Models);
         Assert.All(catalog.Models, m => Assert.Equal("openai", m.Vendor));
         Assert.Contains(catalog.Models, m => m.Id == ModelIds.Gpt55);
         Assert.DoesNotContain(catalog.Models, m => m.Id.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(ModelIds.Gpt55, Assert.Single(catalog.Models, m => m.IsDefault).Id);
-        // And it advertises no gpt-5.6 default, so the published default stays gpt-5.5.
+        var model = Assert.Single(catalog.Models, candidate => candidate.IsDefault);
+        Assert.Equal(ModelIds.Gpt62Sol, model.Id);
+        Assert.False(model.Available);
         Assert.Null(CodexModelDiscovery.PickDetectedDefault(catalog));
     }
 

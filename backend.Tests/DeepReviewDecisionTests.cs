@@ -34,15 +34,15 @@ public sealed class DeepReviewDecisionTests
 
     [Theory]
     [InlineData("routine", "docs/readme.md", 20, 0, 0, "available", false, "medium")]
-    [InlineData("routine", "backend/Features/Security/Auth.cs", 20, 0, 0, "available", true, "xhigh")]
+    [InlineData("routine", "backend/Features/Security/Auth.cs", 20, 0, 0, "available", true, "high")]
     [InlineData("routine", "orchestration-decisions/ReviewFollowUpPolicy.cs", 20, 0, 0, "available", false, "medium")]
     [InlineData("routine", "docs/security-guide.md", 20, 0, 0, "available", false, "medium")]
-    [InlineData("critical", "docs/readme.md", 20, 0, 0, "available", true, "xhigh")]
+    [InlineData("critical", "docs/readme.md", 20, 0, 0, "available", true, "high")]
     [InlineData("routine", "docs/readme.md", 600, 0, 0, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 20, 1, 0, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 20, 0, 1, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 600, 0, 0, "capped", false, "medium")]
-    [InlineData("critical", "docs/readme.md", 20, 0, 0, "capped", true, "xhigh")]
+    [InlineData("critical", "docs/readme.md", 20, 0, 0, "capped", true, "high")]
     [InlineData("routine", "docs/readme.md", -1, 0, 0, "available", false, "medium")]
     public void Selection_uses_risk_history_size_and_quota(string risk, string path,
         int lines, int blocks, int gates, string quota, bool selected, string effort)
@@ -74,8 +74,8 @@ public sealed class DeepReviewDecisionTests
         var critical = DeepReviewPolicy.Decide(Facts(risk: "critical"), DeepReviewPolicy.Active,
             ruleSelection: false, ruleModel: "gpt-6-luna", ruleThinkingLevel: "medium");
         Assert.True(critical.Dispatched);
-        Assert.Equal("gpt-6-sol", critical.Model);
-        Assert.Equal("xhigh", critical.ThinkingLevel);
+        Assert.Equal(ModelIds.Gpt62Sol, critical.Model);
+        Assert.Equal("high", critical.ThinkingLevel);
         Assert.Equal("xhigh", DeepReviewPolicy.Decide(Facts(lines: 600), DeepReviewPolicy.Active,
             ruleThinkingLevel: "xhigh").ThinkingLevel);
         var capped = DeepReviewPolicy.Decide(Facts(risk: "critical", rounds: 3), DeepReviewPolicy.Active);
@@ -197,8 +197,8 @@ public sealed class DeepReviewDecisionTests
             var active = new RemoteReviewPlanBuilder(aspects, activeConfig)
                 .Build(task, null, null, "develop", "0123456789abcdef", ["backend/Auth.cs"]);
             var command = Assert.Single(active.Commands, item => item.Aspect == "deep-review");
-            Assert.Equal("gpt-6-sol", command.Model);
-            Assert.Equal("xhigh", command.ThinkingLevel);
+            Assert.Equal(ModelIds.Gpt62Sol, command.Model);
+            Assert.Equal("high", command.ThinkingLevel);
             Assert.Equal(ReviewCommandKinds.AgentAspect, command.ExecutionKind);
             Assert.Contains($"Decision receipt: {active.DeepReviewDecision!.ReceiptId}", command.Prompt);
             Assert.Contains("Review the immutable delivery for concrete defects", command.Prompt);

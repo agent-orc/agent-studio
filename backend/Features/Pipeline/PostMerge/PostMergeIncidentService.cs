@@ -111,16 +111,15 @@ public sealed partial class PostMergeIncidentService
             string cardId;
             if (priorCard is null || recurring == RecurringRepairCardAction.CreateNew)
             {
+                var route = RepairRoute(project, RedTestModelRung.Medium);
                 cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
                 {
                     Project = project.Id,
                     Title = title,
                     PromptMarkdown = prompt,
                     TargetState = MonolithTransitionAdapter.RedRepairCreationLane,
-                    CliType = project.CliDefault ?? CliTypes.Codex,
-                    Agent = project.CliDefault ?? CliTypes.Codex,
-                    Model = project.ModelDefault ?? ModelMetadataRegistry.DefaultForCli(project.CliDefault ?? CliTypes.Codex),
-                    ThinkingLevel = "medium", ModelExplicit = true, ThinkingLevelExplicit = true,
+                    CliType = route.Cli, Agent = route.Cli, Model = route.Model, ThinkingLevel = route.Thinking,
+                    ModelExplicit = true, ThinkingLevelExplicit = true,
                     TaskType = TaskTypes.Bug,
                     Order = 0,
                     CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource,

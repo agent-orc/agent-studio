@@ -437,7 +437,7 @@ export class TaskDetailComponent implements OnDestroy {
       const models = [...this.catalogStore.modelsFor(cliType)];
       this.availableModels.set(models);
       if (!this.modelDraft()) {
-        const def = models.find((m) => m.isDefault);
+        const def = models.find((m) => m.isDefault && m.available !== false);
         if (def) this.modelDraft.set(def.id);
       }
       return;
@@ -447,7 +447,7 @@ export class TaskDetailComponent implements OnDestroy {
         const list = [...models];
         this.availableModels.set(list);
         if (!this.modelDraft()) {
-          const def = list.find((m) => m.isDefault);
+          const def = list.find((m) => m.isDefault && m.available !== false);
           if (def) this.modelDraft.set(def.id);
         }
       },
@@ -500,7 +500,7 @@ export class TaskDetailComponent implements OnDestroy {
       this.artifactsService.prepareTask(d.info.taskKey);
       this.reviewAttemptFocus.set(null);
       this.errorMsg.set(null);
-      this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault)?.id ?? ''));
+      this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault && m.available !== false)?.id ?? ''));
       this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
       const nextCliType = (d.info.cliType ?? 'claude') as CliType;
       if (nextCliType !== this.cliTypeDraft()) {

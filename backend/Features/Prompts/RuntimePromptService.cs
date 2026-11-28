@@ -30,6 +30,7 @@ public sealed partial class RuntimePromptService
     public const string ModeFramingConcept = "mode-framing-concept.md";
     public const string ModeFramingApproval = "mode-framing-approval.md";
     public const string ModeFramingVerificationScope = "mode-framing-verification-scope.md";
+    public const string CodeQualityChecklist = "code-quality-checklist.md";
     public const string ModeFramingDossierMaintenance = "mode-framing-dossier-maintenance.md";
     public const string ModeFramingWeb = "mode-framing-web.md";
     public const string ProposalFeedbackRefine = "proposal-feedback-refine.md";
@@ -143,7 +144,7 @@ public sealed partial class RuntimePromptService
     /// <c>{{mode_framing}}</c> placeholder. Report-only modes (planning /
     /// research) get the strict read-only block; research also gets its HTML
     /// deliverable contract; concept gets its repository-dossier contract; coding
-    /// gets the approval block and its in-run verification scope; web access
+    /// gets approval, in-run verification scope and the delivery checklist; web access
     /// appends the web block.
     /// A non-empty result ends with a blank-line separator so it slots in front
     /// of the following section cleanly.
@@ -163,12 +164,18 @@ public sealed partial class RuntimePromptService
         if (TaskModes.IsConcept(mode) || TaskModes.Normalize(mode) == TaskModes.Coding)
             parts.Add(Render(ModeFramingApproval, NoValues, context).Trim());
         if (TaskModes.Normalize(mode) == TaskModes.Coding)
+        {
             parts.Add(Render(ModeFramingVerificationScope, VerificationScopeValues, context).Trim());
+            parts.Add(RenderCodeQualityChecklist(context));
+        }
         if (allowWebAccess)
             parts.Add(Render(ModeFramingWeb, NoValues, context).Trim());
         if (parts.Count == 0) return string.Empty;
         return string.Join("\n\n", parts) + "\n\n";
     }
+
+    internal string RenderCodeQualityChecklist(PromptCallContext? context) =>
+        Render(CodeQualityChecklist, NoValues, context).Trim();
 
     /// <summary>
     /// Renders the mandatory, task-specific Dossier update contract. Selection

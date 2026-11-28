@@ -2626,14 +2626,8 @@ workbenchHubBroadcaster.InitializeSnapshotsAfterBoot(jobIndexCache);
     }
 }
 
-// Best-effort Codex model-catalog warm-up (AGT-2025). Publishing the detected
-// default (gpt-5.6-* when the installed CLI advertises it) into
-// ModelMetadataRegistry makes new-task creation resolve the current default
-// before the first UI catalog fetch. Fire-and-forget so a slow or absent codex
-// CLI never delays boot; discovery's own disk-cache TTL means a warm cache
-// skips the PTY spawn, and any failure just leaves the gpt-5.5 baseline in
-// place. Skipped under the test host and when explicitly opted out so the
-// integration suite never spawns a real codex process.
+// Warm the local Codex catalogue for local execution diagnostics. The standard
+// route and the execution-host catalogue are independent of this probe.
 if (!app.Environment.IsEnvironment("Test")
     && !app.Environment.IsEnvironment("Testing")
     && !publicDemoExecutionProfile

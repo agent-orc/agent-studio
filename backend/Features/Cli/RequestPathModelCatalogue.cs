@@ -15,7 +15,9 @@ public static class RequestPathModelCatalogue
     public const string RegistrySource = "request-path-registry-fallback";
 
     public static Task<CliModelCatalog> GetAsync(CliRouter router, string cliType, CancellationToken ct)
-        => GetAsync(cliType, token => router.Get(cliType).GetModelCatalogAsync(false, token), Budget, ct);
+        => CliTypes.Normalize(cliType) == CliTypes.Codex
+            ? Task.FromResult(CodexModelDiscovery.FallbackCatalog(RegistrySource))
+            : GetAsync(cliType, token => router.Get(cliType).GetModelCatalogAsync(false, token), Budget, ct);
 
     /// <summary>
     /// Waits for <paramref name="load"/> up to <paramref name="budget"/>. A CLI

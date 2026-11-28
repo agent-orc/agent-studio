@@ -22,7 +22,7 @@ const columns = (count: number, mode: LiveLayoutMode): number => count <= 1 ? 1 
 
 function split(node: LiveNode): { frames: LiveNode[]; units: LiveNode[]; disks: LiveNode[] } {
   const frames: LiveNode[] = [], units: LiveNode[] = [], disks: LiveNode[] = [];
-  for (const child of node.children) (child.kind === 'disk' ? disks : isFrame(child) && child.children.length ? frames : units).push(child);
+  for (const child of node.children) (child.kind === 'disk' && !child.source?.facts?.device ? disks : isFrame(child) && child.children.length ? frames : units).push(child);
   return { frames, units, disks };
 }
 

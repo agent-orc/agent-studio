@@ -1,13 +1,20 @@
 {
-  "version": "2026-10-04",
+  "version": "2026-11-28",
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "migrations": [
     {
       "from": "gpt-6-sol",
-      "to": "gpt-6.1-sol",
-      "family": "gpt",
-      "safeAuto": false,
-      "reason": "Proposal only (TokenEconomy 0.3.7): the target has a different ladder; max and ultra pins run at xhigh after acceptance. No qualifying identical-case no-regression evidence supports automatic migration."
+      "to": "gpt-6.2-sol",
+      "family": "gpt-sol",
+      "safeAuto": true,
+      "reason": "Owner approved the GPT-6.2 Sol standard for preference routes on 2026-11-28. Hard pins keep their route."
+    },
+    {
+      "from": "gpt-6.1-sol",
+      "to": "gpt-6.2-sol",
+      "family": "gpt-sol",
+      "safeAuto": true,
+      "reason": "Owner approved the GPT-6.2 Sol standard for preference routes on 2026-11-28. Hard pins keep their route."
     },
     {
       "from": "claude-opus-5",
@@ -18,17 +25,17 @@
     },
     {
       "from": "gpt-5.6-sol",
-      "to": "gpt-6-sol",
+      "to": "gpt-6.2-sol",
       "family": "gpt-sol",
       "safeAuto": false,
-      "reason": "Proposal only (TokenEconomy 0.3.6): same family, compatible low-through-ultra ladder, lower dated price; no qualifying identical-case no-regression evidence yet."
+      "reason": "Proposal only: GPT-6.2 Sol supersedes this generation for automatic routing."
     },
     {
       "from": "gpt-5.6-luna",
-      "to": "gpt-6-luna",
+      "to": "gpt-6.2-sol",
       "family": "gpt-luna",
       "safeAuto": false,
-      "reason": "Proposal only (TokenEconomy 0.3.6): same family, compatible low-through-max ladder, lower dated price; no qualifying identical-case no-regression evidence yet."
+      "reason": "Proposal only: GPT-6.2 Sol supersedes this generation for automatic routing."
     },
     {
       "from": "claude-opus-4-8",

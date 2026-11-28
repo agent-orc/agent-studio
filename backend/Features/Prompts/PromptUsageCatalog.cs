@@ -89,6 +89,11 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("RuntimePromptService", "RenderModeFraming", "Coding-mode verification scope injected via {{mode_framing}}; fills the guard filter."),
         },
+        ["code-quality-checklist.md"] = new[]
+        {
+            new PromptUsageRef("RuntimePromptService", "RenderModeFraming", "Checks to apply before coding delivery."),
+            new PromptUsageRef("AspectRunnerService", "BuildAspectPrompt", "Shared severity and evidence criteria injected via {{code_quality_checklist}}."),
+        },
         ["mode-framing-dossier-maintenance.md"] = new[]
         {
             new PromptUsageRef("ProjectRunner", "RenderPrompt", "Append-only Dossier delivery contract injected for referenced cards."),

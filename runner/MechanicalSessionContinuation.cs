@@ -5,13 +5,16 @@ namespace AgentRunner;
 
 internal static class MechanicalSessionContinuation
 {
+    internal const string SessionLostBeforeLaunch = "clean-context-session-lost-before-launch";
+
     internal static async Task<(string? SessionId, string? Reason, string? DeltaPrompt)> DecideAsync(
         PersistedRunnerSlot slot,
         GitWorkspace workspace,
         string provider,
         string? contextMode,
         string host,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? cleanContextRoot = null)
     {
         var delta = slot.MechanicalDelta is null ? null
             : slot.MechanicalDelta with
@@ -21,7 +24,7 @@ internal static class MechanicalSessionContinuation
             return (null, "context-mode-mismatch", null);
         bool homeExists;
         string? home;
-        try { homeExists = TaskCleanContextStore.TryGetExistingHome(provider, slot.TaskKey, out home); }
+        try { homeExists = TaskCleanContextStore.TryGetExistingHome(provider, slot.TaskKey, out home, rootOverride: cleanContextRoot); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return (null, "clean-context-unavailable", null);
@@ -64,7 +67,7 @@ internal static class MechanicalSessionContinuation
         return (sessionId, null, prompt);
     }
 
-    private static bool SessionExists(string home, string? sessionId)
+    internal static bool SessionExists(string home, string? sessionId)
     {
         if (string.IsNullOrWhiteSpace(sessionId)
             || sessionId.Length > 128
@@ -72,7 +75,8 @@ internal static class MechanicalSessionContinuation
             return false;
         try
         {
-            return Directory.EnumerateFiles(home, "*", SearchOption.AllDirectories)
+            return Directory.EnumerateFiles(home, "*", new EnumerationOptions
+                { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
                 .Any(path => Path.GetFileName(path).Contains(sessionId, StringComparison.Ordinal));
         }
         catch (IOException) { return false; }

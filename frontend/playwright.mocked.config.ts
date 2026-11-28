@@ -17,6 +17,7 @@ export default defineConfig({
   projects: [{
     name: 'mocked-api',
     testMatch: [
+      '**/add-task/gpt6-model-picker.spec.ts',
       '**/system/ui-foundation.spec.ts',
       '**/board/card-state-pill-matches-lane.spec.ts',
       '**/board/identity-chip-card.spec.ts',

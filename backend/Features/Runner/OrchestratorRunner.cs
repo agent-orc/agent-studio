@@ -112,7 +112,7 @@ public class OrchestratorRunner
             Model: configuredModel,
             Prompt: prompt)
         {
-            ThinkingLevel = thinkingLevel,
+            ThinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(cli, configuredModel, thinkingLevel),
             WorkingDirectory = workingDirectory,
             Timeout = DefaultTimeout,
             Source = "orchestrator-session",

@@ -63,7 +63,8 @@ public class AttemptContainmentTests
         var authority = new WorkContainerLauncherAuthority();
         var daemon = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         var first = Capability();
-        var issued = WorkContainerLauncherCommand.Authenticate(new(["capability", "issue"], null, daemon, first), LauncherContext(), authority, daemon);
+        var issued = WorkContainerLauncherCommand.Authenticate(new(["capability", "issue"], null, daemon, first, Grant: Grant),
+            LauncherContext(), authority, daemon, RecordedAt, WorkContainerPolicyTests.Settings(), Memory);
         Assert.Equal(0, issued.Response!.ExitCode);
         var token = issued.Response.StdOut;
         Assert.NotNull(authority.Resolve(token));
@@ -126,7 +127,7 @@ public class AttemptContainmentTests
             return Task.FromResult(new ProcessResult(0, JsonSerializer.Serialize(operation == "volume" ? (object)new { Labels = labels } : labels), ""));
         }
         var result = await WorkContainerLauncherCommand.ExecuteAuthorizedAsync(call, null,
-            LauncherContext() with { AttemptCapability = scope }, Runtime, default);
+            LauncherContext() with { AttemptCapability = scope, ContainerCreated = true }, Runtime, default);
         Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, result.ExitCode);
         Assert.Empty(result.StdOut);
         Assert.Single(calls);
@@ -195,15 +196,16 @@ public class AttemptContainmentTests
         Assert.NotNull(WorkContainerLauncherCommand.ResourceLabelsRefusal(JsonSerializer.Serialize(labels), "agent-work-other-f1", false, null));
     }
 
-    [Fact]
-    public async Task Owned_attempt_can_prepare_launch_read_inject_and_clean_up_through_the_authorized_boundary()
+    [Theory]
+    [InlineData("docker", "systemd", "agent-work.slice")]
+    [InlineData("podman", "cgroupfs", "/agent.slice/agent-work.slice")]
+    public async Task Owned_attempt_can_prepare_launch_read_inject_and_clean_up_through_the_authorized_boundary(
+        string runtime, string cgroupManager, string expectedParent)
     {
         using var state = new TempDir();
         var attempt = WorkContainerPolicyTests.Attempt() with { RepositorySource = "https://example.invalid/fixture.git" };
         var plan = WorkContainerLaunchPlanner.Plan(attempt, WorkContainerPolicyTests.Digest, Limits, WorkContainerPolicyTests.Settings() with { Network = "agent-work" }, uid: 212_345);
         var scope = Capability(attempt);
-        var authority = new WorkContainerLauncherAuthority();
-        var token = authority.Issue(scope);
         var daemon = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         var secret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         var resources = new Dictionary<(string Kind, string Name), Dictionary<string, string>>();
@@ -212,7 +214,10 @@ public class AttemptContainmentTests
         Task<ProcessResult> Runtime(IReadOnlyList<string> args, string? data, CancellationToken ct)
         {
             string output = "";
-            if (args is ["volume", "inspect", ..])
+            if (args[0] == "info") output = cgroupManager + "\n" + state.Path;
+            else if (args is ["ps", ..] or ["volume", "ls", ..])
+                Assert.DoesNotContain(resources.Keys, key => key.Name == scope.Container || key.Name == scope.PrepareContainer);
+            else if (args is ["volume", "inspect", ..])
             {
                 if (!resources.TryGetValue(("volume", args[^1]), out var labels)) return Task.FromResult(new ProcessResult(1, "", "fixture resource absent"));
                 output = JsonSerializer.Serialize(new { Name = args[^1], Labels = labels, Driver = "local", Scope = "local", Options = new { }, Mountpoint = paths[args[^1]] });
@@ -227,6 +232,18 @@ public class AttemptContainmentTests
                         labels.Add(pair[0], pair[1]);
                     }
                 var createdName = args[0] == "create" ? WorkContainerLauncherPolicy.Values(args, "--name").Single() : args[^1];
+                if (args[0] == "create")
+                {
+                    AssertPair(args, "--cgroup-parent", expectedParent);
+                    Assert.Contains("--pull=never", args);
+                }
+                if (createdName == scope.PrepareContainer)
+                {
+                    AssertPair(args, "--cpus", "0.5");
+                    AssertPair(args, "--memory", "268435456");
+                    AssertPair(args, "--memory-swap", "268435456");
+                    AssertPair(args, "--pids-limit", "64");
+                }
                 resources.Add((args[0] == "create" ? "container" : "volume", createdName), labels);
             }
             else if (args is ["inspect", _, "{{json .Config.Labels}}", var labelName]) output = JsonSerializer.Serialize(resources[("container", labelName)]);
@@ -244,6 +261,12 @@ public class AttemptContainmentTests
         }
         var volumeCreate = new[] { "volume", "create" }.Concat(plan.Labels.SelectMany(pair => new[] { "--label", pair.Key + "=" + pair.Value }))
             .Append(plan.AttemptVolume).ToArray();
+        Task<WorkContainerLauncherResponse> Send(WorkContainerLauncherRequest request) =>
+            WorkContainerLauncherCommand.ExecuteRequestAsync(request, LauncherContext(), state.Path, daemon, runtime,
+                () => (WorkContainerPolicyTests.Settings(), Memory), new FixtureClock(), Runtime, default, _ => true);
+        var issued = await Send(new(["capability", "issue"], null, daemon, scope, Grant: Grant));
+        Assert.True(issued.ExitCode == 0, issued.StdErr);
+        var token = issued.StdOut;
         foreach (var call in new IReadOnlyList<string>[]
         {
             volumeCreate, plan.PrepareArguments, plan.CreateArguments,
@@ -252,18 +275,174 @@ public class AttemptContainmentTests
             ["rm", "--force", "--volumes", plan.ContainerName], ["volume", "rm", "--force", plan.AttemptVolume],
         })
         {
-            var authenticated = WorkContainerLauncherCommand.Authenticate(new(call, null, token), LauncherContext(), authority, daemon);
-            Assert.Null(authenticated.Response);
-            var result = await WorkContainerLauncherCommand.ExecuteAuthorizedAsync(call, call[0] == "exec" ? secret : null,
-                authenticated.Context, Runtime, default, state.Path);
+            var result = await Send(new(call, call[0] == "exec" ? secret : null, token));
             Assert.True(result.ExitCode == 0, result.StdErr);
         }
+        Assert.Equal(0, (await Send(new(["capability", "revoke"], null, token))).ExitCode);
+        Assert.Equal(0, (await Send(new(["capability", "revoke"], null, token))).ExitCode);
+        Assert.False((await ReadFixtureAuthority(state.Path)).Entries.Single().HoldsReservation(RecordedAt));
         Assert.True(injected);
         Assert.All(resources.Values, labels => Assert.Equal(attempt.RepositoryKey, labels[WorkContainerAttemptCapability.RepositoryLabel]));
         Assert.DoesNotContain(("container", plan.ContainerName), resources.Keys);
     }
 
     private static readonly WorkContainerLimits Limits = new(3, 3L << 30, 1024);
+    private static readonly WorkContainerGrant Grant = new(1, 1, 3);
+    private static readonly HostMemory Memory = new(56L << 30, 62L << 30);
+
+    private sealed class FixtureClock : TimeProvider
+    {
+        internal DateTimeOffset Now { get; set; } = RecordedAt;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private static async Task<WorkContainerLauncherAuthority> ReadFixtureAuthority(string path)
+        => JsonSerializer.Deserialize<WorkContainerLauncherAuthority>(await File.ReadAllTextAsync(Path.Combine(path, "capabilities.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+    [Fact]
+    public async Task Allocation_and_limit_refusals_precede_all_runtime_calls()
+    {
+        using var state = new TempDir();
+        var clock = new FixtureClock();
+        var daemon = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var plan = BoundaryPlan();
+        var scope = Capability();
+        var runtimeAllowed = false;
+        Task<ProcessResult> Runtime(IReadOnlyList<string> args, string? data, CancellationToken ct)
+        {
+            Assert.True(runtimeAllowed, "A rejected request reached the runtime.");
+            Assert.Equal("ps", args[0]);
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        }
+        Task<WorkContainerLauncherResponse> Send(WorkContainerLauncherRequest request) =>
+            WorkContainerLauncherCommand.ExecuteRequestAsync(request, LauncherContext(), state.Path, daemon, "docker",
+                () => (WorkContainerPolicyTests.Settings(), Memory), clock, Runtime, default);
+        async Task Deny(WorkContainerLauncherRequest request, string reason)
+        {
+            var response = await Send(request);
+            Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, response.ExitCode);
+            Assert.Contains(reason, response.StdErr, StringComparison.Ordinal);
+        }
+
+        var issue = new WorkContainerLauncherRequest(["capability", "issue"], null, daemon, scope);
+        await Deny(issue, "reservation-grant-required");
+        await Deny(issue with { Grant = Grant with { AllocationVersion = 2 } }, "allocation-stale");
+        await Deny(issue with { Grant = Grant, Scope = scope with { Limits = Limits with { PidsLimit = 4096 } } }, "limits-outside-grant");
+        await Deny(new(plan.CreateArguments, null), "capability-missing-or-stale");
+        await Deny(new(["pull", "--quiet", plan.Image], null, daemon), "operation-requires-attempt-capability");
+        Assert.False(File.Exists(Path.Combine(state.Path, "capabilities.json")));
+
+        var legacy = new WorkContainerLauncherAuthority();
+        var legacyToken = legacy.Issue(scope with { Limits = null });
+        await File.WriteAllTextAsync(Path.Combine(state.Path, "capabilities.json"),
+            JsonSerializer.Serialize(legacy, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        await Deny(new(plan.PrepareArguments, null, legacyToken), "reservation-missing-or-stale");
+
+        runtimeAllowed = true;
+        var issued = await Send(issue with { Grant = Grant with { AllocationVersion = 2, AcknowledgedAllocationVersion = 2 } });
+        Assert.True(issued.ExitCode == 0, issued.StdErr);
+        runtimeAllowed = false;
+        await Deny(issue with { Grant = Grant }, "allocation-stale");
+        foreach (var flag in new[] { "--cpus", "--memory", "--memory-swap", "--pids-limit" })
+        {
+            var inflated = plan.CreateArguments.ToArray();
+            inflated[Array.IndexOf(inflated, flag) + 1] = "9999999";
+            await Deny(new(inflated, null, issued.StdOut), "limits-outside-reservation");
+        }
+        clock.Now = clock.Now.AddMinutes(41);
+        await Deny(new(plan.PrepareArguments, null, issued.StdOut), "reservation-missing-or-stale");
+        await Deny(new(["pull", "--quiet", plan.Image], null, issued.StdOut), "reservation-missing-or-stale");
+        Assert.DoesNotContain((await ReadFixtureAuthority(state.Path)).Entries, item => item.HoldsReservation(clock.Now));
+    }
+
+    [Theory]
+    [InlineData(5, 32, "host-grant-exhausted")]
+    [InlineData(10, 5, "host-memory-exhausted")]
+    public async Task Concurrent_launcher_reservations_share_a_durable_host_budget(int maxHalfCores, int maxMemoryGiB, string refusal)
+    {
+        using var state = new TempDir();
+        var daemon = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var first = Capability();
+        var second = Capability(first.Attempt with { AttemptId = "another-attempt", HostId = "other-logical-host" });
+        second = second with { Labels = new Dictionary<string, string>(second.Labels) { [WorkContainerIdentity.UidLabel] = "212346" } };
+        var calls = 0;
+        Task<ProcessResult> Runtime(IReadOnlyList<string> args, string? data, CancellationToken ct)
+        {
+            Interlocked.Increment(ref calls);
+            Assert.Equal("ps", args[0]);
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        }
+        Task<WorkContainerLauncherResponse> Send(WorkContainerLauncherRequest request) =>
+            WorkContainerLauncherCommand.ExecuteRequestAsync(request, LauncherContext(), state.Path, daemon, "docker",
+                () => (WorkContainerPolicyTests.Settings(maxHalfCores, maxMemoryGiB) with { MemoryBytesPerHalfCore = 1L << 30 }, Memory),
+                new FixtureClock(), Runtime, default);
+        WorkContainerLauncherRequest Issue(WorkContainerAttemptCapability scope) => new(["capability", "issue"], null, daemon, scope, Grant: Grant);
+
+        var results = await Task.WhenAll(Send(Issue(first)), Send(Issue(second)));
+        Assert.Contains(refusal, Assert.Single(results, result => result.ExitCode == WorkContainerLauncherCommand.RefusedExitCode).StdErr,
+            StringComparison.Ordinal);
+        var admitted = Assert.Single(results, result => result.ExitCode == 0);
+        Assert.Equal(1, calls);
+        var held = Assert.Single((await ReadFixtureAuthority(state.Path)).Entries);
+        Assert.Equal(0, (await Send(new(["capability", "revoke"], null, admitted.StdOut))).ExitCode);
+        var reopened = await Send(Issue(held.Scope.Attempt.AttemptId == first.Attempt.AttemptId ? second : first));
+        Assert.True(reopened.ExitCode == 0, reopened.StdErr);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task Admitted_pull_stops_when_the_runtime_disk_loses_headroom()
+    {
+        using var state = new TempDir();
+        var daemon = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var scope = Capability();
+        var pulled = false;
+        var diskReads = 0;
+        async Task<ProcessResult> Runtime(IReadOnlyList<string> args, string? data, CancellationToken ct)
+        {
+            if (args[0] == "ps") return new(0, "", "");
+            if (args[0] == "info") return new(0, "systemd\n" + state.Path, "");
+            if (args[0] == "image") return new(1, "", "");
+            Assert.Equal("pull", args[0]);
+            pulled = true;
+            await Task.Delay(Timeout.Infinite, ct);
+            return new(0, "", "");
+        }
+        Task<WorkContainerLauncherResponse> Send(WorkContainerLauncherRequest request) =>
+            WorkContainerLauncherCommand.ExecuteRequestAsync(request, LauncherContext(), state.Path, daemon, "docker",
+                () => (WorkContainerPolicyTests.Settings(), Memory), new FixtureClock(), Runtime, default,
+                _ => ++diskReads <= 2);
+        var issued = await Send(new(["capability", "issue"], null, daemon, scope, Grant: Grant));
+        Assert.True(issued.ExitCode == 0, issued.StdErr);
+        var pull = await Send(new(["pull", "--quiet", WorkContainerPolicyTests.Digest], null, issued.StdOut));
+        Assert.True(pulled);
+        Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, pull.ExitCode);
+        Assert.Contains("storage-headroom-lost-during-pull", pull.StdErr, StringComparison.Ordinal);
+        Assert.Equal(0, (await Send(new(["capability", "revoke"], null, issued.StdOut))).ExitCode);
+        Assert.False((await ReadFixtureAuthority(state.Path)).Entries.Single().HoldsReservation(RecordedAt));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{\"arguments\":[")]
+    public async Task Idle_or_incomplete_socket_request_expires_without_dispatch(string partial)
+    {
+        if (!Socket.OSSupportsUnixDomainSockets) return;
+        using var state = new TempDir();
+        var path = Path.Combine(state.Path, "idle.sock");
+        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(path));
+        listener.Listen(1);
+        using var peer = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        await peer.ConnectAsync(new UnixDomainSocketEndPoint(path));
+        if (partial.Length > 0) await peer.SendAsync(Encoding.UTF8.GetBytes(partial), SocketFlags.None);
+        using var connection = await listener.AcceptAsync();
+        using var reader = new StreamReader(new NetworkStream(connection));
+        var result = await WorkContainerLauncherCommand.RunStdioAsync(reader, TextWriter.Null, TextWriter.Null,
+            (_, _) => throw new Xunit.Sdk.XunitException("The launcher dispatched an incomplete request."), TimeSpan.FromMilliseconds(100), default);
+        Assert.Equal(WorkContainerLauncherCommand.RefusedExitCode, result);
+    }
 
     [Theory]
     [InlineData("start")]
@@ -444,7 +623,8 @@ public class AttemptContainmentTests
                  })
             Assert.Null(WorkContainerLauncherPolicy.Refusal(call,
                 call[0] == "ps" || call is ["volume", "ls", ..]
-                    ? context with { AttemptCapability = null, DaemonCapability = true } : context));
+                    ? context with { AttemptCapability = null, DaemonCapability = true }
+                    : context with { ContainerCreated = call[0] == "start" }));
     }
 
     public static TheoryData<string, string[]> LauncherRefusals()
@@ -1158,6 +1338,7 @@ public class AttemptContainmentTests
         => new(new HashSet<string>(["agent-work"], StringComparer.Ordinal))
         {
             AttemptCapability = Capability(),
+            ReservedLimits = Limits,
             ApprovedImages = RoleImageManifest.Empty().Promote("gate", WorkContainerPolicyTests.Digest, "fixture"),
             BindSources = new HashSet<string>(["/srv/mirrors/project.git"], StringComparer.Ordinal),
             Volumes = BoundaryPlan().Mounts.Where(mount => mount.Type == "volume").Select(mount => mount.Source).ToHashSet(StringComparer.Ordinal),

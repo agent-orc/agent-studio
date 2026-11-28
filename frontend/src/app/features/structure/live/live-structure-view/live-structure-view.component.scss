@@ -93,8 +93,8 @@
 .lsv__handle-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 // Medium panes (the Explorer is open beside the view): outline above the card details, both beside the plan.
-@container live-structure (max-width: 1399px) {
-  .lsv__body { grid-template-columns: minmax(0, 1fr) 348px; grid-template-rows: minmax(0, 40%) minmax(0, 1fr); grid-template-areas: 'stage outline' 'stage panel'; }
+@container live-structure (min-width: 720px) {
+  .lsv__body { grid-template-columns: minmax(0, 1fr) 348px; grid-template-rows: minmax(0, 2fr) minmax(0, 1fr); grid-template-areas: 'stage panel' 'stage outline'; }
   .lsv__outline { border-right: 0; border-left: 1px solid var(--studio-border); border-bottom: 1px solid var(--studio-border); }
 }
 // Phone width: the plan above, the card details as a sheet below it.

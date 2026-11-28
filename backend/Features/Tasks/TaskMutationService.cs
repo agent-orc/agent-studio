@@ -2174,6 +2174,25 @@ public class TaskMutationService
         }, new TaskReferences { DependsOn = [sourceKey], FollowUpOf = [sourceKey] });
     }
 
+    internal string? ResolveCreationCli(CreateTaskRequest req)
+    {
+        if (!string.IsNullOrWhiteSpace(req.CliType)) return CliTypes.Normalize(req.CliType);
+        var owner = _clients.Find(req.OwnerClientId ?? DefaultClientIdentity.Id);
+        if (CliTypes.IsValid(owner?.DefaultCliType)) return CliTypes.Normalize(owner!.DefaultCliType);
+        return string.Equals(req.Agent, AgentTypes.Human, StringComparison.OrdinalIgnoreCase)
+            ? null : CliTypes.Codex;
+    }
+
+    internal (string? Model, string? ThinkingLevel) ResolveCreationClientRoute(CreateTaskRequest req, string? cli)
+    {
+        var owner = _clients.Find(req.OwnerClientId ?? DefaultClientIdentity.Id);
+        return owner?.DefaultModel is { } model && ModelMetadataRegistry.IsCompatibleWithCli(cli, model)
+            && (string.IsNullOrWhiteSpace(owner.DefaultCliType)
+                || string.Equals(cli, owner.DefaultCliType, StringComparison.OrdinalIgnoreCase))
+            ? (model, owner.DefaultThinkingLevel)
+            : (null, null);
+    }
+
     public string? CreateJob(CreateTaskRequest req) => CreateJob(req, initialReferences: null);
 
     private string? CreateJob(CreateTaskRequest req, TaskReferences? initialReferences)
@@ -2371,11 +2390,7 @@ public class TaskMutationService
         // This prevents the old "agent: human, cliType: null, model: null"
         // triple that was misleading on the card and in the dataset.
         var ownerIdentity = _clients.Find(ownerClientId);
-        var effectiveCliType = !string.IsNullOrWhiteSpace(req.CliType)
-            ? CliTypes.Normalize(req.CliType)
-            : (ownerIdentity?.DefaultCliType is { } dc && CliTypes.IsValid(dc)
-                ? CliTypes.Normalize(dc)
-                : null);
+        var effectiveCliType = ResolveCreationCli(req);
         var effectiveModel = !string.IsNullOrWhiteSpace(req.Model)
             ? req.Model.Trim()
             : ownerIdentity?.DefaultModel;

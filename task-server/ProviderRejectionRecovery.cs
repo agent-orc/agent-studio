@@ -107,6 +107,8 @@ public sealed partial class TaskServerStore
         if (declared is null)
             return new(null, rejection, model, count, safeReason + " No provider-refusal sibling is declared for this model.");
 
+        if (cli == "codex" && CodexRoutingPolicy.IsGpt62(declared.To))
+            thinking = CodexRoutingPolicy.ResolveThinkingLevel(thinking);
         var taskText = await ReadProviderFallbackTaskTextAsync(connection, transaction, taskId, ct);
         if (!ProviderFallbackMeetsFloor(declared.To, thinking, taskText.TaskType, taskText.Text))
             return new(null, rejection, model, count, safeReason + " The declared sibling is below this card's correctness floor.");
@@ -244,11 +246,12 @@ public sealed partial class TaskServerStore
             && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
         ProviderModelFallback? crossProvider = null;
         // The versioned policy declares the same-class Anthropic route,
-        // including Opus xhigh for the Sol xhigh floor (D5).
+        // including the Opus route for the Sol high floor.
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
-            && model is "gpt-6-sol" or "gpt-5.6-sol")
+            && (model == "gpt-5.6-sol" || CodexRoutingPolicy.IsSupersededSolPreference(model)
+                || CodexRoutingPolicy.IsGpt62(model)))
         {
-            var tier = ThinkingRank(thinking) >= ThinkingRank("xhigh") ? "sol-xhigh" : "sol-medium";
+            var tier = ThinkingRank(thinking) >= ThinkingRank("high") ? "sol-high" : "sol-medium";
             if (policy.AnthropicRoutes.TryGetValue(tier, out var equivalent))
                 crossProvider = new ProviderModelFallback(model, equivalent.Model,
                 "model-capacity-equivalent", "claude",
@@ -256,7 +259,12 @@ public sealed partial class TaskServerStore
                     ? thinking : equivalent.ThinkingLevel);
         }
         return ProviderRejectionFallbackRoutes.Candidates(provider, false,
-            sibling is null ? null : sibling with { ThinkingLevel = thinking, Reason = "model-capacity-sibling" },
+            sibling is null ? null : sibling with
+            {
+                ThinkingLevel = CodexRoutingPolicy.IsGpt62(sibling.To)
+                    ? CodexRoutingPolicy.ResolveThinkingLevel(thinking) : thinking,
+                Reason = "model-capacity-sibling"
+            },
             crossProvider, null);
     }
 
@@ -321,7 +329,7 @@ public sealed partial class TaskServerStore
         if (CriticalProviderFallbackFloor.IsMatch(taskText)) floor = Math.Max(floor, 4);
         var thinkingRank = ThinkingRank(thinking);
         var comparable = string.Equals(model, "gpt-5.6-sol", StringComparison.OrdinalIgnoreCase)
-            ? "gpt-6-sol" : model;
+            || CodexRoutingPolicy.IsSupersededSolPreference(model) ? CodexRoutingPolicy.StandardModel : model;
         var routeRank = policy.Tiers
             .Where(tier => thinkingRank >= ThinkingRank(tier.ThinkingLevel)
                 && (string.Equals(tier.Model, comparable, StringComparison.OrdinalIgnoreCase)

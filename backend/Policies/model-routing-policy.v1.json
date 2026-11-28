@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-11",
+  "version": "2026-11-28",
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "explicitPinModels": {
     "codex": [
@@ -22,9 +22,9 @@
     {
       "id": "luna-medium",
       "rank": 0,
-      "model": "gpt-6-luna",
+      "model": "gpt-6.2-sol",
       "thinkingLevel": "medium",
-      "estimatedSavingsPercent": 95,
+      "estimatedSavingsPercent": 0,
       "vendorOverrides": {
         "anthropic": {
           "model": "claude-haiku-4-5",
@@ -35,9 +35,9 @@
     {
       "id": "sonnet-low",
       "rank": 1,
-      "model": "gpt-6-sol",
+      "model": "gpt-6.2-sol",
       "thinkingLevel": "low",
-      "estimatedSavingsPercent": 50,
+      "estimatedSavingsPercent": 0,
       "vendorOverrides": {
         "anthropic": {
           "model": "claude-sonnet-5",
@@ -48,7 +48,7 @@
     {
       "id": "terra-medium",
       "rank": 2,
-      "model": "gpt-5.6-terra",
+      "model": "gpt-6.2-sol",
       "thinkingLevel": "medium",
       "estimatedSavingsPercent": 0,
       "vendorOverrides": {
@@ -61,7 +61,7 @@
     {
       "id": "sol-medium",
       "rank": 3,
-      "model": "gpt-6-sol",
+      "model": "gpt-6.2-sol",
       "thinkingLevel": "medium",
       "estimatedSavingsPercent": 0,
       "vendorOverrides": {
@@ -72,10 +72,10 @@
       }
     },
     {
-      "id": "sol-xhigh",
+      "id": "sol-high",
       "rank": 4,
-      "model": "gpt-6-sol",
-      "thinkingLevel": "xhigh",
+      "model": "gpt-6.2-sol",
+      "thinkingLevel": "high",
       "estimatedSavingsPercent": 0,
       "vendorOverrides": {
         "anthropic": {
@@ -83,6 +83,13 @@
           "thinkingLevel": "xhigh"
         }
       }
+    },
+    {
+      "id": "astra-high",
+      "rank": 5,
+      "model": "gpt-6.2-astra",
+      "thinkingLevel": "high",
+      "estimatedSavingsPercent": 0
     }
   ],
   "taskTypeDefaults": {
@@ -103,12 +110,6 @@
   },
   "providerRejectionFallbacks": [
     {
-      "cliType": "codex",
-      "fromModel": "gpt-6.1-sol",
-      "toModel": "gpt-6-sol",
-      "reason": "The declared Codex Sol sibling for provider request refusals."
-    },
-    {
       "cliType": "claude",
       "fromModel": "claude-sonnet-5-5",
       "toModel": "claude-sonnet-5",
@@ -121,24 +122,6 @@
       "reason": "The declared Anthropic Opus sibling for provider request refusals."
     },
     {
-      "cliType": "codex",
-      "fromModel": "gpt-6-sol",
-      "toModel": "gpt-5.6-sol",
-      "reason": "The declared Codex Sol sibling for provider request refusals."
-    },
-    {
-      "cliType": "codex",
-      "fromModel": "gpt-6-luna",
-      "toModel": "gpt-5.6-luna",
-      "reason": "The declared Codex Luna sibling for provider request refusals."
-    },
-    {
-      "cliType": "codex",
-      "fromModel": "gpt-6-astra",
-      "toModel": "gpt-5.6-sol",
-      "reason": "The declared Codex sibling for provider request refusals."
-    },
-    {
       "cliType": "claude",
       "fromModel": "claude-opus-5",
       "toModel": "claude-opus-4-8",
@@ -149,6 +132,66 @@
       "fromModel": "claude-sonnet-5",
       "toModel": "claude-sonnet-4-6",
       "reason": "The declared Anthropic Sonnet sibling for provider request refusals."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6.2-astra",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6.1-sol",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-sol",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-astra",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-luna",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-5.6-sol",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-5.6-terra",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-5.6-luna",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-5.5",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-5-codex",
+      "toModel": "gpt-6.2-sol",
+      "reason": "Studio standard Codex route after a provider request refusal."
     }
   ],
   "economyMode": {

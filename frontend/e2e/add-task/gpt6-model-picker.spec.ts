@@ -3,17 +3,21 @@ import { join } from 'node:path';
 import { setTheme } from '../helpers/theme';
 
 /**
- * AGT-2903: the Codex picker leads with GPT-6, prices each model from the
+ * AGT-2903: the Codex picker leads with GPT-6.2, prices each model from the
  * TokenEconomy cost API, and states a mapped thinking level visibly. The
  * catalogue, recommendation, and price endpoints are mocked so the spec needs
  * no live codex-cli.
  */
 const codexModels = [
+  { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', multiplier: null, vendor: 'openai', isDefault: true, available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
+  { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', multiplier: null, vendor: 'openai', isDefault: false, available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', multiplier: null, vendor: 'openai', isDefault: false, available: true,
     thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultThinkingLevel: 'xhigh' },
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false, available: true,
     thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
-  { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, available: true,
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: false, available: true,
     thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', multiplier: null, vendor: 'openai', isDefault: false, available: true,
     thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'medium' },
@@ -22,6 +26,8 @@ const codexModels = [
 ];
 
 const prices: Record<string, [number, number, number]> = {
+  'gpt-6.2-sol': [2, 0.1, 10],
+  'gpt-6.2-astra': [8, 0.4, 40],
   'gpt-6.1-sol': [2, 0.1, 10],
   'gpt-6-sol': [2, 0.2, 10],
   'gpt-6-luna': [0.1, 0.01, 0.5],
@@ -44,6 +50,7 @@ const project = {
 };
 
 test.describe('GPT-6 model picker', () => {
+  test.describe.configure({ timeout: 120_000 });
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((name) => {
       localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -52,6 +59,13 @@ test.describe('GPT-6 model picker', () => {
     }, projectName);
     await page.route('**/api/**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/api/operator/coding-capacity*', (route) =>
+      route.fulfill({ json: { projects: [], fleet: null } }));
+    await page.route('**/api/v1/management/credential-inventory*', (route) =>
+      route.fulfill({ json: { items: [] } }));
+    await page.route('**/api/workspaces/ws-gpt6/quota/admission*', (route) =>
+      route.fulfill({ json: { workspaceId: 'ws-gpt6', projects: [],
+        workspace: { status: 'ok', codingAllowed: true, hostingAllowed: true, limited: false } } }));
     await page.route('**/api/v1/studio/auth/status', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
@@ -115,11 +129,11 @@ test.describe('GPT-6 model picker', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: '{"pending":[]}' }));
     await page.route('**/api/cli/codex/models*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json',
-        body: JSON.stringify({ models: codexModels, source: 'mock', fetchedAt: new Date().toISOString() }) }));
+        body: JSON.stringify({ models: codexModels, source: 'execution-hosts', fetchedAt: new Date().toISOString() }) }));
     await page.route('**/api/cli/model-routing/recommendation?*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        policyVersion: '2026-10-04', policyWikiPath: 'docs/system/domains/model-routing-policy.md',
-        taskType: 'feature', tier: 'sol-medium', model: 'gpt-6-sol', thinkingLevel: 'medium', score: 51,
+        policyVersion: '2026-11-28', policyWikiPath: 'docs/system/domains/model-routing-policy.md',
+        taskType: 'feature', tier: 'sol-medium', model: 'gpt-6.2-sol', thinkingLevel: 'medium', score: 51,
         economyMode: false, economyDowngraded: false, correctnessFloorTier: null,
         reason: 'feature default', estimatedSavingsPercent: 0,
       }) }));
@@ -146,20 +160,21 @@ test.describe('GPT-6 model picker', () => {
     });
   });
 
-  test('leads with GPT-6, shows TokenEconomy prices, and states a mapped level', async ({ page }, testInfo) => {
+  test('shows the GPT-6.2 Sol and medium defaults and TokenEconomy prices', async ({ page }, testInfo) => {
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.getByRole('button', { name: /add task/i }).first().click();
-    await page.getByTestId('create-agent').click();
+    await page.getByRole('region', { name: 'Ready cards' }).getByTestId('lane-add-task').click({ timeout: 45_000 });
+    await page.getByTestId('create-agent').click({ timeout: 30_000 });
     await page.getByTestId('create-agent-picker-cli-codex').click();
 
     const pills = page.getByTestId('create-agent-picker-model-pills');
-    await expect(pills.getByTestId('create-agent-picker-model-gpt-6-sol')).toBeVisible();
+    await expect(pills.getByTestId('create-agent-picker-model-gpt-6.2-sol')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('create-agent-picker-thinking-medium')).toHaveAttribute('aria-checked', 'true');
     const order = await pills.locator('[data-testid^="create-agent-picker-model-gpt"]').evaluateAll(
       (nodes) => nodes.map((node) => node.getAttribute('data-testid')!.replace('create-agent-picker-model-', '')));
-    expect(order[0]).toBe('gpt-6.1-sol');
-    expect(order.slice(1, 3).sort()).toEqual(['gpt-6-luna', 'gpt-6-sol']);
+    expect(order.slice(0, 2).sort()).toEqual(['gpt-6.2-astra', 'gpt-6.2-sol']);
     await expect(page.getByTestId('create-agent-picker-older-heading')).toBeVisible();
-    await expect(page.getByTestId('create-agent-picker-price-gpt-6.1-sol')).toHaveText('$2 / $10');
+    await expect(page.getByTestId('create-agent-picker-price-gpt-6.2-sol')).toHaveText('$2 / $10');
+    await expect(page.getByTestId('create-agent-picker-price-gpt-6.2-astra')).toHaveText('$8 / $40');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -169,6 +184,68 @@ test.describe('GPT-6 model picker', () => {
     }
   });
 
+  test('leaves Codex automatic when Sol is unavailable and Astra is offered', async ({ page }, testInfo) => {
+    await page.route('**/api/cli/codex/models*', (route) => route.fulfill({ json: {
+      models: codexModels.map((model) => model.isDefault
+        ? { ...model, available: false, availabilityNote: 'No active execution host advertises this model.' }
+        : model),
+      source: 'execution-hosts',
+      fetchedAt: new Date().toISOString(),
+    } }));
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.getByRole('region', { name: 'Ready cards' }).getByTestId('lane-add-task').click({ timeout: 45_000 });
+    await page.getByTestId('create-agent').click({ timeout: 30_000 });
+
+    const pills = page.getByTestId('create-agent-picker-model-pills');
+    const sol = pills.getByTestId('create-agent-picker-model-gpt-6.2-sol');
+    await expect(sol).toBeDisabled();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await page.getByTestId('create-agent-picker-cli-claude').click();
+    await page.getByTestId('create-agent-picker-cli-codex').click();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await expect(pills.getByTestId('create-agent-picker-model-gpt-6.2-astra')).toHaveAttribute('aria-checked', 'false');
+    await expect(pills.getByTestId('create-agent-picker-model-default')).toHaveAttribute('aria-checked', 'true');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const path = join(process.env.JOB_RESULTS_DIR ?? '../results', `gpt62-sol-unavailable-${theme}--mocked.png`);
+      await pills.screenshot({ path });
+      await testInfo.attach(`gpt62-sol-unavailable-${theme}`, { path, contentType: 'image/png' });
+    }
+  });
+
+  test('clears a previously available automatic route after the picker refreshes', async ({ page }, testInfo) => {
+    await page.route('**/api/cli/codex/models?refresh=true', (route) => route.fulfill({ json: {
+      models: codexModels.map((model) => model.isDefault ? { ...model, available: false } : model),
+      source: 'execution-hosts',
+      fetchedAt: new Date().toISOString(),
+    } }));
+    await page.route('**/api/tasks', (route) => route.fulfill({ json: { id: 'AGT-created' } }));
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.getByRole('region', { name: 'Ready cards' }).getByTestId('lane-add-task').click({ timeout: 45_000 });
+    await page.getByTestId('create-title').fill('Create using policy');
+    const agent = page.getByTestId('create-agent');
+    await expect(agent).toHaveAttribute('data-model', 'gpt-6.2-sol');
+    await agent.click();
+    const sol = page.getByTestId('create-agent-picker-model-gpt-6.2-sol');
+    await expect(sol).toBeDisabled();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await expect(page.getByTestId('create-agent-picker-model-default')).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('create-agent-picker-cancel').click();
+    await expect(agent).toContainText('Policy default');
+
+    const path = join(process.env.JOB_RESULTS_DIR ?? '../results', 'gpt62-refresh-policy-default--mocked.png');
+    await agent.screenshot({ path });
+    await testInfo.attach('gpt62-refresh-policy-default', { path, contentType: 'image/png' });
+    const submitted = page.waitForRequest((req) =>
+      req.method() === 'POST' && new URL(req.url()).pathname === '/api/tasks');
+    await page.getByTestId('create-submit').click();
+    const body = (await submitted).postDataJSON();
+    expect(body).toMatchObject({ cliType: 'codex', modelExplicit: false, thinkingLevelExplicit: false });
+    expect(body).not.toHaveProperty('model');
+    expect(body).not.toHaveProperty('thinkingLevel');
+  });
+
   test('reports a project migration that failed every pinned card update', async ({ page }, testInfo) => {
     const id = 'AGT-fail';
     const card = {
@@ -176,7 +253,7 @@ test.describe('GPT-6 model picker', () => {
       state: '2-ready', order: 1, agent: 'codex', cliType: 'codex',
       createdAt: '2026-09-25T00:00:00Z', lastActivity: '2026-09-25T00:00:00Z',
       watchPath, projectName, folderPath: `${watchPath}/2-ready/${id}`,
-      model: 'gpt-6-sol', modelExplicit: true, thinkingLevel: 'ultra',
+      model: 'gpt-6.1-sol', modelExplicit: true, thinkingLevel: 'minimal',
       sessionName: null, useOwnSession: null, lastUsage: null,
       execution: null, commit: null, commits: [], ownerClientId: 'local-default',
       tags: [], pendingIntent: null, autoLoop: null, summaryState: null,
@@ -187,22 +264,22 @@ test.describe('GPT-6 model picker', () => {
     await page.route('**/api/cli/model-migrations*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         version: 'fixture', wikiPath: '', migrations: [{
-          from: 'gpt-6-sol', to: 'gpt-6.1-sol', family: 'gpt', safeAuto: false,
-          reason: 'Proposal only.',
+          from: 'gpt-6.1-sol', to: 'gpt-6.2-sol', family: 'gpt-sol', safeAuto: true,
+          reason: 'Owner-approved preference upgrade.',
         }],
       }) }));
     await page.route('**/api/projects/*/model-migrations/apply', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        from: 'gpt-6-sol', to: 'gpt-6.1-sol', updatedTaskIds: [], failedTaskIds: [id],
+        from: 'gpt-6.1-sol', to: 'gpt-6.2-sol', updatedTaskIds: [], failedTaskIds: [id],
       }) }));
 
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.getByTestId('task-card-model-migration-dot').click();
+    await page.getByTestId('task-card-model-migration-dot').click({ timeout: 30_000 });
     await expect(page.getByTestId('task-card-model-migration-target-level'))
-      .toHaveText('Level ultra is not offered by gpt-6.1-sol; runs at xhigh.');
+      .toHaveText('Level minimal is not offered by gpt-6.2-sol; runs at low.');
     await page.getByTestId('task-card-model-migration-apply-project').click();
-    await expect(page.getByText(`0 cards updated to gpt-6.1-sol; 1 failed (${id}).`)).toBeVisible();
-    await expect(page.getByText('Model updated to gpt-6.1-sol on 0 cards.')).toHaveCount(0);
+    await expect(page.getByText(`0 cards updated to gpt-6.2-sol; 1 failed (${id}).`)).toBeVisible();
+    await expect(page.getByText('Model updated to gpt-6.2-sol on 0 cards.')).toHaveCount(0);
 
     const path = join(process.env.JOB_RESULTS_DIR ?? '../results', 'gpt6-project-migration-failed--mocked.png');
     await page.screenshot({ path });

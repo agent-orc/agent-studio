@@ -20,6 +20,36 @@ public sealed class ModelSelectionPlannerTests
     private static readonly ModelRoutingPolicyRegistry Registry = new();
 
     [Theory]
+    [InlineData(ModelIds.Gpt6Sol, "ultra", "ultra")]
+    [InlineData(ModelIds.Gpt61Sol, "minimal", "low")]
+    [InlineData(ModelIds.Gpt61Sol, null, "medium")]
+    public void Fresh_preference_routes_upgrade_and_hard_pins_keep_their_route(
+        string model, string? level, string upgradedLevel)
+    {
+        var request = Request() with
+        {
+            TaskKey = "AGT-4379",
+            Pins = new SelectionPins(CliTypes.Codex, model, level),
+            IsExplicitPin = true,
+        };
+        var facts = Facts(30) with { Routing = null, HostAccepts = (_, _) => true };
+        var preferred = ModelSelectionPlanner.Plan(request, facts);
+        Assert.Equal(new SelectionRoute(CliTypes.Codex, ModelIds.Gpt62Sol, upgradedLevel), preferred.Route);
+
+        var hard = ModelSelectionPlanner.Plan(request with
+        {
+            Pins = request.Pins with { Mode = SelectionPinMode.Hard },
+        }, facts);
+        Assert.Equal(new SelectionRoute(CliTypes.Codex, model, level), hard.Route);
+
+        var resumed = ModelSelectionPlanner.Plan(request with
+        {
+            Continuation = new(CliTypes.Codex, model, level),
+        }, facts);
+        Assert.Equal(new SelectionRoute(CliTypes.Codex, model, level), resumed.Route);
+    }
+
+    [Theory]
     [InlineData("steady", 65, false, SelectionOutcome.Wait)]
     [InlineData("useBy", 65, false, SelectionOutcome.Primary)]
     [InlineData("steady", 65, true, SelectionOutcome.Primary)]
@@ -200,11 +230,15 @@ public sealed class ModelSelectionPlannerTests
     [Fact]
     public void Fallback_below_the_correctness_floor_waits_with_the_floor_rule()
     {
-        var floor = Registry.Policy.Tiers.Single(tier => tier.Id == "sol-xhigh");
+        var floor = Registry.Policy.Tiers.Single(tier => tier.Id == "sol-high");
         var floorReads = 0;
-        var facts = Facts(claudeUsed: 97) with
+        var baseline = Facts(claudeUsed: 97);
+        var routing = baseline.Routing!;
+        var facts = baseline with
         {
             Tiers = Registry.Policy.Tiers,
+            Routing = routing with { Profile = cli => routing.Profile(cli) is { } profile
+                ? profile with { FallbackThinkingLevel = "medium" } : null },
             NormalizeModelId = ModelMetadataRegistry.NormalizeId,
             CorrectnessFloor = () => { floorReads++; return floor; },
         };

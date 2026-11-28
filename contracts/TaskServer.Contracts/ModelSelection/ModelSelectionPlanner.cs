@@ -49,6 +49,13 @@ public static class ModelSelectionPlanner
             ? request.Pins with { CliType = sessionCli, Model = session.SessionModel ?? request.Pins.Model, ThinkingLevel = session.SessionThinkingLevel ?? request.Pins.ThinkingLevel }
             : null;
         var pins = continuation ?? request.Pins;
+        if (request.Consumer == SelectionConsumers.Coding && request.Continuation is null
+            && request.TaskKey is not null)
+            pins = CodexRoutingPolicy.UpgradePreference(pins);
+        if (continuation is null && pins.CliType == Codex && CodexRoutingPolicy.IsGpt62(pins.Model))
+            pins = pins with { ThinkingLevel = CodexRoutingPolicy.ResolveThinkingLevel(pins.ThinkingLevel) };
+        if (continuation is null)
+            request = request with { Pins = pins };
         if (continuation is not null)
             facts = facts with { ShortStepReservePoints = 0, OperatorSwitch = null, ActiveSwitch = null };
         var result = ApplyCostGuard(facts, ApplyFloor(request, facts, PlanQuota(request, pins, facts)));
@@ -79,8 +86,11 @@ public static class ModelSelectionPlanner
         var profile = routing.Profile(cli);
         var equivalence = routing.Equivalence;
 
-        var primaryModel = Clean(requestedModel) ?? profile?.PrimaryModel;
+        var primaryModel = Clean(requestedModel) ?? profile?.PrimaryModel
+            ?? (cli == Codex ? CodexRoutingPolicy.StandardModel : null);
         var primaryThinking = Clean(requestedThinkingLevel) ?? profile?.PrimaryThinkingLevel;
+        if (cli == Codex && CodexRoutingPolicy.IsGpt62(primaryModel))
+            primaryThinking = CodexRoutingPolicy.ResolveThinkingLevel(primaryThinking);
         var cap = evaluateModelQuota?.Invoke(cli, primaryModel) ?? evaluateQuota(cli);
         if (!cap.Blocked && !preferFallback)
             return new(cli, primaryModel, primaryThinking, false, null, cap);
@@ -100,6 +110,8 @@ public static class ModelSelectionPlanner
                 preferFallback ? "operator prefers fallback, but no comparable route is available" : cap.DescribeReason(), cap);
 
         var (fallbackCli, fallbackModel, fallbackThinking, capabilityClass) = effective.Value;
+        if (fallbackCli == Codex && CodexRoutingPolicy.IsGpt62(fallbackModel))
+            fallbackThinking = CodexRoutingPolicy.ResolveThinkingLevel(fallbackThinking);
         if (sameClassOnly && (equivalence is null
             || !equivalence.SameCapabilityClass(primaryModel, fallbackModel)))
             return new(cli, primaryModel, primaryThinking, false,
@@ -225,7 +237,7 @@ public static class ModelSelectionPlanner
 
     /// <summary>
     /// <paramref name="modelId"/> followed by its declared provider-rejection
-    /// siblings (gpt-6-sol, then gpt-5.6-sol), each once.
+    /// siblings, each once.
     /// </summary>
     public static IEnumerable<string> SiblingChain<T>(
         IEnumerable<T> rules,
@@ -733,7 +745,7 @@ public static class ModelSelectionPlanner
     {
         "claude-opus-4-8" or "claude-opus-4-7" or "claude-opus-4-6" or "claude-opus-4-5" => "claude-opus-5",
         "claude-sonnet-4-6" or "claude-sonnet-4-5" => "claude-sonnet-5",
-        "gpt-5.6-sol" => "gpt-6-sol",
+        "gpt-5.6-sol" or "gpt-6-sol" or "gpt-6.1-sol" => CodexRoutingPolicy.StandardModel,
         "gpt-5.6-luna" => "gpt-6-luna",
         _ => value ?? string.Empty,
     };
