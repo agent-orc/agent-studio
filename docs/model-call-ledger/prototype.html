@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Calls · Studio prototype</title>
+<style>
+@font-face{font-family:Inter;src:url(assets/inter.woff2) format("woff2");font-weight:100 900;font-display:swap}
+/* Studio semantic tokens, resolved from the shared Studio styles. */
+:root{color-scheme:dark;
+  --studio-bg-editor: #0f0f1a;
+  --studio-bg-sidebar: #181825;
+  --studio-bg-elevated: #1e1e2e;
+  --studio-bg-selected: #252537;
+  --studio-border: rgba(255, 255, 255, 0.06);
+  --studio-border-strong: rgba(255, 255, 255, 0.10);
+  --studio-fg: #e2e8f0;
+  --studio-fg-strong: #f8fafc;
+  --studio-fg-dim: #94a3b8;
+  --studio-accent-3-strong: #93c5fd;
+  --studio-accent-warn-strong: #fcd34d;
+  --studio-action-radius-sm: 6px;
+  --studio-spacing-1: 4px;
+  --studio-spacing-2: 8px;
+  --studio-spacing-3: 12px;
+  --studio-spacing-4: 16px;
+  --studio-spacing-5: 24px;
+  --studio-panel-content-max: 1280px;
+  --studio-font-size-md: 13px;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+:root[data-theme="light"]{color-scheme:light;
+  --studio-bg-editor: #ffffff;
+  --studio-bg-sidebar: #f8f8f8;
+  --studio-bg-elevated: #ececec;
+  --studio-bg-selected: rgba(217, 119, 87, 0.15);
+  --studio-border: #d4d4d4;
+  --studio-border-strong: #b4b4b4;
+  --studio-fg: #333333;
+  --studio-fg-strong: #1a1a1a;
+  --studio-fg-dim: #555555;
+  --studio-accent-3-strong: #1d4ed8;
+  --studio-accent-warn-strong: #7b3d08;
+  --studio-action-radius-sm: 6px;
+  --studio-spacing-1: 4px;
+  --studio-spacing-2: 8px;
+  --studio-spacing-3: 12px;
+  --studio-spacing-4: 16px;
+  --studio-spacing-5: 24px;
+  --studio-panel-content-max: 1280px;
+  --studio-font-size-md: 13px;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+@media(prefers-color-scheme:light){:root:not([data-theme="dark"]){color-scheme:light;
+  --studio-bg-editor: #ffffff;
+  --studio-bg-sidebar: #f8f8f8;
+  --studio-bg-elevated: #ececec;
+  --studio-bg-selected: rgba(217, 119, 87, 0.15);
+  --studio-border: #d4d4d4;
+  --studio-border-strong: #b4b4b4;
+  --studio-fg: #333333;
+  --studio-fg-strong: #1a1a1a;
+  --studio-fg-dim: #555555;
+  --studio-accent-3-strong: #1d4ed8;
+  --studio-accent-warn-strong: #7b3d08;
+  --studio-action-radius-sm: 6px;
+  --studio-spacing-1: 4px;
+  --studio-spacing-2: 8px;
+  --studio-spacing-3: 12px;
+  --studio-spacing-4: 16px;
+  --studio-spacing-5: 24px;
+  --studio-panel-content-max: 1280px;
+  --studio-font-size-md: 13px;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--studio-bg-editor);color:var(--studio-fg);font:var(--studio-font-size-md)/1.55 var(--font-ui)}
+header,nav,section,main,aside,figure{min-width:0}
+a{color:var(--studio-accent-3-strong);text-underline-offset:.2em}
+button,select{font:inherit;color:inherit;background:var(--studio-bg-elevated);border:1px solid var(--studio-border-strong);border-radius:var(--studio-action-radius-sm);padding:var(--studio-spacing-2) var(--studio-spacing-3);cursor:pointer}
+:focus-visible{outline:2px solid var(--studio-accent-3-strong);outline-offset:3px}
+h1,h2,h3,p,figure{margin:0}
+h1,h2,h3,strong{color:var(--studio-fg-strong)}
+h1{font-size:2.35rem;line-height:1.15;letter-spacing:-.045em}
+h2{font-size:1.22rem;line-height:1.25;letter-spacing:-.015em}
+h3{font-size:1rem}
+.top{display:flex;justify-content:space-between;align-items:center;gap:var(--studio-spacing-3);background:var(--studio-bg-sidebar);border-bottom:1px solid var(--studio-border-strong);padding:var(--studio-spacing-2) var(--studio-spacing-5)}
+.top p{color:var(--studio-fg-dim)}
+main{max-width:var(--studio-panel-content-max);margin:auto;padding:var(--studio-spacing-5)}
+.stack{display:grid;gap:var(--studio-spacing-5)}
+.intro{display:flex;align-items:end;justify-content:space-between;gap:var(--studio-spacing-4);flex-wrap:wrap}
+.kicker,.dim,figcaption{color:var(--studio-fg-dim)}
+nav,.controls,.legend,.actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--studio-spacing-2)}
+nav{border-bottom:1px solid var(--studio-border-strong);padding-bottom:var(--studio-spacing-2)}
+nav a{color:var(--studio-fg);text-decoration:none;padding:var(--studio-spacing-2) var(--studio-spacing-3);border-radius:var(--studio-action-radius-sm)}
+nav [aria-current]{color:var(--studio-fg-strong);background:var(--studio-bg-selected);font-weight:650}
+.grid{display:grid;grid-template-columns:minmax(0,2.4fr) minmax(0,1fr);gap:var(--studio-spacing-5);align-items:start}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--studio-spacing-3);border-block:1px solid var(--studio-border-strong);padding:var(--studio-spacing-3) 0}
+.metrics span{display:block;color:var(--studio-fg-dim)}
+.metrics strong{display:block;font-size:1.65rem;font-variant-numeric:tabular-nums;letter-spacing:-.035em}
+.panel{padding:var(--studio-spacing-4);border:1px solid var(--studio-border-strong);border-radius:var(--studio-action-radius-sm)}
+aside.panel{background:var(--studio-bg-sidebar);display:grid;gap:var(--studio-spacing-4)}
+aside hr{margin:0;border:0;border-top:1px solid var(--studio-border-strong)}
+small{font:inherit;color:var(--studio-fg-dim)}
+.scope{display:grid;gap:var(--studio-spacing-3)}
+.controls label{display:flex;align-items:center;gap:var(--studio-spacing-2);color:var(--studio-fg-dim)}
+legend{padding:0}
+.legend i{display:inline-block;width:.65em;height:.65em;background:var(--studio-accent-3-strong);border-radius:50%;margin-inline-end:.25em}
+.legend i.wait{background:var(--studio-accent-warn-strong)}
+.chart-labels{font-size:13px}
+.cost-total{display:flex;align-items:baseline;justify-content:space-between;gap:var(--studio-spacing-3);flex-wrap:wrap;margin-block-end:var(--studio-spacing-2)}
+.cost-total strong{font-size:1.45rem;font-variant-numeric:tabular-nums}
+.cost-bar{display:flex;overflow:hidden;min-height:var(--studio-spacing-2);border-radius:var(--studio-action-radius-sm);margin-block:var(--studio-spacing-2) var(--studio-spacing-3)}
+.cost-bar span:first-child{width:57.38%;background:var(--studio-accent-warn-strong)}
+.mix-bar span:first-child{width:73%;background:var(--studio-accent-3-strong)}
+.mix-bar span:nth-child(2){width:16%;background:var(--studio-accent-warn-strong)}
+.mix-bar span:last-child{background:var(--studio-fg-dim)}
+.cost-bar span:last-child{flex:1;background:var(--studio-accent-3-strong)}
+figure svg{display:block;width:100%;height:auto;margin-block:var(--studio-spacing-2)}
+.flow-list,.data{display:grid}
+.row{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr) minmax(0,.8fr);gap:var(--studio-spacing-3);padding:var(--studio-spacing-3) 0;border-bottom:1px solid var(--studio-border);align-items:baseline}
+.row> :last-child{text-align:right;font-variant-numeric:tabular-nums}
+.row strong{overflow-wrap:anywhere}
+.matrix .row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr)}
+.row.heading{font-size:.9em;color:var(--studio-fg-dim)}
+.call-context{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--studio-spacing-1) var(--studio-spacing-3);margin:0}
+.call-context dt{color:var(--studio-fg-dim)}
+.call-context dd{margin:0;overflow-wrap:anywhere}
+.sample{background:var(--studio-bg-sidebar)}
+.callout{padding:var(--studio-spacing-3);background:var(--studio-bg-elevated);border-radius:var(--studio-action-radius-sm)}
+[hidden]{display:none!important}
+@media(max-width:780px){main,.top{padding:var(--studio-spacing-3)}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){h1{font-size:1.9rem}.stack,.grid{gap:var(--studio-spacing-4)}.top p{max-width:28ch}.chart-labels{font-size:18px}.matrix .row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--studio-spacing-1) var(--studio-spacing-3)}.matrix .row> :nth-child(even){text-align:right}.panel{padding:var(--studio-spacing-3)}}
+</style>
+</head>
+<body>
+<header class="top"><p>Agent Studio / Token Usage</p><button type="button" id="theme">Theme</button></header>
+<main class="stack">
+  <div class="intro">
+    <div><p class="kicker">Product prototype · AGT-4375 historical sample</p><h1>Model Calls</h1></div>
+    <p class="dim">27 Nov 21:52 → 28 Nov 09:12 UTC · 2026</p>
+  </div>
+  <nav aria-label="Model Calls views">
+    <a href="#explorer" aria-current="page">Explorer</a><a href="#pipeline">Host pipeline</a><a href="#card">Card lifecycle</a><a href="index.html#explorer">Dossier</a>
+  </nav>
+  <section id="explorer" class="stack">
+    <div class="metrics">
+      <div><span>Coding responses</span><strong>19,774</strong><span>58 cards</span></div>
+      <div><span>Coding tokens</span><strong>2.64B</strong><span>Input + output</span></div>
+      <div><span>Estimated list cost</span><strong>≈ $765</strong><span>Research reconstruction</span></div>
+      <div><span>Waiting + status</span><strong>729.4M</strong><span>27.6% of tokens</span></div>
+    </div>
+    <div class="grid">
+      <div class="scope">
+        <div class="controls">
+          <label>Group by <select id="group"><option value="task">Task</option><option value="kind">Call kind</option><option value="model">Model + level</option></select></label>
+          <label>View <select id="comparison"><option value="night">Full night</option><option value="period">Compare periods</option><option value="models">Compare models</option></select></label>
+        </div>
+        <figure class="panel">
+          <h2>Responses by hour</h2>
+          <div class="legend"><span><i></i>Other responses</span><span><i class="wait"></i>Waiting + status</span></div>
+          <svg viewBox="0 0 620 184" role="img" aria-labelledby="plot-label"><title id="plot-label">Coding responses by UTC hour. Largest hour is midnight with 2,023 responses. Waiting and status responses are the upper series.</title><g fill="var(--studio-fg-dim)" class="chart-labels"><path d="M50 155.0H608" stroke="var(--studio-border-strong)"/><text x="44" y="159.0" text-anchor="end">0</text><path d="M50 122.5H608" stroke="var(--studio-border-strong)"/><text x="44" y="126.5" text-anchor="end">500</text><path d="M50 90.0H608" stroke="var(--studio-border-strong)"/><text x="44" y="94.0" text-anchor="end">1,000</text><path d="M50 57.5H608" stroke="var(--studio-border-strong)"/><text x="44" y="61.5" text-anchor="end">1,500</text><path d="M50 25.0H608" stroke="var(--studio-border-strong)"/><text x="44" y="29.0" text-anchor="end">2,000</text><text x="70" y="177" text-anchor="middle">21:00</text><text x="154" y="177" text-anchor="middle">23:00</text><text x="238" y="177" text-anchor="middle">01:00</text><text x="322" y="177" text-anchor="middle">03:00</text><text x="406" y="177" text-anchor="middle">05:00</text><text x="490" y="177" text-anchor="middle">07:00</text><text x="574" y="177" text-anchor="middle">09:00</text><g><title>21:00 UTC · 72 responses · 2 waiting or status</title><rect x="57" y="150.4" width="27" height="4.5" fill="var(--studio-accent-3-strong)"/><rect x="57" y="150.3" width="27" height="0.1" fill="var(--studio-accent-warn-strong)"/></g><g><title>22:00 UTC · 1,738 responses · 492 waiting or status</title><rect x="99" y="74.0" width="27" height="81.0" fill="var(--studio-accent-3-strong)"/><rect x="99" y="42.0" width="27" height="32.0" fill="var(--studio-accent-warn-strong)"/></g><g><title>23:00 UTC · 1,971 responses · 457 waiting or status</title><rect x="141" y="56.6" width="27" height="98.4" fill="var(--studio-accent-3-strong)"/><rect x="141" y="26.9" width="27" height="29.7" fill="var(--studio-accent-warn-strong)"/></g><g><title>00:00 UTC · 2,023 responses · 520 waiting or status</title><rect x="183" y="57.3" width="27" height="97.7" fill="var(--studio-accent-3-strong)"/><rect x="183" y="23.5" width="27" height="33.8" fill="var(--studio-accent-warn-strong)"/></g><g><title>01:00 UTC · 1,969 responses · 558 waiting or status</title><rect x="225" y="63.3" width="27" height="91.7" fill="var(--studio-accent-3-strong)"/><rect x="225" y="27.0" width="27" height="36.3" fill="var(--studio-accent-warn-strong)"/></g><g><title>02:00 UTC · 1,799 responses · 465 waiting or status</title><rect x="267" y="68.3" width="27" height="86.7" fill="var(--studio-accent-3-strong)"/><rect x="267" y="38.1" width="27" height="30.2" fill="var(--studio-accent-warn-strong)"/></g><g><title>03:00 UTC · 1,762 responses · 527 waiting or status</title><rect x="309" y="74.7" width="27" height="80.3" fill="var(--studio-accent-3-strong)"/><rect x="309" y="40.5" width="27" height="34.3" fill="var(--studio-accent-warn-strong)"/></g><g><title>04:00 UTC · 1,934 responses · 575 waiting or status</title><rect x="351" y="66.7" width="27" height="88.3" fill="var(--studio-accent-3-strong)"/><rect x="351" y="29.3" width="27" height="37.4" fill="var(--studio-accent-warn-strong)"/></g><g><title>05:00 UTC · 1,652 responses · 473 waiting or status</title><rect x="393" y="78.4" width="27" height="76.6" fill="var(--studio-accent-3-strong)"/><rect x="393" y="47.6" width="27" height="30.7" fill="var(--studio-accent-warn-strong)"/></g><g><title>06:00 UTC · 1,555 responses · 496 waiting or status</title><rect x="435" y="86.2" width="27" height="68.8" fill="var(--studio-accent-3-strong)"/><rect x="435" y="53.9" width="27" height="32.2" fill="var(--studio-accent-warn-strong)"/></g><g><title>07:00 UTC · 1,115 responses · 319 waiting or status</title><rect x="477" y="103.3" width="27" height="51.7" fill="var(--studio-accent-3-strong)"/><rect x="477" y="82.5" width="27" height="20.7" fill="var(--studio-accent-warn-strong)"/></g><g><title>08:00 UTC · 1,832 responses · 533 waiting or status</title><rect x="519" y="70.6" width="27" height="84.4" fill="var(--studio-accent-3-strong)"/><rect x="519" y="35.9" width="27" height="34.6" fill="var(--studio-accent-warn-strong)"/></g><g><title>09:00 UTC · 352 responses · 99 waiting or status</title><rect x="561" y="138.6" width="27" height="16.4" fill="var(--studio-accent-3-strong)"/><rect x="561" y="132.1" width="27" height="6.4" fill="var(--studio-accent-warn-strong)"/></g></g></svg>
+          <figcaption>UTC · first and last bins are partial hours · classified from the research export</figcaption>
+        </figure>
+        <div class="panel data">
+          <h2 id="table-title">Coding token ranking</h2>
+          <div id="pivot"></div>
+        </div>
+      </div>
+      <aside class="panel" aria-label="Insights and scenarios">
+        <div><p class="dim">Finding · AGT-4375</p><h2>5,516 responses waited or checked status</h2><p>4,592 waits and 924 status checks accounted for 729.4M tokens. These classifications were inferred from tool activity.</p></div>
+        <a href="#card">Trace AGT-4249 · 173 of 311 responses</a>
+        <hr>
+        <div><h2>List cost by token class</h2><div class="cost-bar mix-bar" role="img" aria-label="73 percent cache reads, 16 percent output, 11 percent fresh input"><span></span><span></span><span></span></div><p class="dim">Cache reads $558 · Output $124 · Fresh input $83</p></div>
+        <hr>
+        <div class="scope"><h2>What if?</h2><label>Scenario <select id="scenario"><option value="wait">Remove waiting + status</option><option value="model">Change model or level</option><option value="round">Remove a finding round</option></select></label><div class="callout" id="scenario-value" aria-live="polite"></div></div>
+        <hr><p class="dim">Coverage · coding sessions only. Subscription points and exact request durations were unavailable.</p>
+      </aside>
+    </div>
+  </section>
+  <section id="pipeline" class="stack" hidden>
+    <div class="intro"><div><p class="kicker">Installation / execution hosts</p><h2>Where inference ran</h2></div><a href="#explorer">Open response explorer</a></div>
+    <div class="metrics">
+      <div><span>Task Server</span><strong>541</strong><span>Card-tag executions</span></div>
+      <div><span>agent-runner-01</span><strong>19,774</strong><span>Coding responses</span></div>
+      <div><span>KORI review hosts</span><strong>423</strong><span>Aspect executions</span></div>
+      <div><span>KORI review hosts</span><strong>12.0 h</strong><span>Build, test and lint intervals</span></div>
+    </div>
+    <div class="matrix panel">
+      <div class="row heading"><span>Stage</span><span>Execution host</span><span>Evidence unit / source</span><span>Observed</span></div>
+      <div class="row"><strong>Create card · auto-tag</strong><span>Task Server</span><span>Selection execution</span><strong>541 executions</strong></div>
+      <div class="row"><strong><a href="#explorer">Coding</a></strong><span>agent-runner-01</span><span>Codex response</span><strong>19,774 responses</strong></div>
+      <div class="row"><strong>Research</strong><span>agent-runner-01</span><span>Codex response</span><strong>680 responses</strong></div>
+      <div class="row"><strong>Build, tests, lint</strong><span>KORI review hosts</span><span>Command intervals</span><strong>12.0 hours</strong></div>
+      <div class="row"><strong>Review aspects</strong><span>KORI review hosts</span><span>Round settlements</span><strong>423 executions</strong></div>
+      <div class="row"><strong>Summary generation</strong><span>Task Server</span><span>Selection execution</span><strong>60 executions</strong></div>
+      <div class="row"><strong>Report review</strong><span>Task Server</span><span>Selection execution</span><strong>23 executions</strong></div>
+      <div class="row"><strong>Gate and integration</strong><span>KORI gate host</span><span>Host commands</span><strong>0 model calls</strong></div>
+    </div>
+    <p class="dim">Operator reference, 28 November. Execution counts and response counts have different granularity. Auto-tag token evidence is unavailable for this particular window.</p>
+  </section>
+  <section id="card" class="stack" hidden>
+    <div class="intro"><div><p class="kicker"><a href="#explorer">Explorer</a> / AGT-4249</p><h2>Card cost along its life</h2></div><p>Observed coding · 48.69M tokens · 311 responses</p></div>
+    <div class="grid">
+      <div class="panel flow-list">
+        <div class="cost-total"><h3>Measured coding subtotal</h3><strong>≈ $24.341</strong></div>
+        <div class="cost-bar" role="img" aria-label="USD 13.966 for waiting and status and USD 10.375 for remaining work"><span></span><span></span></div>
+        <div class="legend"><span><i class="wait"></i>Waiting + status · $13.966</span><span><i></i>Remaining coding · $10.375</span></div>
+        <div class="row heading"><span>Stage</span><span>Observed evidence</span><span>Usage</span></div>
+        <div class="row"><strong>Card creation</strong><span>Link unavailable</span><span>Unknown</span></div>
+        <div class="row"><strong>Coding · initial run</strong><span>gpt-6.2-astra high</span><span>311 responses</span></div>
+        <div class="row"><span>↳ Waiting + status</span><span>Research classifier</span><span>173 responses</span></div>
+        <div class="row"><span>↳ Remaining coding</span><span>Research export</span><span>138 responses</span></div>
+        <div class="row"><strong>Review and findings</strong><span>Outside sample</span><span>Unknown</span></div>
+        <div class="row"><strong>Integration</strong><span>Outside sample</span><span>Unknown</span></div>
+        <p class="dim">Standard short-context Astra tariff effective 17 November. This sample covers coding only.</p>
+      </div>
+      <aside class="panel sample">
+        <h2>Response 1</h2>
+        <p class="dim">AGT-4249 / CLI run 1 / historical response ordinal</p>
+        <dl class="call-context">
+          <dt>Response time</dt><dd>27 Nov 23:37:59.587 UTC</dd><dt>Request duration</dt><dd>Unknown</dd><dt>Host / CLI</dt><dd>agent-runner-01 / Codex</dd><dt>Container</dt><dd>Unknown</dd><dt>Cause</dt><dd>Initial run, inferred</dd><dt>Model / level</dt><dd>gpt-6.2-astra / high</dd><dt>Fresh input</dt><dd>6,792 tokens</dd><dt>Cache read</dt><dd>13,824 tokens</dd><dt>Output</dt><dd>205 tokens</dd><dt>Price / points</dt><dd>≈ $0.068 inferred standard list price / points unknown</dd><dt>Prompt manifest</dt><dd>Unknown</dd>
+        </dl>
+        <p class="dim">Source · AGT-4375 response export</p>
+      </aside>
+    </div>
+  </section>
+</main>
+<script>
+const nav = [...document.querySelectorAll('nav a[href^="#"]')];
+function showView() {
+  const requested = nav.find(link => link.hash === location.hash) || nav[0];
+  for (const link of nav) {
+    const selected = link === requested;
+    document.querySelector(link.hash).hidden = !selected;
+    if (selected) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+}
+addEventListener('hashchange', showView);
+showView();
+
+document.querySelector('#theme').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme === 'dark' ||
+    (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+});
+const group = document.querySelector('#group');
+const comparison = document.querySelector('#comparison');
+const scenario = document.querySelector('#scenario');
+const pivots = {
+  "task": [
+    [
+      "AGT-4018",
+      "1,208 responses",
+      "184.48M tokens"
+    ],
+    [
+      "AGT-4236",
+      "1,085 responses",
+      "155.85M tokens"
+    ],
+    [
+      "AGT-4326",
+      "736 responses",
+      "124.56M tokens"
+    ],
+    [
+      "AGT-4251",
+      "962 responses",
+      "110.70M tokens"
+    ],
+    [
+      "AGT-4198",
+      "603 responses",
+      "103.10M tokens"
+    ],
+    [
+      "AGT-4249",
+      "311 responses",
+      "48.69M tokens"
+    ],
+    [
+      "Other cards",
+      "14,869 responses",
+      "1,912.26M tokens"
+    ]
+  ],
+  "kind": [
+    [
+      "Other",
+      "14,258 responses",
+      "1,910.25M tokens"
+    ],
+    [
+      "Waiting",
+      "4,592 responses",
+      "596.26M tokens"
+    ],
+    [
+      "Status check",
+      "924 responses",
+      "133.14M tokens"
+    ]
+  ],
+  "model": [
+    [
+      "gpt-6.1-sol / high",
+      "7,573 responses",
+      "1,160.58M tokens"
+    ],
+    [
+      "gpt-6.2-astra / high",
+      "8,066 responses",
+      "954.22M tokens"
+    ],
+    [
+      "gpt-6.1-sol / medium",
+      "3,725 responses",
+      "481.94M tokens"
+    ],
+    [
+      "gpt-6.2-astra / medium",
+      "410 responses",
+      "42.90M tokens"
+    ]
+  ],
+  "period": [
+    [
+      "A · before 04:00",
+      "11,334 responses",
+      "1,581.22M tokens"
+    ],
+    [
+      "B · from 04:00",
+      "8,440 responses",
+      "1,058.42M tokens"
+    ]
+  ],
+  "models": [
+    [
+      "gpt-6.1-sol / high",
+      "7,573 responses",
+      "1,160.58M tokens"
+    ],
+    [
+      "gpt-6.2-astra / high",
+      "8,066 responses",
+      "954.22M tokens"
+    ]
+  ]
+};
+const titles = {task:'Coding token ranking',kind:'Coding responses by kind',model:'Coding responses by model and level',period:'Coding responses before and after 04:00 UTC',models:'Two observed model cohorts'};
+function showPivot() {
+  const key = comparison.value === 'night' ? group.value : comparison.value;
+  group.disabled = comparison.value !== 'night';
+  document.querySelector('#table-title').textContent = titles[key];
+  const view = document.querySelector('#pivot');
+  view.replaceChildren();
+  for (const [name, calls, tokens] of pivots[key]) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const first = document.createElement(name === 'AGT-4249' ? 'a' : 'strong');
+    if (first.tagName === 'A') first.href = '#card';
+    first.textContent = name;
+    const second = document.createElement('span');
+    second.textContent = calls;
+    const third = document.createElement('span');
+    third.textContent = tokens;
+    row.append(first, second, third);
+    view.append(row);
+  }
+}
+function showScenario() {
+  const descriptions = {
+    wait: '729.4M measured tokens and about $184 at reconstructed list prices. Assumes unchanged follow-on work and quality. Points are unavailable.',
+    model: 'Estimated $372 if the same recorded counters used Sol 6.2 list rates, against about $765 observed. A level change needs a matched cohort or counter assumption.',
+    round: 'Production estimate removes one linked remediation round and its explicit verification calls. Findings may still require remediation.'
+  };
+  document.querySelector('#scenario-value').textContent = descriptions[scenario.value];
+}
+group.addEventListener('change', showPivot);
+comparison.addEventListener('change', showPivot);
+scenario.addEventListener('change', showScenario);
+showPivot();
+showScenario();
+</script>
+</body>
+</html>

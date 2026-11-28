@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Query workbook | Model call ledger</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>.section-nav{display:flex;flex-wrap:wrap;gap:0.25rem 0.85rem;font:0.82rem/1.6 var(--article-sans);padding-block:1rem;border-block:1px solid var(--article-line)}code{overflow-wrap:anywhere}td{vertical-align:top}.wide-sample{overflow:auto}</style>
+</head>
+<body>
+<main class="article">
+<header class="page"><p class="kicker"><a href="index.html#alternatives">Model call ledger</a></p><h1>Query workbook</h1><p class="lede">Five fixed questions applied to every storage candidate.</p></header>
+<p>All examples operate on de-duplicated response facts at one snapshot revision and authorized workspace/project scope. A time window is half-open, using the recorded request/response timestamp policy. <code>usd</code> holds fixed-scale integer USD units and is nullable. <code>tokens</code> is the disjoint total or null. Examples operate on responses. Run-level residuals are queried independently with their true granularity.</p>
+<ol>
+<li>Which projects cost the most per day or week?</li>
+<li>Which host and step incurred the most waiting and status usage?</li>
+<li>Which cards were most expensive, and which run causes account for that spend?</li>
+<li>How do model and level costs compare between periods A and B?</li>
+<li>By finding aspect, what did the resulting blocking/concern rounds cost and how many rounds were there?</li>
+</ol>
+<h2>SQL queries</h2>
+<p>For A SQLite/DuckDB and B PostgreSQL, create the scoped input from the indexed <code>model_call</code> relation and the selected price revision. For C JetStream, consume in bounded batches, upsert by call ID into a SQL projection and checkpoint only after commit. Its query results report the projected sequence. For E files, use the sealed manifest and DuckDB <code>read_parquet</code> below. The five statements are shared verbatim across those candidates: bind <code>scope_calls</code> to the corresponding input. Report intervals, project permissions and grouping keys are parameters built by the application, never raw user SQL.</p>
+<pre class="wide-sample"><code>-- A SQLite/DuckDB and B PostgreSQL: bind authorized filters and reporting buckets.
+-- C: same source contract, from the checkpointed projection.
+-- E: restrict to files in the selected authorized, committed manifest.
+CREATE TEMP VIEW scope_calls AS
+SELECT * FROM read_parquet(['sealed/project=p/day=2026-11-28/part-01.parquet'],
+                           hive_partitioning = true);
+-- Apply ACL and time to this view in production. Manifest admits only one
+-- confirmed active revision per ID, or the view selects it by revision.
+
+-- Q1. Substitute iso_week for local_day for the weekly view.
+SELECT local_day, project, SUM(usd) AS priced_usd, COUNT(*) AS calls,
+       COUNT(*) - COUNT(usd) AS unpriced
+FROM scope_calls
+GROUP BY local_day, project ORDER BY local_day, priced_usd DESC;
+
+-- Q2. Split status checks and wait, with covered token volume.
+SELECT host, step, kind, COUNT(*) AS calls, SUM(tokens) AS tokens,
+       SUM(usd) AS priced_usd, COUNT(*) - COUNT(usd) AS unpriced
+FROM scope_calls WHERE kind IN ('waiting', 'status')
+GROUP BY host, step, kind ORDER BY tokens DESC;
+
+-- Q3. The outer result explains each top card and reconciles to its subtotal.
+WITH top_cards AS (
+  SELECT project, task, SUM(usd) AS priced_usd
+  FROM scope_calls WHERE task IS NOT NULL AND usd IS NOT NULL
+  GROUP BY project, task ORDER BY priced_usd DESC, project, task LIMIT 10
+)
+SELECT c.project, c.task, c.cause, t.priced_usd AS card_subtotal,
+       SUM(c.usd) AS cause_subtotal, COUNT(*) AS calls,
+       COUNT(*) - COUNT(c.usd) AS unpriced
+FROM scope_calls c JOIN top_cards t ON c.project=t.project AND c.task=t.task
+GROUP BY c.project, c.task, c.cause, t.priced_usd
+ORDER BY t.priced_usd DESC, c.project, c.task, cause_subtotal DESC;
+
+-- Q4. period_calls assigns each response to each matching comparison period.
+-- If A and B overlap, UNION ALL gives each period its own membership.
+SELECT model, level,
+       SUM(CASE WHEN period='A' THEN usd END) AS a_usd,
+       SUM(CASE WHEN period='B' THEN usd END) AS b_usd,
+       SUM(CASE WHEN period='B' THEN usd END) -
+         SUM(CASE WHEN period='A' THEN usd END) AS delta_usd,
+       SUM(CASE WHEN period='A' AND usd IS NULL THEN 1 ELSE 0 END) AS a_unpriced,
+       SUM(CASE WHEN period='B' AND usd IS NULL THEN 1 ELSE 0 END) AS b_unpriced
+FROM period_calls GROUP BY model, level ORDER BY delta_usd DESC;
+
+-- Q5. attributed_aspect includes an explicit Shared/Unknown value.
+SELECT attributed_aspect, cause, COUNT(DISTINCT run_id) AS linked_rounds,
+       SUM(usd) AS priced_usd, COUNT(*) - COUNT(usd) AS unpriced,
+       SUM(CASE WHEN run_id IS NULL THEN 1 ELSE 0 END) AS unlinked_calls
+FROM scope_calls WHERE cause IN ('blocking_finding','concern')
+GROUP BY attributed_aspect, cause ORDER BY priced_usd DESC;</code></pre>
+<p>Cut project-scoped reports on the server using time and scope indices. Restrict large scans and retain nullable price totals through every projection; when a group has no priced rows its sum is unavailable. The sample uses reporting date keys materialized in the workspace zone and revision, with time-zone changes handled by rebuilding dates from UTC. <a href="https://duckdb.org/docs/current/data/partitioning/hive_partitioning">DuckDB file partitioning</a></p>
+<h2>Wide-column queries</h2>
+<p>Candidate D Cassandra uses one canonical table keyed by workspace and call ID, plus the following separately rebuildable tables. Reads below are CQL shaped for complete partition keys. Use a hash shard where one workspace/day is too large, keeping cardinality budgets and published revision/checkpoint metadata. The projection worker writes deterministic cells by revision from de-duplicated facts and publishes the completed revision after successful writes. Client merges use precise sums and nullable coverage. An arbitrary model/host/aspect combination outside these shapes still needs a new projection or SQL export. <a href="https://cassandra.apache.org/doc/stable/cassandra/developing/cql/dml.html">CQL queries</a></p>
+<pre class="wide-sample"><code>-- One read per authorized project/day/shard in the requested range.
+-- Q1: merge by project/day, roll up seven calendar days for an ISO-week view.
+SELECT priced_usd, priced_count, unpriced
+FROM project_day WHERE ws=? AND project=? AND day=? AND shard=? AND rev=?;
+
+-- Q2: merge host/step/kind across day/project/shard then rank.
+SELECT host, step, kind, call_count, tokens, priced_usd, unpriced
+FROM wait_by_step WHERE ws=? AND project=? AND day=? AND shard=? AND rev=?;
+
+-- Q3: merge all task/cause cells over window, then rank spend and show causes.
+-- A fixed-period ranking can be cached; daily top-10 alone loses candidates.
+SELECT task, cause, priced_usd, priced_count, unpriced
+FROM task_cost WHERE ws=? AND project=? AND day=? AND shard=? AND rev=?;
+
+-- Q4: issue same read for the days in each period, merge model/level and diff.
+SELECT model, level, priced_usd, priced_count, unpriced
+FROM model_cost WHERE ws=? AND project=? AND day=? AND shard=? AND rev=?;
+
+-- Q5: merge spend by aspect/cause and deduplicate round IDs across days.
+SELECT aspect, cause, run_id, priced_usd, priced_count, unpriced
+FROM finding_round_cost WHERE ws=? AND project=? AND day=? AND shard=? AND rev=?;</code></pre>
+<p>For Q5 an explicit unknown round key per unmatched call keeps costs while excluding those entries from the distinct round count. Single-call drill-down reads the canonical ID table and verifies authorization again.</p>
+</main>
+</body>
+</html>
