@@ -22,6 +22,7 @@ public static class OperatorDecisionTypes
     public const string QuotaExhausted = "quota.exhausted";
     public const string QuotaFallbackActive = "quota.fallback-active";
     public const string GateHostUnreachable = "gate-host.unreachable";
+    public const string OperatorApprovalPending = "operator-approval.pending";
     public const string ElevationRateEnded = "elevation.rate-ended";
     public const string AuditAlert = "audit.alert";
     public const string HostDiskPressure = "host.disk-pressure";
@@ -41,7 +42,7 @@ public static class OperatorDecisionTypes
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, BatchRunningWithoutGate, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
-        GateHostUnreachable, ElevationRateEnded, AuditAlert, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
+        GateHostUnreachable, OperatorApprovalPending, ElevationRateEnded, AuditAlert, HostDiskPressure, ReviewHostDrift, ReviewRetrySchedulerStalled, EnvironmentIncidentOpen, PostMergeRunsMissing,
         PostMergeRedIncident,
         CapacityUnderused, OverlapStarved, DeployCompleted, WatcherHeartbeat,
     ];
@@ -98,6 +99,7 @@ public static class OperatorOperations
         // The repair is the gate host itself or the RemoteGate:SshHost setting (AGT-3792).
         OperatorDecisionTypes.GateHostUnreachable => [StallsInspect, BatchTriage],
         OperatorDecisionTypes.AuditAlert => [OwnerDecide],
+        OperatorDecisionTypes.OperatorApprovalPending => [OwnerDecide],
         OperatorDecisionTypes.ElevationRateEnded => [OwnerDecide],
         OperatorDecisionTypes.HostDiskPressure => [StallsInspect],
         OperatorDecisionTypes.ReviewHostDrift => [StallsInspect],

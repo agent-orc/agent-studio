@@ -2067,3 +2067,45 @@ so the elevated controls remain reachable without overlap.
 Operator activity can filter by agent, session and elevated actions, with
 reason, stated source, device and arming details.
 <!-- append-only:security-overview:end -->
+
+## Operator batch confirmation (ES-8)
+
+ES-D9 A, ES-D10 A and ES-D11 A are implemented: a live operator session with
+`cards.accept-override` or `cards.archive-override` submits 1 to 25 typed items
+to `POST /api/auth/operator-session/batches`. Every item supplies a card, target
+lane, project and written reason; acceptance items supply a one-line review
+reservation. Studio displays the recorded review concerns when available.
+The instruction source is descriptive, never authority. Project bindings and
+the class are checked on submission and again at execution.
+
+Acceptances require Human review, an integrated delivery and a completed review.
+Archive overrides require a completed card and refuse a delivery on the integration or release branch, including
+partial per-commit membership, and fail closed on unavailable reachability.
+Existing move, completion and archive guards still apply. Nonqualifying items
+remain visible with a refusal and cannot be selected. Qualifying items start selected. Card links open in another tab so the selected set stays in the sheet. Each batch expires after
+30 minutes. Needs you class `operator-approval.pending` counts pending batches
+and pending single approvals, one row per request, and clears on decision,
+expiry or loss of the session's class. Feed and optional push links open the
+same confirmation sheet in Access.
+
+The Owner can deselect items and confirm the remainder with one fresh passkey
+or authenticator step-up. Studio records the single-use decision before running
+items sequentially through the guarded move path. A snapshot of the card,
+review and integration evidence is rechecked under the claim gate. Changed
+cards, deselections, refusals and execution failures carry individual results.
+Each executed item's timeline names the operator session, Owner approver,
+batch id and written reason. The elevated-only activity view includes each item's
+class, batch id, device thumbprint, reason and result. Class hourly limits count items (30 acceptances,
+10 archives). Revocation or ending elevation prevents later items from running.
+Rejected or expired batches execute nothing; confirmation cannot be replayed.
+After an interruption Studio does not replay a confirmed batch; inspect each
+recorded item result and its card timeline before submitting again.
+
+Read results with `GET /api/auth/operator-session/batches/{id}` using the same
+session and device proof. Studio performs execution; the agent never receives
+an Owner credential or an approval it can replay against arbitrary routes.
+The single-request SM-5 approval path remains available for other T2 requests.
+
+Batch submission accepts at most 64 KiB and 20 pending batches per session.
+Stored batches older than 30 days are pruned when another batch is submitted;
+card timelines and security audit records retain their existing retention policy.

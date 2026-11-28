@@ -216,6 +216,7 @@ public sealed record SecurityState
     public List<StandingGrant> StandingGrants { get; init; } = [];
     /// <summary>Owner approvals of T2 operator requests (security model SM-5).</summary>
     public List<OperatorApproval> OperatorApprovals { get; init; } = [];
+    public List<OperatorBatch> OperatorBatches { get; init; } = [];
     /// <summary>Terminal sign-ins (ES-3): pending ones and the outcome of recent ones.</summary>
     public List<OperatorSignIn> OperatorSignIns { get; init; } = [];
     public OperatorSessionLimits OperatorSessionLimits { get; set; } = new();

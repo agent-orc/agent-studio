@@ -147,6 +147,10 @@ export class AttentionControlComponent {
         return;
       case 'access':
         this.openSettings('access');
+        if (item.type === 'operator-approval.pending') {
+          const href = item.evidence?.[0]?.href;
+          if (href?.startsWith('/workspace/settings/access?')) window.location.hash = `#${href}`;
+        }
         break;
       case 'operations':
         this.openOperations(item);

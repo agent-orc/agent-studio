@@ -17,15 +17,21 @@ public sealed class OperatorApprovalNotifier(
     ILogger<OperatorApprovalNotifier>? logger = null) : BackgroundService
 {
     private const int Capacity = 256;
-    private readonly Channel<OperatorApprovalResponse> _queue = Channel.CreateBounded<OperatorApprovalResponse>(
+    private sealed record Notice(OperatorApprovalPushMessage Message, string Operation);
+    private readonly Channel<Notice> _queue = Channel.CreateBounded<Notice>(
         new BoundedChannelOptions(Capacity) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
 
     /// <summary>Queues the notice for a newly opened request; never blocks the caller.</summary>
     public void Enqueue(OperatorApprovalResponse approval)
     {
-        if (!_queue.Writer.TryWrite(approval))
+        if (!_queue.Writer.TryWrite(new(Message(approval, options), approval.Operation)))
             logger?.LogWarning("Operator approval notice for {ApprovalId} was not queued", approval.Id);
     }
+
+    public void EnqueueBatch(OperatorBatch batch)
+        => _queue.Writer.TryWrite(new(new(batch.Id, "Operator batch confirmation requested",
+            $"{batch.Actor} asks to run {batch.Class} for {batch.Items.Count} cards. Decide before {batch.ExpiresAt:HH:mm} UTC.",
+            $"{options.StudioUrl?.ToString().TrimEnd('/')}/#{batch.Link}"), batch.Class));
 
     /// <summary>The message both channels carry: what is asked, by whom, until when, and the link.</summary>
     public static OperatorApprovalPushMessage Message(OperatorApprovalResponse approval, OperatorApprovalOptions options)
@@ -40,11 +46,11 @@ public sealed class OperatorApprovalNotifier(
         {
             await foreach (var approval in _queue.Reader.ReadAllAsync(stoppingToken))
             {
-                var message = Message(approval, options);
-                await DeliverAsync("operator feed", approval.Id, ct => bus is null ? Task.CompletedTask
-                    : bus.EmitOperatorApprovalRequestedAsync(approval.Id, approval.Operation, message.Message, message.Url, ct), stoppingToken);
+                var message = approval.Message;
+                await DeliverAsync("operator feed", message.ApprovalId, ct => bus is null ? Task.CompletedTask
+                    : bus.EmitOperatorApprovalRequestedAsync(message.ApprovalId, approval.Operation, message.Message, message.Url, ct), stoppingToken);
                 if (push.Configured)
-                    await DeliverAsync("push", approval.Id, ct => push.SendAsync(message, ct), stoppingToken);
+                    await DeliverAsync("push", message.ApprovalId, ct => push.SendAsync(message, ct), stoppingToken);
             }
         }
         catch (OperationCanceledException exception) when (stoppingToken.IsCancellationRequested)
@@ -73,6 +79,8 @@ public static class OperatorApprovalServices
     /// <summary>The approval link options, the optional push channel, and the notifier that drives both.</summary>
     public static IServiceCollection AddOperatorApprovals(this IServiceCollection services)
     {
+        services.AddScoped<OperatorBatchService>();
+        services.AddSingleton<AgentStudio.Operator.IOperatorDecisionFactSource, OperatorApprovalFactSource>();
         services.AddSingleton(sp => OperatorApprovalOptions.From(sp.GetRequiredService<IConfiguration>()));
         services.AddHttpClient(HttpsOperatorApprovalPush.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(15));
         services.AddSingleton<IOperatorApprovalPush>(sp => new HttpsOperatorApprovalPush(
