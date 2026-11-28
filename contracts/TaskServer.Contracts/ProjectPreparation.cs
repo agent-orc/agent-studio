@@ -1225,7 +1225,8 @@ public static class PreparationCacheEnvironment
 /// under <c>&lt;productCacheRoot&gt;/.runs/&lt;runId&gt;</c>, never inside a
 /// published entry. Only a green prepare atomically publishes a new immutable
 /// entry (by copy, so the per-run folder survives the publication), and a
-/// failed run deletes its whole run root.
+/// failed prepare releases its working copy. For a runner-owned copy, the
+/// runner handles release after checking for surviving child processes.
 ///
 /// The per-run folder is what <see cref="ProjectPreparationResult.Environment"/>
 /// points at, and it stays in place until the gate or coding run that asked for
@@ -1297,6 +1298,10 @@ public static partial class ProjectPreparationExecutor
         if (attemptCopyId is null) PruneStaleRunRoots(productCacheRoot, log);
         var runRoot = Path.Combine(productCacheRoot, ProjectPreparationCacheSweep.RunsDirectoryName,
             (attemptCopyId ?? Guid.NewGuid()).ToString("N"));
+        void ReleaseFailedPreparation()
+        {
+            if (attemptCopyId is null) DeleteBestEffort(runRoot);
+        }
         var entryLockWait = EntryLockWait(timeout);
         var cacheBindings = BuildCacheBindings(
             workspace,
@@ -1316,7 +1321,7 @@ public static partial class ProjectPreparationExecutor
                 cacheBindings, versionFailure.Value.Kind, versionFailure.Value.Signature, versionFailure.Value.Reason,
                 previousManifest: previousManifest);
             WriteManifest(manifestPath, failedManifest);
-            DeleteBestEffort(runRoot);
+            ReleaseFailedPreparation();
             return new(true, false, failedManifest, [], string.Empty, null,
                 versionFailure.Value.Kind, versionFailure.Value.Signature, versionFailure.Value.Reason);
         }
@@ -1329,7 +1334,7 @@ public static partial class ProjectPreparationExecutor
                 cacheBindings, PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason,
                 previousManifest: previousManifest);
             WriteManifest(manifestPath, failedManifest);
-            DeleteBestEffort(runRoot);
+            ReleaseFailedPreparation();
             return new(true, false, failedManifest, [], string.Empty, null,
                 PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason);
         }
@@ -1436,7 +1441,7 @@ public static partial class ProjectPreparationExecutor
                     log,
                     entryLockWait,
                     cancellationToken);
-            DeleteBestEffort(runRoot);
+            ReleaseFailedPreparation();
         }
         // AGT-2858: published entries used to accumulate without any bound. The
         // sweep runs after publication so the entries this preparation just

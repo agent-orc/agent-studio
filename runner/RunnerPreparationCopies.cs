@@ -6,6 +6,7 @@ namespace AgentRunner;
 internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerStateStore state, Action<string> log)
 {
     internal const long DefaultMaxBytes = 20_000_000_000;
+    private const string ReleasePending = ".release-pending";
     private static readonly StringComparer Paths = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private long _bytes = -1;
@@ -44,7 +45,28 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
     internal static void Release(string workDir, PersistedRunnerSlot slot, Action<string> log)
     {
-        if (RootFor(workDir, slot) is { } path) TryDelete(path, log);
+        if (RootFor(workDir, slot) is { } path) Release(path, log);
+    }
+
+    private static void Release(string path, Action<string> log)
+    {
+        if (!Directory.Exists(path)) return;
+        try
+        {
+            // A surviving child can still have a binding after its worker and slot are gone.
+            // The marker lets the regular sweep retry even below the byte limit.
+            if (ProcessBindings().Contains(path))
+            {
+                using var marker = File.Open(Path.Combine(path, ReleasePending), FileMode.OpenOrCreate, FileAccess.Write);
+                log($"preparation-copy-release-deferred path={path}");
+                return;
+            }
+            TryDelete(path, log);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log($"preparation-copy-release-failed path={path} error={ex.Message}");
+        }
     }
 
     internal static async Task<T> DuringAttemptAsync<T>(string workDir, PersistedRunnerSlot slot,
@@ -61,7 +83,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
                 {
                     var latest = state.LoadAll().FirstOrDefault(item => item.AttemptId == slot.AttemptId);
                     if (latest is null || !StillUsesCopy(latest, daemonShutdown))
-                        TryDelete(path, log);
+                        Release(path, log);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
                 {
@@ -122,7 +144,7 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
     internal static long Sweep(string workDir, Func<IReadOnlyList<PersistedRunnerSlot>> slots,
         long limit, bool startup, Action<string> log)
     {
-        var roots = new List<(DirectoryInfo Directory, long Bytes)>();
+        var roots = new List<(DirectoryInfo Directory, long Bytes, bool Pending)>();
         var work = new DirectoryInfo(Path.GetFullPath(workDir));
         if (!work.Exists) return 0;
         foreach (var project in work.EnumerateDirectories().Prepend(work))
@@ -133,23 +155,23 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             foreach (var dir in cache.EnumerateDirectories())
             {
                 if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
-                roots.Add((dir, Measure(dir)));
+                roots.Add((dir, Measure(dir), File.Exists(Path.Combine(dir.FullName, ReleasePending))));
             }
         }
 
         var total = roots.Sum(root => root.Bytes);
-        if (roots.Count == 0 || (!startup && total <= limit)) return total;
+        if (roots.Count == 0 || (!startup && total <= limit && !roots.Any(root => root.Pending))) return total;
         // A slot reserves its unique id before creating any files. Reading the slots
         // after listing candidates closes the race with a concurrently starting attempt.
         var referenced = slots().Select(slot => RootFor(workDir, slot)).OfType<string>().ToHashSet(Paths);
         var candidates = roots.Where(root => !referenced.Contains(root.Directory.FullName))
             .OrderBy(root => root.Directory.LastWriteTimeUtc).ThenBy(root => root.Directory.FullName, Paths).ToArray();
         if (candidates.Length == 0) return total;
-        ProtectProcessBindings(referenced);
-        foreach (var (dir, bytes) in candidates)
+        var processBindings = ProcessBindings();
+        foreach (var (dir, bytes, pending) in candidates)
         {
-            if (!startup && total <= limit) break;
-            if (referenced.Contains(dir.FullName) || !TryDelete(dir.FullName, log)) continue;
+            if (!pending && !startup && total <= limit) continue;
+            if (processBindings.Contains(dir.FullName) || !TryDelete(dir.FullName, log)) continue;
             total -= bytes;
             log($"preparation-copy-removed path={dir.FullName} bytes={bytes}");
         }
@@ -174,9 +196,10 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
 
     // A child of an older worker can outlive its slot. Read only the three cache
     // bindings and never persist process environments.
-    private static void ProtectProcessBindings(HashSet<string> referenced)
+    private static HashSet<string> ProcessBindings()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        var referenced = new HashSet<string>(Paths);
+        if (!OperatingSystem.IsLinux()) return referenced;
         foreach (var process in Directory.EnumerateDirectories("/proc"))
         {
             if (!int.TryParse(Path.GetFileName(process), out _)) continue;
@@ -193,5 +216,6 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
+        return referenced;
     }
 }

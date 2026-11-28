@@ -14,7 +14,10 @@ commit and image clears the attention fact.
 Each coding attempt reserves its own preparation copy ID in its durable slot before
 restoring npm, NuGet and Playwright from the project's published entries. The copy
 survives daemon handoff and same-attempt resume. Terminal cleanup releases it on
-success, failure, cancellation and lease loss. A new round receives a fresh copy.
+success, failure, cancellation and lease loss. On Linux, if a surviving process
+still has an npm, NuGet or Playwright environment binding to the copy, the runner
+marks the copy for release. The five-minute sweep retries once the binding clears,
+even below the size limit. A new round receives a fresh copy.
 On upgrade, the runner reads older bindings from the detached worker specification.
 
 The coding daemon sweeps unreferenced copies at startup. Every five minutes it

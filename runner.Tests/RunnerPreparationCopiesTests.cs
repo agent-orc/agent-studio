@@ -132,9 +132,11 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         Assert.True(Directory.Exists(path));
     }
 
-    [SkippableFact]
+    [SkippableTheory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public async Task An_unjournaled_process_binding_survives_startup_and_pressure()
+    public async Task A_surviving_child_keeps_its_copy_through_terminal_cleanup_startup_and_pressure(bool recovered)
     {
         PlatformGate.LinuxOnly("legacy process cache bindings are read from /proc");
         var slot = Claim();
@@ -145,6 +147,12 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         using var process = Process.Start(start)!;
         try
         {
+            if (recovered)
+                RunnerPreparationCopies.Release(_work, slot, _ => { });
+            else
+                await RunnerPreparationCopies.DuringAttemptAsync(_work, slot, _state, CancellationToken.None,
+                    () => Task.FromResult(0), _ => { });
+            Assert.True(File.Exists(Path.Combine(path, "package")));
             Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, false, _ => { }));
             Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, true, _ => { }));
             Assert.True(Directory.Exists(path));
@@ -154,8 +162,46 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
             if (!process.HasExited) process.Kill();
             await process.WaitForExitAsync();
         }
-        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, true, _ => { }));
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
         Assert.False(Directory.Exists(path));
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Failed_prepare_leaves_a_surviving_childs_copy_for_the_runner_to_release()
+    {
+        PlatformGate.LinuxOnly("a prepare script leaves a child with an inherited npm binding");
+        var slot = Claim();
+        var path = RunnerPreparationCopies.RootFor(_work, slot)!;
+        var config = Directory.CreateDirectory(Path.Combine(slot.WorktreePath, ".agent-studio")).FullName;
+        File.WriteAllText(Path.Combine(config, "project.yml"), """
+            schemaVersion: 1
+            stack: [node]
+            commands:
+              prepare: .agent-studio/prepare
+            """);
+        File.WriteAllText(Path.Combine(config, "prepare"), """
+            #!/bin/sh
+            sleep 90 </dev/null >/dev/null 2>&1 &
+            echo $! > child.pid
+            echo data > "$NPM_CONFIG_CACHE/package"
+            exit 1
+            """);
+        var preparation = await RunnerPreparationCopies.DuringAttemptAsync(_work, slot, _state,
+            CancellationToken.None, () => ProjectPreparationExecutor.RunAsync(slot.WorktreePath,
+                Directory.GetParent(path)!.Parent!.FullName, Path.Combine(_work, "manifest.json"), "test",
+                null, TimeSpan.FromSeconds(30), CancellationToken.None, slot.PreparationCopyId), _ => { });
+        var pid = int.Parse(File.ReadAllText(Path.Combine(slot.WorktreePath, "child.pid")));
+        using var child = Process.GetProcessById(pid);
+        try
+        {
+            Assert.False(preparation.Succeeded);
+            Assert.Equal("data", File.ReadAllText(Path.Combine(path, "npm", "package")).Trim());
+        }
+        finally
+        {
+            child.Kill();
+        }
     }
 
     [Fact]
