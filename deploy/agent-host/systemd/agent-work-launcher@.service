@@ -4,15 +4,23 @@
 [Unit]
 Description=Agent Studio narrow work-container launcher call
 After=docker.service
+Requires=agent-work.slice
 
 [Service]
 Type=oneshot
 User=root
+Slice=agent-work.slice
 ExecStart=/usr/local/sbin/agent-work-launcher --stdio
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
-# A blocked runtime call (wait) lasts as long as its attempt.
-TimeoutStartSec=infinity
+# The launcher bounds socket I/O and each operation. The unit is the
+# backstop for wrapper startup, runtime processes and cleanup.
+TimeoutStartSec=32min
+TimeoutStopSec=5s
+CPUQuota=50%
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=64
 # The runtime CLI keeps its normal root configuration and runtime directories.
 NoNewPrivileges=true
