@@ -1190,6 +1190,10 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         response.EnsureSuccessStatusCode();
     }
 
+    internal async Task<string[]> GetTerminalCleanContextHashesAsync(string[] hashes, CancellationToken ct)
+        => await PostJsonAsync<string[], string[]>(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/clean-context/terminal", hashes, ct) ?? [];
+
     /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
     public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
     {

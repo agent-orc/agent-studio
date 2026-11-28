@@ -74,6 +74,11 @@ public sealed class MechanicalSessionContinuationTests
     }
 
     [Fact]
+    public void Eviction_before_a_legacy_worker_launch_requires_a_prepared_fresh_checkout()
+        => Assert.True(MechanicalRoundFallbackPolicy.RequiresPreparedCheckout(
+            MechanicalSessionContinuation.SessionLostBeforeLaunch));
+
+    [Fact]
     public void Usage_frames_use_the_specified_processed_token_measure()
     {
         Assert.True(MechanicalTokenUsage.TryRead(

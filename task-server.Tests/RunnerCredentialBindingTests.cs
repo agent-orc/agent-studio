@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AgentStudio.Shared;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Contracts.GitHubApp;
@@ -207,6 +208,44 @@ public sealed class RunnerCredentialBindingTests
         Assert.Equal(string.Empty, lifecycle.Title);
         Assert.Null(lifecycle.Body);
         await AssertRefusedAsync(await runner.GetAsync(CardPath(task) + "/history"), "runner-card-not-leased");
+    }
+
+    [Fact]
+    [Trait("Category", "Guard")]
+    public async Task Clean_context_lookup_projects_only_terminal_hashes_from_the_callers_runs()
+    {
+        using var temp = new TempDirectory();
+        await using var server = new BoundServer(temp.Path);
+        var (alpha, _) = await server.SeedProjectsAsync();
+        var task = await server.CreateTaskAsync(alpha.ProjectId, "Alpha card");
+        await server.SetPolicyAsync("host-a", alpha.ProjectId);
+        var coder = await server.CreateRunnerAsync("coder", RunnerCredentialRoles.Coding);
+        var other = await server.CreateRunnerAsync("other", RunnerCredentialRoles.Coding);
+        using var claimant = server.Client(coder.Credential);
+        using var unrelated = server.Client(other.Credential);
+        await RegisterAsync(claimant, Coding("coder", "host-a"));
+        var claim = await ClaimAsync(claimant, "coder");
+        Assert.Equal(task.TaskId, claim.Task!.TaskId);
+        const string path = "/api/v1/runners/coder/clean-context/terminal";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(task.TaskKey))).ToLowerInvariant();
+        var hashes = new[] { hash, new string('f', 64) };
+        async Task<string[]> Lookup(HttpClient client, string route)
+        {
+            using var response = await client.PostAsJsonAsync(route, hashes);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<string[]>())!;
+        }
+
+        Assert.Empty(await Lookup(claimant, path));
+        using var released = await claimant.PostAsJsonAsync($"/api/v1/runs/{claim.Run!.RunId}/lease/release",
+            new LeaseReleaseRequest("coder", "coder:1", claim.Lease!.LeaseId, claim.Lease.Fence, "failed"));
+        released.EnsureSuccessStatusCode();
+        var current = await server.Store.GetTaskAsync(alpha.ProjectId, task.TaskKey, default);
+        await server.Store.UpdateTaskAsync(alpha.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, TaskStates.Completed, current!.Version), "test", default);
+        Assert.Equal(new[] { hash }, await Lookup(claimant, path));
+        Assert.Empty(await Lookup(unrelated, "/api/v1/runners/other/clean-context/terminal"));
+        await AssertRefusedAsync(await unrelated.PostAsJsonAsync(path, hashes), "runner-identity-mismatch");
     }
 
     [Fact]

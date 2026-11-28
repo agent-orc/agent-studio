@@ -1,3 +1,4 @@
+using AgentStudio.CliHosting;
 using System.Net.Http;
 using System.Collections.Concurrent;
 
@@ -88,7 +89,10 @@ public sealed class RemoteRunnerDaemon
         shutdown = daemonStop.Token;
         var connectivity = new TaskServerConnectivityMonitor(_log);
         var state = new RunnerStateStore(_options.StateDir);
-        var preparationCopies = new RunnerPreparationCopies(_options, state, _log);
+        var preparationCopies = new RunnerPreparationCopies(_options, state, _log,
+            RunnerPreparationCopies.ResolveLegacyPilotCacheRoot());
+        var cleanContexts = new RunnerCleanContexts(TaskCleanContextStore.ResolveRoot(), state.LoadAll,
+            _client.GetTerminalCleanContextHashesAsync, _log);
         preparationCopies.Sweep(startup: true);
         Task<string> RegisterAsync(CancellationToken ct) => _client.RegisterAsync(
             _options.RunnerName,
@@ -384,7 +388,9 @@ public sealed class RemoteRunnerDaemon
             }, shutdown);
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
-        var telemetry = new HostTelemetrySampler(_options, preparationCopyBytes: () => preparationCopies.Bytes);
+        await cleanContexts.SweepAsync(DateTimeOffset.UtcNow, shutdown);
+        var telemetry = new HostTelemetrySampler(_options, preparationCopyBytes: () => preparationCopies.Bytes,
+            cleanContextUsage: () => cleanContexts.Usage);
         // Claim admission and salvage deletion share this gate. A claim is
         // protected from the server mutation until its card is visible here.
         var salvageAdmissionGate = new SemaphoreSlim(1, 1);
@@ -413,7 +419,7 @@ public sealed class RemoteRunnerDaemon
                 worktreeSweep: worktreeRetention.SweepOnceAsync)
             : null;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-        var preparationSweep = preparationCopies.MonitorAsync(auxiliaryStop.Token);
+        var preparationSweep = preparationCopies.MonitorAsync(cleanContexts, auxiliaryStop.Token);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
         var postMergePoll = _options.Role == "coding"
             ? PostMergeHostScheduler.RunForHostAsync(_options, _client.ClientId, _log, auxiliaryStop.Token)
