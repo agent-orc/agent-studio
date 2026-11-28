@@ -39,12 +39,13 @@ internal static class ReviewAttemptTemp
     internal static string DefaultBase()
         => OperatingSystem.IsWindows() ? Path.GetTempPath() : "/tmp";
 
-    internal static string Root(string tempBase, string attemptRoot)
+    // Post-merge uses a separate prefix so its journal owns cleanup across restarts.
+    internal static string Root(string tempBase, string attemptRoot, string prefix = DirectoryPrefix)
     {
         var owner = Path.TrimEndingDirectorySeparator(Path.GetFullPath(attemptRoot));
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(owner)))
             .ToLowerInvariant();
-        return Path.Combine(Path.GetFullPath(tempBase), DirectoryPrefix + digest[..AttemptDigestLength]);
+        return Path.Combine(Path.GetFullPath(tempBase), prefix + digest[..AttemptDigestLength]);
     }
 
     internal static string Candidate(string tempRoot)
@@ -164,7 +165,7 @@ internal static class ReviewAttemptTemp
         return removed;
     }
 
-    private static bool OwnedBy(string tempRoot, string attemptRoot)
+    internal static bool OwnedBy(string tempRoot, string attemptRoot)
         => Directory.Exists(tempRoot)
            && (File.GetAttributes(tempRoot) & FileAttributes.ReparsePoint) == 0
            && string.Equals(ReadOwner(tempRoot), Owner(attemptRoot), StringComparison.Ordinal);
