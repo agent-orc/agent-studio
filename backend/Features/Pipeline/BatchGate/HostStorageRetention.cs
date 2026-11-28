@@ -15,7 +15,7 @@ public static partial class HostStorageRetention
     /// Removes only idle, empty instances, allowing the origin metadata written
     /// by Prepare. Any other file is retained, including unreadable or unknown
     /// formats. Nonrecursive deletion refuses evidence written during the scan.
-    /// Open directory handles anchor inspection and removal across path changes.
+    /// Open directory handles anchor inspection; changed locations abort removal.
     /// Only the resolved local state root can authorize instance cleanup.
     /// </summary>
     public static int SweepInstances(string currentRoot, DateTimeOffset now,
@@ -92,6 +92,9 @@ public static partial class HostStorageRetention
                         if (reason == "empty")
                         {
                             beforeDelete?.Invoke(candidate);
+                            // Validate the complete inspected tree before the first mutation,
+                            // including children that may have moved independently.
+                            foreach (var directory in directories) directory.EnsureUnmoved();
                             // Every deletion is relative to the inspected parent handle.
                             // No recursive delete can consume newly written evidence.
                             for (var i = directories.Count - 1; i > 0; i--)

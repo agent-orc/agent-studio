@@ -8,8 +8,8 @@ public static partial class HostStorageRetention
 {
     /// <summary>
     /// Anchors instance inspection and nonrecursive removal to open directories.
-    /// Linux uses no-follow openat and unlinkat; Windows denies directory rename
-    /// while a handle is open. Checking path attributes alone cannot close a race.
+    /// Linux uses no-follow openat and unlinkat and checks the pinned locations
+    /// before removal; Windows denies directory rename while a handle is open.
     /// </summary>
     private sealed class PinnedRetentionDirectory : IDisposable
     {
@@ -17,6 +17,7 @@ public static partial class HostStorageRetention
         private readonly PinnedRetentionDirectory? _parent;
         private readonly bool _ownsParent;
         private readonly string _name;
+        private readonly string _absolutePath;
         public string IoPath { get; }
         public DateTime LastWriteTimeUtc => File.GetLastWriteTimeUtc(_handle);
         private int Descriptor => _handle.DangerousGetHandle().ToInt32();
@@ -27,6 +28,7 @@ public static partial class HostStorageRetention
             _parent = parent;
             _name = name;
             _ownsParent = ownsParent;
+            _absolutePath = parent is null ? name : Path.Combine(parent._absolutePath, name);
             if (OperatingSystem.IsWindows())
             {
                 IoPath = parent is null ? name : Path.Combine(parent.IoPath, name);
@@ -82,8 +84,22 @@ public static partial class HostStorageRetention
             return new PinnedRetentionDirectory(this, name);
         }
 
+        // A Linux descriptor pins an inode, not its location. In particular,
+        // unlinkat on a moved candidate would still remove its metadata and
+        // descendants. Check every pinned ancestor before each mutation so a
+        // detected move aborts the entire candidate without touching its contents.
+        public void EnsureUnmoved()
+        {
+            if (!OperatingSystem.IsLinux()) return;
+            _parent?.EnsureUnmoved();
+            if (!string.Equals(new DirectoryInfo(IoPath).ResolveLinkTarget(returnFinalTarget: true)?.FullName,
+                    _absolutePath, StringComparison.Ordinal))
+                throw new IOException("Instance retention directory moved after inspection.");
+        }
+
         public void DeleteOrigin()
         {
+            EnsureUnmoved();
             if (OperatingSystem.IsWindows()) File.Delete(Path.Combine(IoPath, "batch-state-origin"));
             else if (UnlinkAt(Descriptor, "batch-state-origin", 0) != 0) throw Failure("unlink metadata");
         }
@@ -93,8 +109,12 @@ public static partial class HostStorageRetention
             if (_parent is null) throw new IOException("Cannot remove the retention anchor.");
             // On Windows the parent and all its ancestors remain pinned. Releasing
             // only the leaf permits removal; a substituted leaf link is never followed.
-            _handle.Dispose();
-            if (OperatingSystem.IsWindows()) Directory.Delete(Path.Combine(_parent.IoPath, _name));
+            EnsureUnmoved();
+            if (OperatingSystem.IsWindows())
+            {
+                _handle.Dispose();
+                Directory.Delete(Path.Combine(_parent.IoPath, _name));
+            }
             else if (UnlinkAt(_parent.Descriptor, _name, 0x200) != 0) throw Failure("unlink directory"); // AT_REMOVEDIR
         }
 

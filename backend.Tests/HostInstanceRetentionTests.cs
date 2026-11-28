@@ -248,6 +248,10 @@ public sealed class HostInstanceRetentionTests
         Directory.CreateDirectory(foreignChild);
         if (replacement != "child")
             File.WriteAllText(Path.Combine(foreignCandidate, "batch-state-origin"), "foreign");
+        var originalCandidate = replacement == "child"
+            ? abandoned : Path.Combine(backup, Path.GetRelativePath(swapped, abandoned));
+        var originalChild = replacement == "child"
+            ? Path.Combine(backup, "nested") : Path.Combine(originalCandidate, "empty", "nested");
         var didSwap = false;
         try
         {
@@ -260,6 +264,8 @@ public sealed class HostInstanceRetentionTests
             });
 
             Assert.True(didSwap);
+            Assert.True(Directory.Exists(originalChild), "Deletion changed the inspected directory after it moved outside local state.");
+            Assert.Equal("owned", File.ReadAllText(Path.Combine(originalCandidate, "batch-state-origin")));
             Assert.True(Directory.Exists(foreignChild), "Deletion followed the substituted path outside local state.");
             if (replacement != "child")
                 Assert.Equal("foreign", File.ReadAllText(Path.Combine(foreignCandidate, "batch-state-origin")));
@@ -273,6 +279,37 @@ public sealed class HostInstanceRetentionTests
                 Directory.Move(backup, swapped);
             }
         }
+    }
+
+    [Fact]
+    public void A_recent_empty_replacement_is_not_removed_using_the_original_inspection()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempWorkspace("instance-retention-replacement");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        var abandoned = state.PathFor("abandoned");
+        var original = Path.Combine(temp.Path, "original");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(Path.Combine(abandoned, "empty", "nested"));
+        File.WriteAllText(Path.Combine(abandoned, "batch-state-origin"), "owned");
+        foreach (var directory in Directory.EnumerateDirectories(abandoned, "*", SearchOption.AllDirectories).Append(abandoned))
+            Directory.SetLastWriteTimeUtc(directory, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        File.SetLastWriteTimeUtc(Path.Combine(abandoned, "batch-state-origin"), _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        var messages = new List<string>();
+
+        Assert.Equal(0, HostStorageRetention.SweepInstances(current, _clock.GetUtcNow(), 14, messages.Add, candidate =>
+        {
+            if (candidate != abandoned) return;
+            Directory.Move(abandoned, original);
+            Directory.CreateDirectory(abandoned);
+            Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime);
+        }));
+
+        Assert.True(Directory.Exists(abandoned), "The replacement has not met the retention age.");
+        Assert.True(Directory.Exists(Path.Combine(original, "empty", "nested")));
+        Assert.Equal("owned", File.ReadAllText(Path.Combine(original, "batch-state-origin")));
+        Assert.Contains(messages, message => message.Contains("reason=unreadable-or-changed", StringComparison.Ordinal));
     }
 
     [Fact]
