@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "id": "global-personas",
+  "title": "Global personas",
+  "summary": "Four existing roles take responsibility for installation duties, Owner assignments and measurable goals. The first slice takes model discovery through qualification, scoped route adoption and rollback evidence.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-28T10:09:54Z",
+  "sourceTaskKeys": [
+    "AGT-4377"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3958",
+    "AGT-4260",
+    "AGT-4263",
+    "AGT-4269",
+    "AGT-4277",
+    "AGT-4278",
+    "AGT-4279",
+    "AGT-4293",
+    "AGT-4296",
+    "AGT-4304",
+    "AGT-4310",
+    "AGT-4351",
+    "AGT-4352"
+  ],
+  "openDecisions": [
+    {
+      "id": "GP-D1",
+      "decisionId": "GP-D1",
+      "title": "Installation roster",
+      "question": "Which roles should have installation scope?",
+      "options": {
+        "A": "One installation supervisor",
+        "B": "Four existing catalogue roles with installation instances",
+        "C": "Promote every specialist"
+      },
+      "recommended": "B",
+      "recommendation": "B. Four existing catalogue roles with installation instances",
+      "rationale": "Four bounded roles with existing charters. Start with the Cost controller and add roles as their duties land.",
+      "status": "open"
+    },
+    {
+      "id": "GP-D2",
+      "decisionId": "GP-D2",
+      "title": "Model roll-in authority",
+      "question": "What may the model watch change after comparing a candidate?",
+      "options": {
+        "A": "Require a person for every change",
+        "B": "Time-box an exact rollbackable route grant after seven days of shadow evidence",
+        "C": "Allow general route mutations"
+      },
+      "recommended": "B",
+      "recommendation": "B. Time-box an exact rollbackable route grant after seven days of shadow evidence",
+      "rationale": "Use a narrow live grant. Default to recommendation until the Owner grants it after shadow.",
+      "status": "open"
+    },
+    {
+      "id": "GP-D3",
+      "decisionId": "GP-D3",
+      "title": "Individual assignments",
+      "question": "How does the Owner delegate an individual task?",
+      "options": {
+        "A": "Create a card immediately",
+        "B": "Confirm a bounded assignment and schedule its execution cards",
+        "C": "Keep the request in chat"
+      },
+      "recommended": "B",
+      "recommendation": "B. Confirm a bounded assignment and schedule its execution cards",
+      "rationale": "Default to one-off research with a fit-for-purpose receipt, stated cap and one confirmation.",
+      "status": "open"
+    },
+    {
+      "id": "GP-D4",
+      "decisionId": "GP-D4",
+      "title": "Goal measurement",
+      "question": "How should attainment appear?",
+      "options": {
+        "A": "One combined score",
+        "B": "Per-goal measured value, target, trend and evidence coverage",
+        "C": "Narrative assessment"
+      },
+      "recommended": "B",
+      "recommendation": "B. Per-goal measured value, target, trend and evidence coverage",
+      "rationale": "Start with the thresholds in Goals. Keep incomplete and missing coverage visible and version changes prospectively.",
+      "status": "open"
+    },
+    {
+      "id": "GP-D5",
+      "decisionId": "GP-D5",
+      "title": "Budget and model",
+      "question": "How should the team spend its allowance?",
+      "options": {
+        "A": "Single undivided budget",
+        "B": "Installation, persona and duty ceilings with GPT-6.2 Sol medium by default",
+        "C": "Open model choice per run"
+      },
+      "recommended": "B",
+      "recommendation": "B. Installation, persona and duty ceilings with GPT-6.2 Sol medium by default",
+      "rationale": "Start model watch at 100k metered tokens and USD 3.50 per seven days within the parent ceiling. Publish a fact-only receipt when the budget is exhausted.",
+      "status": "open"
+    },
+    {
+      "id": "GP-D6",
+      "decisionId": "GP-D6",
+      "title": "Issues and decisions",
+      "question": "How should the Owner receive outcomes and requests?",
+      "options": {
+        "A": "Separate report stream per role",
+        "B": "Daily and weekly installation issues and the existing decision desk",
+        "C": "Exception notices only"
+      },
+      "recommended": "B",
+      "recommendation": "B. Daily and weekly installation issues and the existing decision desk",
+      "rationale": "Publish daily at 09:30 and weekly on Monday at 11:00. Lead with misses and decisions taken. Reuse decision IDs and publish facts without an editor when needed.",
+      "status": "open"
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "GP-1",
+      "title": "Run the installation model watch",
+      "dependsOn": [],
+      "section": "duties",
+      "decisionId": "GP-D2",
+      "promptMarkdown": "Deliver the Cost controller model watch as the first usable vertical slice on the AGT-4377 installation. Use GP-D1, GP-D2, GP-D4 and GP-D5 as working decisions unless explicitly superseded. Read the Dossier, AGT-3958, the model routing domain, PT-1 through PT-4 and AGT-4277's OP-06/OP-09 boundary. Reuse the catalogue, activation step-up, Watcher occurrence and budget path. Extend the scope of these contracts to this one installation instance. Admit standard research cards with persona authorship on gpt-6.2-sol at medium through its qualified invocation path. Start shadow and require the documented single-use Owner step-up, prospective qualifying period and named live grant. Until these hold, report proposed actions.\n\nImplement typed allowlisted model, price and CLI-release observations for the configured installation providers, host capability checks, and a fresh inventory of effective and configured routes. Cover new cards, product-generated cards, consumer/fallback and project/step inheritance. Read pin and review routes for drift and evidence. The sole mutation family is one named eligible installation default, initially an inherited research/new-card default with a designated canary. Preserve pinned cards, project/review overrides, current attempts and routing floors. Use the existing settings service and decision library, with revisioned intent, compare-and-set and rollback. Reuse any integrated operation-admission adapter. Keep project review-route mutation within OP-09 and generic intervention admission within OP-06. Use the existing proposal or card path for code-owned defaults or candidate qualification. Implement a small Team receipt including coverage and target/trend for this duty and an installation Magazine result via the existing publication API.\n\nRun a prospective scheduled observation on the target installation after deployment through the normal rollout path. Freeze the actual baseline after the Owner's manual changes. Rehearse a bounded write/readback/restore on the designated canary through the same resolver and authority path, using authorized settings and leaving the baseline restored. If an eligible installation change and live grant exist, verify the first five eligible new attempts within 24 h and record verified or reverted. Otherwise record the evidence for a no-op or the specific Owner decision. The rollout operator retains identity, deployment and step-up custody. Report the selected options and the actual evidence for each transition.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-1",
+        "criteria": [
+          "A scheduled observation on the named installation yields an attributable, budgeted occurrence, a Team receipt and a revisioned installation Magazine result.",
+          "Replay the 17 and 28 November case with GPT-6.2 Sol/Astra, prices, older new-card and review defaults, gpt-5.5 automated cards and host CLI qualification. Show how it would have exposed each stale row.",
+          "Pass paired comparison and explicit-pin canary tests plus denial for missing grants, unsupported hosts, pin-only default, stale revision and budget exhaustion. Prove future-only effect, recovery without duplicate mutation, successful readback and revision-fenced restore in the target canary."
+        ]
+      }
+    },
+    {
+      "id": "GP-2",
+      "title": "Measure spend and integration duties",
+      "dependsOn": [
+        "GP-1"
+      ],
+      "section": "duties",
+      "decisionId": "GP-D4",
+      "promptMarkdown": "Extend GP-1's occurrence and goal snapshots for the Cost controller efficiency duty and the Quality lead integration/test duty. Add the typed measurement catalogue with versioned targets and comparable periods. Use existing usage and price, review, task history, verification, guard and host load records. Preserve published assignments of causes and leave ambiguous joins unknown. Reconcile AGT-4351 repeat-review attribution and AGT-4352 scope accounting with the available producer contracts. Implement the thresholds and denominators in the Dossier, deterministic receipts for quiet periods, and budgeted research cards for meaningful findings. Keep integration decisions with the existing gate. Publish read-side snapshots for both roles; GP-5 owns the full Team UI. Record the decisions used.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-2",
+        "criteria": [
+          "Duplicate invocation exports and attempts cannot inflate tokens, rounds or repeated wait-only calls. Show sample count, coverage, unknown-price count and comparable trend.",
+          "A tip change, a red tip spanning midnight, incomplete coverage and a load-dependent failure yield distinct facts and one correlated finding. Prove that a clean verification matches the observed tip SHA.",
+          "Cap exhaustion and a missing producer receipt leave a visible gap and next run without starting a paid call."
+        ]
+      }
+    },
+    {
+      "id": "GP-3",
+      "title": "Measure host, security and backup duties",
+      "dependsOn": [
+        "GP-2"
+      ],
+      "section": "duties",
+      "decisionId": "GP-D1",
+      "promptMarkdown": "Add the Operations warden's host, security and backup read-side duties to the same receipt and goal contracts. Consume Fleet operator, IAM/security finding, host registry and backup evidence. Reuse AGT-4289 and AGT-4324/4325 on the corresponding surfaces. Add required external card edges during promotion where new producer facts are needed. Keep host recovery and write authority with the existing operator and Operations workflows. Report fresh heartbeat/capability, disk and memory health, lease stall evidence, critical overdue findings, and verified off-host copy and isolated restore drill age. Route one redacted handoff per condition to its owner. Record the decisions used.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-3",
+        "criteria": [
+          "A disconnected registered host and a stale capability advertisement remain in coverage. Respect each host's thresholds and retention of typed evidence.",
+          "A successful backup without a drill keeps the drill goal open. Expired or missing evidence is distinct from a measured miss. Repeated signals coalesce into one occurrence.",
+          "Unauthorized principals cannot see cross-scope raw evidence or mutate a host or backup through the warden."
+        ]
+      }
+    },
+    {
+      "id": "GP-4",
+      "title": "Assign a persona individual work",
+      "dependsOn": [
+        "GP-3"
+      ],
+      "section": "assignments",
+      "decisionId": "GP-D3",
+      "promptMarkdown": "Add one assignment command and history to Team and Studio chat for the Owner, reusing GP-1/GP-2 admission and budget fences. Confirm the exact draft with the persona, action class, scope, deliverable, finish condition, cost cap, due time and cadence. Default to one-off research. Schedule recurring occurrences with an end condition and versioned future edits. Persist authenticated requester, persona author and occurrence links to each resulting card. Expose pause, cancel and retry using the existing pipeline controls. A card's result closes its occurrence only with an accepted finish-condition receipt. Existing authority must cover each execution; a confirmation grants no new capabilities. Record the decisions used.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-4",
+        "criteria": [
+          "A one-sentence request made in either entry point can be previewed, confirmed, admitted, delivered and linked back to its evidence.",
+          "Duplicate confirmations and restart cannot create duplicate work. A paused or cancelled recurring assignment prevents new admissions and preserves prior receipts.",
+          "Authorized read and mutation boundaries, budget shortfall and unconfirmed or ambiguous draft behavior are tested."
+        ]
+      }
+    },
+    {
+      "id": "GP-5",
+      "title": "Show installation persona goals in Team",
+      "dependsOn": [
+        "GP-4"
+      ],
+      "section": "goals",
+      "decisionId": "GP-D4",
+      "promptMarkdown": "Extend the Team detail view with installation roster and the proposed goals-first layout. Present current value, threshold, trend, coverage and cutoffs, then open duties and assignments, last evidence-backed actions and priced cost/tokens including reservations and missing price. Use existing Studio tokens, loading and status components, flat responsive surfaces and deep links to authorized evidence. Keep existing workspace views and dispatcher pages functional. Respect scope in every projection and total. Record the decisions used.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-5",
+        "criteria": [
+          "Prove populated, inactive, shadow, live, paused, expired-grant, empty and partial evidence states, including no cross-project leak and reconciliation of displayed subtotals.",
+          "Capture light and dark desktop and phone in Playwright with goal drilldown and assignment confirmation. Preserve target, actual, trend, source and last action at both widths."
+        ]
+      }
+    },
+    {
+      "id": "GP-6",
+      "title": "Publish the installation decision and goal issues",
+      "dependsOn": [
+        "GP-5"
+      ],
+      "section": "magazine",
+      "decisionId": "GP-D6",
+      "promptMarkdown": "Add the Chief of staff decision watch and installation daily/weekly issues. Consume the decision desk read model and existing journal through AGT-4304 and AGT-4310, and reuse the applicable Magazine issue/storage work in AGT-4312..4323. Schedule the specific upstream card edges at promotion. Keep the decision desk as the action destination. Count current actionable decision occurrence IDs and age, reconcile superseded items, and add at most one reminder per overdue occurrence. Compose from immutable persona receipts and versioned article references. Publish a deterministic issue on zero editor budget and append dated corrections for late evidence. Record the decisions used.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "GP-6",
+        "criteria": [
+          "Daily and weekly snapshots lead with missed/unmeasurable goals and recorded decisions, with linked evidence, coverage, remaining human choices, due times and cost.",
+          "Repeated publication produces one issue identity and no duplicate decisions or alerts. Corrections preserve the earlier issue and its references.",
+          "Verify the pending count and age against desk occurrences, and publisher access against installation scope."
+        ]
+      }
+    }
+  ]
+}
