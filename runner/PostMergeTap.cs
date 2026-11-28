@@ -9,7 +9,15 @@ namespace AgentRunner;
 internal sealed partial class PostMergeTap(string output)
 {
     private sealed record Point(string Name, string Result, int Document, string Number,
-        bool IsFailureSummary, string? Error = null, string? Location = null);
+        bool HasFailedChild, string? Error = null, string? Location = null, string? FailureType = null)
+    {
+        public bool IsFailureSummary => FailureType switch
+        {
+            "subtestsFailed" => true,
+            null => HasFailedChild && (Error is null || SubtestCountError().IsMatch(Error)),
+            _ => false,
+        };
+    }
     private sealed record Subtest(int Indent, string Name)
     {
         public bool HasFailedChild { get; set; }
@@ -20,6 +28,8 @@ internal sealed partial class PostMergeTap(string output)
     private static partial Regex TestPoint();
     [GeneratedRegex(@"\s+#\s*(?:SKIP|TODO)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Directive();
+    [GeneratedRegex(@"^[0-9]+ subtests? failed$")]
+    private static partial Regex SubtestCountError();
 
     private readonly Point[] _points = Read(output).Where(point => !point.IsFailureSummary).ToArray();
     internal bool HasFailures => _points.Any(point => point.Result == PostMergeTestResults.Fail);
@@ -114,9 +124,8 @@ internal sealed partial class PostMergeTap(string output)
                 if (indent == depth && point is { Result: PostMergeTestResults.Fail }
                     && field.StartsWith("failureType:", StringComparison.Ordinal))
                 {
-                    // A suite can report its own failure (for example, a teardown hook) alongside a failed child.
                     var failureType = field["failureType:".Length..].Trim().Trim('\'', '"');
-                    point = point with { IsFailureSummary = failureType == "subtestsFailed" };
+                    if (failureType.Length > 0) point = point with { FailureType = failureType };
                 }
                 if (indent == depth && point is not null && field.StartsWith("location:", StringComparison.Ordinal))
                 {
@@ -163,12 +172,12 @@ internal sealed partial class PostMergeTap(string output)
             var result = directive.Success ? PostMergeTestResults.Unknown :
                 match.Groups["result"].Value == "ok" ? PostMergeTestResults.Pass : PostMergeTestResults.Fail;
             var failed = result == PostMergeTestResults.Fail;
-            var isFailureSummary = failed && parents.Any(parent =>
+            var hasFailedChild = failed && parents.Any(parent =>
                 parent.Indent == indent && parent.Name == name && parent.HasFailedChild);
             parents.RemoveAll(parent => parent.Indent >= indent);
             if (failed && parents.Count > 0) parents[^1].HasFailedChild = true;
             point = new(string.Join(" > ", parents.Select(parent => parent.Name).Append(name)), result,
-                document, match.Groups["number"].Value, isFailureSummary);
+                document, match.Groups["number"].Value, hasFailedChild);
         }
         if (point is not null) yield return point;
     }

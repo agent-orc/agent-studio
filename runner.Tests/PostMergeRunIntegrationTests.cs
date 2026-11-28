@@ -460,11 +460,11 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
                     {second} 2 - second
                     1..2
                 not ok 1 - inner
+                  ---
+                  error: '1 subtest failed'
+                  ...
                 1..1
             not ok 1 - outer
-              ---
-              failureType: 'subtestsFailed'
-              ...
             """;
 
         var receipt = await LintReceiptAsync("lint", Tap("not ok", "ok"), 1, Tap("ok", "not ok"));
@@ -495,16 +495,18 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["fail", "unknown"], test.Attempts.Select(attempt => attempt.Result));
     }
 
-    [Fact]
-    public async Task SuiteHookFailureKeepsItsOwnEvidenceAlongsideAFailingChild()
+    [Theory]
+    [InlineData("failureType: 'hookFailed'")]
+    [InlineData("duration_ms: 1.2")]
+    public async Task SuiteHookFailureKeepsItsOwnEvidenceAlongsideAFailingChild(string metadata)
     {
-        const string tap = """
+        var tap = $"""
             # Subtest: suite
                 not ok 1 - child
                 1..1
             not ok 1 - suite
               ---
-              failureType: 'hookFailed'
+              {metadata}
               error: 'after hook failed'
               ...
             """;

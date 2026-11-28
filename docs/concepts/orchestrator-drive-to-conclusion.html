@@ -3594,6 +3594,13 @@
           <td>Each attempt counted the suite's TAP summary as another failing test.</td>
           <td>The regression fixture ends with a red lint receipt. It records the first child's recovery and the second child's new failure. A suite hook with its own error retains its verdict.</td>
         </tr>
+        <tr id="case-untyped-tap-teardown">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">untyped-tap-teardown</span></td>
+          <td>A post-merge lint receipt recorded the failed child but lost a separate suite teardown error on both attempts.</td>
+          <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
+          <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
