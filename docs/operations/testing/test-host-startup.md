@@ -57,6 +57,24 @@ synthetic siblings in suite-owned storage, with a 250 ms preparation tolerance.
 `BatchGateHostStartupCostTests` starts the actual API with the same sibling
 counts and a 1 s tolerance, comparing medians of three starts after warmup.
 Both timing probes are `MachineBound`; the isolation guard runs routinely.
+The named `backend-instance-startup-cost` machine-bound suite in
+`.agent-studio/project.yml` runs these probes on a quiet, dedicated measurement
+host. Routine, base, review, and coverage suites exclude them with
+`Category!=MachineBound`. Run the measurement suite separately after building:
+
+```sh
+dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build \
+  --filter 'Category=MachineBound&(FullyQualifiedName~BatchGateHostStartupCostTests|FullyQualifiedName~BatchGateStartupCostTests)'
+```
+
+The 1 s host-start tolerance measures sibling cost only when host load is
+controlled. On 27 November 2026 the 200,000-sibling probe exceeded that tolerance
+by 8.857 ms at a load of 230 on 12 cores. This busy-host result cannot establish
+a sibling-dependent startup regression. Keep that result as load-labeled
+evidence; do not widen the tolerance to accommodate loaded fleet hosts. Use the
+quiet thresholds below for timing measurements. The routine isolation guard and
+the explicit inspection tests remain independent of that wall-clock threshold.
+
 Startup no longer inspects unmatched instances. Restore troubleshooting uses
 the explicit command described in [storage hygiene](../temp-and-cache-hygiene.md).
 
