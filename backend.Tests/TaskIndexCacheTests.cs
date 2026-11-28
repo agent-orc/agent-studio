@@ -990,7 +990,7 @@ public class TaskIndexCacheTests : IDisposable
     /// before blocking, which is what a real walk racing a write does, and it
     /// records whether it ran on a board request's flow.
     /// </summary>
-    private sealed class GatedScan
+    private sealed class GatedScan(TimeSpan? holdTimeout = null)
     {
         private int _scans;
         public int Scans => Volatile.Read(ref _scans);
@@ -1007,7 +1007,7 @@ public class TaskIndexCacheTests : IDisposable
             Flows.Enqueue(RequestFlow.Value);
             var result = Produce(scan);
             Entered.Set();
-            Assert.True(Release.Wait(TimeSpan.FromSeconds(10)));
+            Assert.True(Release.Wait(holdTimeout ?? TimeSpan.FromSeconds(10)));
             if (Interlocked.Exchange(ref FailNext, null) is { } failure) throw failure;
             return result;
         }
@@ -1075,27 +1075,27 @@ public class TaskIndexCacheTests : IDisposable
     [Fact]
     public async Task TenConcurrentBoardReads_DuringASlowRefresh_AllReturnAtOnce()
     {
-        var gate = new GatedScan();
+        var gate = new GatedScan(Timeout.InfiniteTimeSpan);
         var cache = NewCache(gate);
         var published = await BoardRead(cache, "client-x");
 
         gate.Hold();
         // A runner write: in-process, no client.
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
-        var reads = Enumerable.Range(0, 10).Select(_ => Task.Run(() => BoardRead(cache, "client-x"))).ToArray();
-        var all = Task.WhenAll(reads);
+        var triggeringRead = Task.Run(() => BoardRead(cache, "client-x"));
         try
         {
-            Assert.Same(all, await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2))));
-            Assert.All(await all, read => Assert.Same(published, read));
-            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)));
-            Assert.Equal(2, gate.Scans);
+            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(30)), "The refresh did not enter the scan.");
+            var reads = Enumerable.Range(0, 10).Select(_ => Task.Run(() => BoardRead(cache, "client-x")));
+            // The timeout only breaks a deadlock if a reader waits for the held scan.
+            var snapshots = await Task.WhenAll(reads.Append(triggeringRead)).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.All(snapshots, snapshot => Assert.Same(published, snapshot));
         }
         finally
         {
             gate.Release.Set();
+            await WaitForRefreshAsync(cache);
         }
-        await WaitForRefreshAsync(cache);
         Assert.Equal(2, gate.Scans);
     }
 

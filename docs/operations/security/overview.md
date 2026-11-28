@@ -2057,6 +2057,12 @@ it restores the previous strategy from that immutable record, replans queued
 reviews, and writes an Owner audit entry referring to the original sequence.
 It can be used once. Operator sessions cannot invoke Undo.
 
+The header updates countdowns locally every 15 seconds. While the Owner's tab
+is visible, it refreshes session facts once per minute without resetting the
+Access loading state. It skips refreshes during agent reads or mutations and
+stops automatic retries after an access refusal. Explicit Access actions still
+reload their session facts immediately.
+
 The Studio header shows live elevation and opens the same controls as
 Settings > Access > Elevated sessions, including Re-arm with step-up, End
 elevation and End session. The list shows classes, rolling uses by project

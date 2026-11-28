@@ -172,6 +172,55 @@ public sealed class ManagedRepositoryMutationServiceTests : IDisposable
         Assert.False(Git().IsManagedDocumentKeyCommit(_root, head, parent));
     }
 
+    [Theory]
+    [InlineData("ops/notes/release.txt", true)]
+    [InlineData("ops/notes-extra/record", false)]
+    [InlineData("ops/notes/tool.csproj", false)]
+    public void ManagedWriteUsesNeutralPathsFromItsParentDefinition(string path, bool neutral)
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".agent-studio"));
+        File.WriteAllText(Path.Combine(_root, ".agent-studio", "project.yml"), """
+            schemaVersion: 1
+            stack: [shell]
+            commands:
+              prepare: .agent-studio/prepare
+              build: [make]
+              test: [make test]
+              lint: []
+            delivery:
+              verificationNeutralPaths: [ops/notes/]
+            """);
+        RunGit("add", ".");
+        RunGit("commit", "-qm", "declare test inputs");
+        var parent = RunGit("rev-parse", "HEAD").Trim();
+        var file = Path.Combine(_root, path);
+        var result = Service().Execute("Project", _root, "record", "record release", [path], () =>
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, "record");
+        });
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(neutral, Git().IsVerificationNeutralCommit(_root, result.CommitSha!, parent));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConceptAcceptanceInheritsOnlyForDecisionMetadata(bool changesTitle)
+    {
+        var parent = RunGit("rev-parse", "HEAD").Trim();
+        const string path = "docs/tracked/workbench.json";
+        var descriptor = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(_root, path)))!;
+        descriptor["status"] = "decided";
+        descriptor["editedBy"] = "FIX-1";
+        if (changesTitle) descriptor["title"] = "New title";
+        var result = Service().Execute("Project", _root, ManagedRepositoryMutationService.ConceptAcceptancePrefix + "FIX-1",
+            "chore(dossier): accept concept FIX-1", [path],
+            () => File.WriteAllText(Path.Combine(_root, path), descriptor.ToJsonString()));
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(!changesTitle, Git().IsVerificationNeutralCommit(_root, result.CommitSha!, parent));
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Execute_ProjectBranchCommitReplaysAfterReconstructionWithoutPublishingLaterHead()

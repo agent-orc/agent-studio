@@ -1,7 +1,7 @@
 :host {
   display: block; min-width: 0; background: var(--studio-bg-titlebar);
   border-bottom: 1px solid var(--studio-border-strong); color: var(--studio-text-primary);
-  font-family: var(--font-ui); font-size: 13px;
+  font-family: var(--font-ui); font-size: var(--studio-font-size-md);
 }
 .cockpit-header__nav {
   display: flex; align-items: center; min-height: var(--studio-header-nav-h);
@@ -13,24 +13,31 @@
 .cockpit-header__more-trigger {
   min-width: var(--studio-target-coarse-min); min-height: var(--studio-target-coarse-min);
   border: 0; border-radius: var(--studio-action-radius-sm); background: transparent;
-  color: inherit; font: inherit; font-size: 16px; cursor: pointer;
+  color: inherit; font: inherit; font-size: var(--studio-compat-type-31); cursor: pointer;
 }
 .cockpit-header__more-trigger:hover, .cockpit-header__more-trigger[aria-expanded='true'] { background: var(--studio-bg-hover); }
 .cockpit-header__more-trigger:focus-visible { outline: 2px solid var(--studio-accent-strong); }
 @media (max-width: 1100px) { :host ::ng-deep [data-nav-inline-from='desktop'] { display: none !important; } }
 @media (max-width: 720px) {
-  .cockpit-header__nav { min-height: var(--studio-header-phone-h); padding-inline: var(--studio-spacing-2); }
+  .cockpit-header__nav {
+    flex-wrap: wrap;
+    min-height: var(--studio-header-phone-h);
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  }
+  :host ::ng-deep .studio-titlebar__actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+    margin-inline-start: auto;
+  }
   .cockpit-header__wordmark { display: inline; }
   :host ::ng-deep [data-nav-inline-from='tablet'] { display: none !important; }
   // Keep elevated authority and the existing actions reachable on a phone.
   :host:has([data-testid='studio-elevation-trigger']) {
-    .cockpit-header__nav { flex-wrap: wrap; padding-block: var(--studio-spacing-1); }
     .cockpit-header__wordmark { display: none; }
     .cockpit-header__nav-content { flex: 1 1 calc(100% - var(--studio-target-coarse-min) - var(--studio-spacing-2)); }
     ::ng-deep .studio-titlebar__actions {
       display: flex;
       flex: 1 0 100%;
-      flex-wrap: wrap;
       align-items: center;
       gap: var(--studio-spacing-1);
       min-width: 0;

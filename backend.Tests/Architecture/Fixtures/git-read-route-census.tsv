@@ -113,6 +113,7 @@
 /api/model-selection/drill	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/policy	free	-	-	-
+/api/model-selection/policy/pace	free	-	-	-
 /api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-

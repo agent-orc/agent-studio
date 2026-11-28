@@ -114,7 +114,7 @@ public sealed partial class ProjectEnvironmentService
                     var deployedJob = settled is null ? null : read.State.Jobs.LastOrDefault(item =>
                         item.EnvironmentId == declaration.Id && item.Artifact == settled.Artifact && item.Status == "healthy");
                     databases.Add((declaration.Id, (job ?? deployedJob)?.Databases ?? []));
-                    projected.Add((read, RunTargetDesiredStatePolicy.Project(read.Project, declaration, job, history, deployedJob)));
+                    projected.Add((read, RunTargetDesiredStatePolicy.Project(read.Project, declaration, job, history, deployedJob, _secretKeys.Canonical(read.Project))));
                 }
                 TrackDatabases(read.State, hostId, databases);
                 databaseDeletions.AddRange(DatabaseDeletions(read.Project, read.State, hostId));

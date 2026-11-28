@@ -63,14 +63,14 @@ public interface ITelemetryValueMasker
 /// each telemetry environment. Reads fresh values for every staged batch;
 /// a resolved-value cache cannot provide this guarantee.
 /// </summary>
-public sealed class CredentialTelemetryValueMasker(ISecretStore? store = null) : ITelemetryValueMasker
+public sealed class CredentialTelemetryValueMasker(ISecretStore? store = null, SecretProjectKeys? keys = null) : ITelemetryValueMasker
 {
     public string Mask(string value) => CredentialRedactor.Redact(value);
 
     public async Task<Func<string, string>> ForEnvironmentAsync(TelemetryEnvironmentKey environment, CancellationToken cancellationToken)
     {
         if (store is null) return Mask;
-        var scopes = SecretScope.ForEnvironment(environment.Project, environment.Environment).InheritanceChain();
+        var scopes = (keys ?? SecretProjectKeys.Identity).LookupChain(SecretScope.ForEnvironment(environment.Project, environment.Environment));
         var listing = await store.ListAsync(cancellationToken);
         if (listing.Unreadable.Any(item => item.Scope is null
             || !SecretScope.TryParse(item.Scope, out var scope) || scopes.Contains(scope)))

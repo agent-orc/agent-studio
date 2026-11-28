@@ -128,7 +128,8 @@ public sealed record SelectionQuota(
     string? Window,
     double? UsedPct,
     QuotaProjection? Projection,
-    QuotaProjectionWarning? ProjectionWarning);
+    QuotaProjectionWarning? ProjectionWarning,
+    IReadOnlyDictionary<string, QuotaPace>? WindowPaces = null);
 
 /// <summary>The route a consumer starts, and why.</summary>
 public sealed record SelectionResult
@@ -171,6 +172,7 @@ public sealed record SelectionFacts
 {
     public required DateTime NowUtc { get; init; }
     public required IQuotaCapTable Caps { get; init; }
+    public Func<string, string, QuotaPace> PaceFor { get; init; } = (_, _) => QuotaPace.Steady;
     public int ShortStepReservePoints { get; init; }
     public Func<string, string?> ProviderUnavailable { get; init; } = _ => null;
     /// <summary>Cached quota snapshot per CLI; null when none was probed.</summary>

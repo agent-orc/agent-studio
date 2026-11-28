@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type WebSocketRoute } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installOrchestratorChatBootstrap } from '../helpers/orchestrator-chat-bootstrap';
@@ -37,8 +37,12 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
   }));
   const pageErrors: string[] = [];
   const consoleErrors: { text: string; url: string }[] = [];
-  page.on('console', message => { if (message.type() === 'error') consoleErrors.push({ text: message.text(), url: message.location().url }); });
-  page.on('pageerror', error => pageErrors.push(error.message));
+  mkdirSync(results, { recursive: true });
+  const recordErrors = () => writeFileSync(join(results, `${round}-browser-errors.json`), JSON.stringify({ pageErrors, consoleErrors }, null, 2));
+  page.on('console', message => {
+    if (message.type() === 'error') { consoleErrors.push({ text: message.text(), url: message.location().url }); recordErrors(); }
+  });
+  page.on('pageerror', error => { pageErrors.push(error.message); recordErrors(); });
   const calls: string[] = [];
   const session = (id: string) => ({ id, operatorAgentId: 'opa_console', name: 'Ops console', actor: `operator-agent:opa_console/session:${id}`,
     delegatedBy: 'human:usr_owner', createdAt: '2026-10-20T09:00:00Z', createdBy: 'usr_owner', expiresAt: '9999-12-31T23:59:59Z',
@@ -53,11 +57,12 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
   const resetSessions = () => [session('ses_console'), { ...session('ses_memory'), chosenLifetimeHours: 24, chosenEnd: '2026-11-27T08:00:00Z',
     expiresAt: '2026-11-27T08:00:00Z', reviewDue: false, newAddressAt: null, device: { ...session('').device, bindingKind: 'memory', label: 'ops@server', deviceId: 'dev_server' } }];
   let sessions = resetSessions();
+  let agentReads = 0;
   const agents = () => [{ id: 'opa_console', name: 'Ops console', description: 'Installation operator', createdAt: '2026-10-20T09:00:00Z', createdBy: 'usr_owner',
     disabledAt: null, sessions, devices: [] }];
   let limits = { defaultLifetimeHours: 168, ownerLifetimeHours: null, adminLifetimeHours: 168, idleHours: 24 };
   await page.route('**/api/auth/iam/operator-agents**', async route => {
-    if (route.request().method() === 'GET') return json(route, agents());
+    if (route.request().method() === 'GET') { agentReads++; return json(route, agents()); }
     const action = route.request().url().split('/').at(-1)!;
     calls.push(action);
     if (action === 'end') sessions = sessions.filter(item => !route.request().url().includes(item.id));
@@ -84,7 +89,7 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
     if (route.request().method() === 'PUT') { calls.push('limits'); limits = route.request().postDataJSON(); }
     return json(route, limits);
   });
-  await page.route('**/api/auth/step-up', async route => { calls.push('step-up'); await route.fulfill({ status: 204 }); });
+  await page.route(url => ['/api/auth/step-up', '/api/v1/studio/auth/step-up'].includes(url.pathname), async route => { calls.push('step-up'); await route.fulfill({ status: 204 }); });
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   const elevated = page.getByTestId('access-elevated-sessions');
@@ -97,6 +102,7 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
       if (!sessions[0]?.classes.length) {
         sessions = resetSessions();
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+        await expect(elevated.getByText('ops@workstation', { exact: true })).toBeVisible({ timeout: 30_000 });
       }
       await setTheme(page, theme);
       const chip = page.getByTestId('studio-elevation-trigger');
@@ -146,8 +152,11 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
   expect(calls.filter(action => action === 'rearm')).toHaveLength(6);
   sessions = [session('ses_console')];
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await expect(page.getByTestId('studio-elevation-trigger')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('access-area').getByRole('button', { name: 'Elevated sessions', exact: true }).click();
   await elevated.getByRole('button', { name: 'End all elevated sessions', exact: true }).click();
   await expect.poll(() => calls.includes('end-all')).toBeTruthy();
+  await page.getByTestId('access-area').getByRole('button', { name: 'Session limits', exact: true }).click();
   const form = page.getByTestId('access-session-limits');
   await form.getByLabel('Idle limit (hours)').fill('12');
   await form.getByLabel('Authenticator or recovery code').fill('123456');
@@ -181,6 +190,39 @@ test('classes, re-arm, header, activity filters and session actions at desktop a
   await change.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(change.getByRole('button', { name: 'Restored', exact: true })).toBeDisabled();
   expect(calls.filter(action => action === 'undo')).toHaveLength(1);
+  // Keep the mocked hub's liveness clock aligned with the timer probe.
+  const studioSockets = new Set<WebSocketRoute>();
+  await page.routeWebSocket('**/hubs/v1/studio*', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) {
+        socket.send('{}\u001e');
+        studioSockets.add(socket);
+      }
+    });
+    socket.onClose(() => studioSockets.delete(socket));
+  });
+  const sendHeartbeat = () => {
+    for (const socket of studioSockets) socket.send('{"type":6}\u001e');
+  };
+  // Run the timer probe last so it does not affect the workflow's page reloads.
+  sessions = resetSessions();
+  await page.clock.install({ time: new Date('2026-11-26T10:00:00Z') });
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await expect(page.getByTestId('studio-elevation-trigger')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('access-elevated-sessions')).toHaveCount(0);
+  await expect.poll(() => studioSockets.size).toBeGreaterThan(0);
+  const readsBeforeTick = agentReads;
+  sendHeartbeat();
+  await page.clock.fastForward(15_000);
+  expect(agentReads).toBe(readsBeforeTick);
+  const refreshed = page.waitForResponse(response => response.url().endsWith('/api/auth/iam/operator-agents')
+    && response.request().method() === 'GET');
+  for (let tick = 0; tick < 3; tick++) {
+    sendHeartbeat();
+    await page.clock.fastForward(15_000);
+  }
+  await refreshed;
+  expect(agentReads).toBe(readsBeforeTick + 1);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
   await expect(page.getByTestId('error-dialog')).toHaveCount(0);

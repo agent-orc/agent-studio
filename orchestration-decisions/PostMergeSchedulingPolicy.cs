@@ -15,7 +15,36 @@ public static class PostMergeSchedulingPolicy
     public static bool MayShareGateLane(string? active, string? candidate)
         => active == "post-merge" && candidate == "merge" || active == "merge" && candidate == "post-merge";
 
+    /// <summary>Two bounded flights allow the reserved lane to claim while another executes.</summary>
+    public static bool MayClaim(bool firstFlightActive, bool secondFlightActive)
+        => !firstFlightActive || !secondFlightActive;
+
+    /// <summary>Keep an integration grant free or held by an active merge.</summary>
+    public static bool MayReservePostMergeGrant(int maxParallelism, int occupiedGrants,
+        IReadOnlyCollection<string> activeKinds)
+        => occupiedGrants < maxParallelism && (maxParallelism == 1
+            || occupiedGrants < maxParallelism - 1
+            || activeKinds.Any(kind => MayShareGateLane(kind, "post-merge")));
+
+    /// <summary>Tie-breaker at the same creation instant, after age in PostMergeQueueOrder.</summary>
     public static int QueuePriority(string? kind) => kind == "post-merge" ? 1 : 0;
+}
+
+/// <summary>
+/// FIFO admission key shared by the gate authorities. Age precedes kind so a
+/// finite prefix bounds either queue's wait across later creation instants.
+/// SQL authorities order the same tuple before applying their page limit.
+/// </summary>
+public readonly record struct PostMergeQueueOrder(DateTime CreatedAt, int Priority, long ArrivalOrder)
+    : IComparable<PostMergeQueueOrder>
+{
+    public int CompareTo(PostMergeQueueOrder other)
+    {
+        var age = CreatedAt.CompareTo(other.CreatedAt);
+        if (age != 0) return age;
+        var priority = Priority.CompareTo(other.Priority);
+        return priority != 0 ? priority : ArrivalOrder.CompareTo(other.ArrivalOrder);
+    }
 }
 
 /// <summary>Fenced post-merge custody and infrastructure settlement rules.</summary>

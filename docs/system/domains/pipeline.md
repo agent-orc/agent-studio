@@ -352,10 +352,21 @@ The run host is the fallback. Once the oldest pending integration reaches the
 project's `windowMinutes`, occupied coding slots and host load no longer veto
 that window. It runs sequentially inside the existing worker test envelope;
 its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering puts merge
-checks first. Fixed-slot gate admission preserves the separate integration
+fallback still waits for free coding capacity. Gate queue ordering uses attempt
+creation time first, with merge precedence only at the same instant. Both
+authorities scan bounded pages of 32 in that order until eligible work is found,
+so later arrivals cannot indefinitely overtake either queue. The daemon keeps
+two durable flights and continues claiming while ordinary execution is active.
+A claimed successor in the same lane waits for its predecessor to finish and
+for claim recovery before materializing, including when the predecessor faults
+or is independently cancelled. Shutdown cancellation still stops the wait.
+Fixed-slot gate admission preserves the separate integration
 compile lane for a merge alongside one post-merge run. Grant admission reserves
-the final host grant for integration when the host has multiple grants.
+the final host grant for integration when the host has multiple grants and no
+merge is active. If an active merge already holds an integration grant,
+post-merge may take the final free grant. A host with one grant may admit
+post-merge whenever that grant is free. These rules are owned by
+`PostMergeSchedulingPolicy.MayReservePostMergeGrant`.
 
 `PostMergeSchedulingPolicy` owns deadlines and supersession. A newer tip may
 cancel a queued or materializing gate subject. Conditional cancellation and
@@ -2752,10 +2763,9 @@ comparison before Quality Studio's verdict contract can decide a review.
   names the current Attempt and that Git already projects the delivery as
   `integrated`. A passed gate on the delivery's recorded verification tree
   remains valid after the branch advances when that tree is on the published
-  first-parent line and later publications have passed per-task or batch gates.
-  A later exact full-suite gate on a first-parent publication covers earlier
-  ungated publications that its tree contains. A partial or red later gate does
-  not. A rewritten tree or an uncovered later publication refuses acceptance.
+  first-parent line. A green post-merge run or another verified containing
+  publication on that line can supply the receipt for an earlier delivery.
+  Later unverified publications leave that proof valid.
   The completion claim names the gate that verified the
   delivery. Acceptance then performs only the lane move. It never fetches,
   merges, gates, resets the merge row, or enqueues `AcceptedIntegrationQueue`.
@@ -4346,18 +4356,13 @@ whose `task.integration` said `integrated`. Two defects met.
   one card and a lookup of the whole board agree by construction. This does not
   weaken AGT-2817: the proof is still Git ancestry of the delivery against the
   integration branch, never a lane state or a pipeline record.
-- **Verified ancestor acceptance.** Acceptance retains a delivery's passed
-  gate after later publications only when its recorded verification tree is on
-  the published branch's first-parent line. One bounded first-parent range from
-  that tree to the current tip identifies the later publication commits. Each
-  must be covered by its own passed per-task gate, by a passed batch gate
-  spanning those commits, by the publishing card's exact verified
-  `gate-not-applicable` merge record, or by a later exact full-suite gate on a containing
-  first-parent publication. The latter names its covering publication in the
-  acceptance reason. Batch evidence cannot substitute for the original
-  tree's first-parent ancestry. A branch rewrite or an uncovered later
-  publication is refused; acceptance evidence names the gate that verified
-  the delivery.
+- **Verified ancestor acceptance.** A receipt covers the delivery while the
+  published integration line contains the verified state and that state
+  contains the current delivery. Managed Dossier bookkeeping and other
+  explicitly declared non-input paths can inherit a parent receipt. A
+  refusal identifies the tip an owner can verify and any admission wait for
+  that tip. See the [review domain map](review.md) for the execution
+  definition and receipt rules.
 - **One refusal per state change.** A refused rail action is a decision, not a
   symptom to retry. `AcceptanceRailAttemptPolicy`
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a

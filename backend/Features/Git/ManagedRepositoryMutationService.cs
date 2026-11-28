@@ -24,6 +24,9 @@ public sealed record ManagedRepositoryMutationResult(
 /// </summary>
 public sealed class ManagedRepositoryMutationService
 {
+    public const string ManagedWriteTrailer = "Agent-Studio-Operation: managed-write";
+    public const string ConceptAcceptancePrefix = "concept-accepted-";
+    public const string ConceptAcceptanceTrailer = "Agent-Studio-Operation: concept-accepted";
     public const string DocumentKeyOperationId = "workbench-key-discovery";
     public const string DocumentKeyCommitTrailer = "Agent-Studio-Operation: workbench-key-discovery";
     /// <summary>Operation ids of Dossier decision-receipt writes start with this (AGT-3703).</summary>
@@ -158,7 +161,9 @@ public sealed class ManagedRepositoryMutationService
                 ? $"{commitMessage}\n\n{DocumentKeyCommitTrailer}"
                 : operationId.StartsWith(DecisionReceiptOperationPrefix, StringComparison.Ordinal)
                     ? $"{commitMessage}\n\n{DecisionReceiptCommitTrailer}"
-                    : commitMessage;
+                    : operationId.StartsWith(ConceptAcceptancePrefix, StringComparison.Ordinal)
+                        ? $"{commitMessage}\n\n{ConceptAcceptanceTrailer}"
+                        : $"{commitMessage}\n\n{ManagedWriteTrailer}";
             if (intent != null) recordedMessage += $"\n\n{intent.Marker}";
             var commit = _git.CommitPaths(root, recordedMessage, paths);
             if (!commit.Success || string.IsNullOrWhiteSpace(commit.Sha))

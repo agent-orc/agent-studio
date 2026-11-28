@@ -14,8 +14,8 @@
     gap: var(--studio-spacing-2);
     flex: 1 1 auto;
     min-width: 0;
-    margin: 0;
-    padding: 0;
+    margin: var(--studio-spacing-0);
+    padding: var(--studio-spacing-0);
     border: 0;
     border-radius: var(--studio-compat-radius-7);
     background: transparent;
@@ -98,7 +98,7 @@
 
     &:hover:not(:disabled) {
       background: var(--studio-bg-hover);
-      border-color: var(--studio-border-strong, var(--studio-fg-dim));
+      border-color: var(--studio-border-strong);
       color: var(--studio-fg-strong);
     }
 

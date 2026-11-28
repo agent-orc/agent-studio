@@ -52,11 +52,11 @@
   }
   <div class="statusbar__group statusbar__group--right statusbar__usage"
        role="group" aria-label="Subscription usage" data-testid="status-bar-usage-entries">
-      @for (cli of visibleUsageClis(); track cli.cliId + ':' + (cli.subscriptionKey ?? 'local')) {
+      @for (cli of visibleUsageClis(); track usageKey(cli)) {
         @let v = usageView(cli);
         <a class="statusbar__item statusbar__item--btn statusbar__usage-entry" [attr.data-testid]="'footer-usage-' + cli.cliId"
                 [href]="cli.cliId.toLowerCase() === 'gemini' ? '#/workspace/settings/caps' : '#/workspace/settings/tokens/' + cli.cliId.toLowerCase()"
-                [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
+                [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + usageKey(cli)"
                 [attr.aria-label]="usageName(cli)" [title]="usageTooltip(cli)">
           <strong>{{ v.name }} </strong>
           @for (window of footerWindows(cli); track window.id) {

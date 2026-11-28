@@ -69,52 +69,57 @@
              the slide-in chrome. Hosted inside studio-shell's filter
              panel slot so the user can scope the board from the left
              sidebar instead of opening a separate sheet. -->
-        <app-kanban-filter-sidesheet
-          studioFilterPanel
-          [inline]="true"
-          [open]="true"
-          [query]="searchQuery()"
-          [typeOptions]="typeFilterOptions"
-          [activeType]="activeType()"
-          [tags]="tagRegistry()"
-          [activeTagIds]="activeTagFilter()"
-          [owners]="clientService.clients()"
-          [activeOwnerId]="activeClientFilter()"
-          [hitCount]="filteredTaskCount()"
-          [totalCount]="totalTaskCount()"
-          [hasAnyFilter]="hasActiveFiltersOrSearch()"
-          (queryChange)="setSearchQuery($event)"
-          (setType)="onSetType($event)"
-          (toggleTag)="toggleTagFilter($event)"
-          (setOwner)="setClientFilter($event)"
-          (clearAll)="onSidesheetClearAll()" />
+        <ng-container studioFilterPanel>
+          @defer (when studioShell.activePanel() === 'filters') {
+            <app-kanban-filter-sidesheet
+              [inline]="true"
+              [open]="true"
+              [query]="searchQuery()"
+              [typeOptions]="typeFilterOptions"
+              [activeType]="activeType()"
+              [tags]="tagRegistry()"
+              [activeTagIds]="activeTagFilter()"
+              [owners]="clientService.clients()"
+              [activeOwnerId]="activeClientFilter()"
+              [hitCount]="filteredTaskCount()"
+              [totalCount]="totalTaskCount()"
+              [hasAnyFilter]="hasActiveFiltersOrSearch()"
+              (queryChange)="setSearchQuery($event)"
+              (setType)="onSetType($event)"
+              (toggleTag)="toggleTagFilter($event)"
+              (setOwner)="setClientFilter($event)"
+              (clearAll)="onSidesheetClearAll()" />
+          }
+        </ng-container>
         <!-- Per-tab actions land in the tab bar via this slot. The board
              tab gets filter + compact + add-task; task tabs reuse the
              existing detail-pane toggles via the TaskDetail's own header. -->
         <div studioTabActions class="studio-tab-actions">
-          <app-studio-tab-actions
-            [documentHistoryVisible]="isDocumentTabActive()"
-            [canNavigateBack]="studioTabState.canNavigateDocumentBack()"
-            [canNavigateForward]="studioTabState.canNavigateDocumentForward()"
-            [documentHistoryLength]="studioTabState.activeDocumentHistoryLength()"
-            [boardActionsVisible]="studioTabState.activeTab()?.kind === 'board'"
-            [groupByDossier]="groupByDossier()"
-            [mutationsBlocked]="updateClient.mutationsBlocked()"
-            [task]="studioTabActionsTask()"
-            [runActivity]="studioRunActivityBadge()"
-            [panes]="shellPanesVisible()"
-            [pager]="studioTabActionsPager()"
-            [laneOptions]="studioLaneOptions"
-            [triage]="studioTabActionsTriage()"
-            (navigateDocumentHistory)="projectHubUrls.navigateDocumentHistory($event)"
-            (toggleGroupByDossier)="toggleGroupByDossier()"
-            (addTask)="openCreate()"
-            (togglePane)="onShellTogglePane($event)"
-            (previousTask)="onStudioPagerPrev()"
-            (nextTask)="onStudioPagerNext()"
-            (laneChange)="onStudioLaneChange($event)"
-            (triagePrimary)="onStudioTriagePrimary()"
-            (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
+          @defer (on immediate) {
+            <app-studio-tab-actions
+              [documentHistoryVisible]="isDocumentTabActive()"
+              [canNavigateBack]="studioTabState.canNavigateDocumentBack()"
+              [canNavigateForward]="studioTabState.canNavigateDocumentForward()"
+              [documentHistoryLength]="studioTabState.activeDocumentHistoryLength()"
+              [boardActionsVisible]="studioTabState.activeTab()?.kind === 'board'"
+              [groupByDossier]="groupByDossier()"
+              [mutationsBlocked]="updateClient.mutationsBlocked()"
+              [task]="studioTabActionsTask()"
+              [runActivity]="studioRunActivityBadge()"
+              [panes]="shellPanesVisible()"
+              [pager]="studioTabActionsPager()"
+              [laneOptions]="studioLaneOptions"
+              [triage]="studioTabActionsTriage()"
+              (navigateDocumentHistory)="projectHubUrls.navigateDocumentHistory($event)"
+              (toggleGroupByDossier)="toggleGroupByDossier()"
+              (addTask)="openCreate()"
+              (togglePane)="onShellTogglePane($event)"
+              (previousTask)="onStudioPagerPrev()"
+              (nextTask)="onStudioPagerNext()"
+              (laneChange)="onStudioLaneChange($event)"
+              (triagePrimary)="onStudioTriagePrimary()"
+              (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
+          }
         </div>
         <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine' || studioTabState.activeTab()?.kind === 'team'">
           <app-workspace-banner [projects]="bannerProjects()" />
@@ -145,9 +150,11 @@
               @if (groupByDossier()) {
                 <main class="dashboard dashboard--studio dashboard--dossier-board"
                       data-testid="studio-board">
-                  <app-dossier-group-board
-                    [tasks]="dossierBoardTasks()"
-                    (jobClick)="openDetail($event)" />
+                  @defer (on immediate) {
+                    <app-dossier-group-board
+                      [tasks]="dossierBoardTasks()"
+                      (jobClick)="openDetail($event)" />
+                  }
                 </main>
               } @else {
               @if (singleGroupBoard()) {

@@ -14,7 +14,7 @@
 .backup-status h5,
 .backup-status p,
 .backup-status ul {
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .backup-status h4 {
@@ -42,7 +42,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: var(--studio-spacing-2);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .backup-status__facts > div {
@@ -125,8 +125,8 @@
 .backup-status__warnings {
   display: grid;
   gap: var(--studio-spacing-1);
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 
@@ -134,7 +134,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   gap: var(--studio-spacing-3);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .backup-status__metrics > div {
@@ -147,7 +147,7 @@
   display: grid;
   justify-items: start;
   gap: var(--studio-spacing-1);
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-weight: 650;
 }
 
@@ -201,7 +201,7 @@
   .backup-status__handoff-table th,
   .backup-status__handoff-table td {
     display: block;
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 0;
     overflow-wrap: anywhere;
   }

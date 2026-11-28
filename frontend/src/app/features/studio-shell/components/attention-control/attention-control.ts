@@ -151,7 +151,7 @@ export class AttentionControlComponent {
           const href = item.evidence?.[0]?.href;
           if (href?.startsWith('/workspace/settings/access?')) window.location.hash = `#${href}`;
         }
-        break;
+        return;
       case 'operations':
         this.openOperations(item);
         return;

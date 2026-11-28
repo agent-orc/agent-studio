@@ -46,7 +46,7 @@
 .rgv__tree {
   border-right: 1px solid var(--studio-border);
   overflow: auto;
-  padding: var(--studio-compat-space-2) 0;
+  padding: var(--studio-compat-space-2) var(--studio-spacing-0);
   background: var(--studio-bg-sidebar);
   font-size: var(--studio-font-size-sm);
 }
@@ -81,7 +81,7 @@
 .rgv__gated-meta { display: flex; align-items: center; gap: var(--studio-spacing-2); flex-wrap: wrap; }
 .rgv__gated-name { font-family: var(--font-mono); color: var(--studio-fg); word-break: break-all; }
 .rgv__gated-size { color: var(--studio-fg-dim); }
-.rgv__gated-hint { margin: 0; color: var(--studio-fg-dim); }
+.rgv__gated-hint { margin: var(--studio-spacing-0); color: var(--studio-fg-dim); }
 .rgv__gated-actions { display: flex; gap: var(--studio-spacing-2); }
 
 .rgv__diff { overflow: auto; display: flex; flex-direction: column; min-width: 0; }
@@ -101,13 +101,13 @@
 .rgv__copy:hover { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
 
 .rgv__diff-body {
-  margin: 0; padding: var(--studio-spacing-3) var(--studio-compat-space-3);
+  margin: var(--studio-spacing-0); padding: var(--studio-spacing-3) var(--studio-compat-space-3);
   flex: 1 1 auto; overflow: auto;
   font-family: var(--font-mono); font-size: var(--studio-font-size-sm);
   line-height: 1.55; white-space: pre;
   color: var(--studio-fg);
 }
-.rgv__line { display: block; padding: 0 var(--studio-spacing-1); color: var(--studio-fg); }
+.rgv__line { display: block; padding: var(--studio-spacing-0) var(--studio-spacing-1); color: var(--studio-fg); }
 .rgv__line--add { background: var(--diff-add-bg); }
 .rgv__line--del { background: var(--diff-rem-bg); }
 .rgv__line--hunk { color: var(--diff-hunk-fg); background: var(--diff-hunk-bg); font-weight: 500; }

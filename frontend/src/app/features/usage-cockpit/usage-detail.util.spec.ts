@@ -5,6 +5,7 @@ import {
   buildUsageDetailView,
   cliAccountHref,
   describeLedgerScope,
+  detailSectionId,
   formatCountdown,
   formatRemainingPct,
   groupRunsByModel,
@@ -14,6 +15,7 @@ import {
   roundingRemainder,
 } from './usage-detail.util';
 import { formatUsedPct } from './usage-chip.util';
+import { usageTriggerKey } from './components/usage-detail-surface/usage-detail-surface';
 
 const NOW = Date.parse('2026-09-25T14:58:00Z');
 const ZONE = 'Europe/Berlin';
@@ -221,5 +223,46 @@ describe('live runs and models', () => {
     const base = snapshot();
     const cost = { ...base.cost, latestReceiptAt: null };
     expect(buildUsageDetailView({ ...base, cost }, NOW).cost.latestReceipt).toBeNull();
+  });
+});
+
+
+describe('subscription detail identity', () => {
+  it('keeps same-provider subscription labels distinct and lists unallocated provider runs once', () => {
+    const accounts = [
+      { ...cli('claude'), subscriptionKey: 'work' },
+      { ...cli('claude', true), subscriptionKey: 'personal' },
+      cli('claude'),
+    ];
+    const value = snapshot({ clis: accounts, runs: [run('shared', { effectiveCli: 'claude' })] });
+    const view = buildUsageDetailView(value, NOW);
+    expect(view.clis.map(account => account.name)).toEqual(['Claude · subscription personal', 'Claude · subscription work', 'Claude · local']);
+    expect(view.clis.flatMap(account => account.modelGroups.flatMap(group => group.runs.map(item => item.id))))
+      .toEqual(['shared']);
+    expect(value.clis).toEqual(accounts);
+    expect(buildUsageDetailView({ ...value, clis: [...accounts].reverse() }, NOW).clis.map(account => account.name).sort())
+      .toEqual(view.clis.map(account => account.name).sort());
+  });
+
+  it('uses distinct compact labels for real subscription digests with a shared prefix', () => {
+    const prefix = 'a'.repeat(8);
+    const keys = [prefix + '1' + '0'.repeat(55), prefix + '2' + '0'.repeat(55)];
+    const value = snapshot({ clis: keys.map(subscriptionKey => ({ ...cli('claude'), subscriptionKey })) });
+    const view = buildUsageDetailView(value, NOW);
+    expect(view.clis.map(account => account.name)).toEqual([
+      `Claude · subscription ${prefix}1…`, `Claude · subscription ${prefix}2…`,
+    ]);
+    expect(view.clis.map(account => account.subscriptionKey)).toEqual(keys);
+    expect(new Set(view.clis.map(account => account.key)).size).toBe(2);
+  });
+
+  it('keeps subscription case and punctuation in section and trigger identities', () => {
+    const focuses = [null, 'local', 'work/a', 'work:a', 'Work/a', 'work%2Fa'].map(subscriptionKey => ({
+      kind: 'cli' as const, cliId: 'Claude', subscriptionKey,
+    }));
+    expect(new Set(focuses.map(focus => detailSectionId('detail', focus))).size).toBe(focuses.length);
+    expect(new Set(focuses.map(usageTriggerKey)).size).toBe(focuses.length);
+    expect(detailSectionId('detail', { kind: 'cli', cliId: 'claude' })).toBe('detail-cli-claude');
+    expect(usageTriggerKey({ kind: 'cli', cliId: 'claude' })).toBe('cli:claude');
   });
 });

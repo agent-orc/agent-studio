@@ -3568,7 +3568,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
+        Assert.Contains("An owner can record a verification", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3716,10 +3716,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false, false)]
     [InlineData(true, true)]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public async Task Acceptance_AncestorGate_RequiresEveryLaterPublicationToHaveItsOwnGate(
+    public async Task Acceptance_OwnGateSurvivesLaterPublications(
         bool gateFirstPublication, bool gateSecondPublication)
     {
         var deliverySha = PublishDelivery("ancestor-delivery.txt", "verified delivery\n");
@@ -3748,25 +3749,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
                 PassedPublishedGate(second, "AGT-LATER-2")));
 
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
-        if (gateFirstPublication && gateSecondPublication)
-        {
-            Assert.Equal(MoveJobStatus.Success, accepted.Status);
-            var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
-            Assert.Contains(deliverySha, completed.CompletionClaim?.Evidence);
-            Assert.Contains(IntegrationGateJournal.PreDevelopBuildGateStep, completed.CompletionClaim?.Evidence);
-            Assert.Contains(TaskKey, completed.CompletionClaim?.Evidence);
-        }
-        else
-        {
-            Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            // AGT-3753: the refusal names the newest uncovered commit, not project.yml.
-            var uncovered = gateSecondPublication ? first : second;
-            Assert.Contains($"later publication {uncovered[..7]} \"later published delivery\"", accepted.Message);
-            Assert.Contains("no published gate evidence for that tree", accepted.Message);
-            Assert.Contains("Commit author: test", accepted.Message);
-            Assert.DoesNotContain("batch", accepted.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("`.agent-studio/project.yml`", accepted.Message);
-        }
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Contains(deliverySha, completed.CompletionClaim?.Evidence);
+        Assert.Contains(IntegrationGateJournal.PreDevelopBuildGateStep, completed.CompletionClaim?.Evidence);
+        Assert.Contains(TaskKey, completed.CompletionClaim?.Evidence);
     }
 
     [Theory]
@@ -3786,8 +3773,6 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         var netChangeSha = PublishLaterCommit("net-change-publication.txt", deliverySha);
         var laterSha = PublishLaterCommit("after-net-change.txt");
-        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
-            PassedPublishedGate(laterSha, "AGT-LATER")));
         var batches = new BatchGateStore(Path.Combine(_tempDir, "net-change-base-gates"));
         var evidencePath = Path.Combine(_tempDir, "net-change-base-gate.json");
         if (evidenceExists) File.WriteAllText(evidencePath, "passed");
@@ -3796,29 +3781,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             currentProfile ? digest : "obsolete-profile", outcome, null,
             "verify gate passed; test-level=full; full-suite=required-and-run",
             evidencePath, DateTimeOffset.UnixEpoch.AddDays(1), BatchGateBaseCheckSources.FullSuite));
-        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
-        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
-            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
-        {
-            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
-        };
-
-        var status = service.BuildForAcceptance(card);
-
+        var status = Service(deps, batches).BuildForAcceptance(card);
         Assert.Equal(accepted ? IntegrationVerificationStates.Verified
             : IntegrationVerificationStates.Unverified, status.Verification?.State);
-        if (!accepted)
-        {
-            Assert.Contains(netChangeSha, status.Verification?.Reason);
-            Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
-            if (outcome == "pass")
-                Assert.Contains(evidenceExists
-                        ? $"is not counted: its gate profile digest obsolete-profile is not the current gate profile {digest}"
-                        : "is not counted: its evidence file is missing",
-                    status.Verification?.Reason);
-            else
-                Assert.DoesNotContain("is not counted", status.Verification?.Reason);
-        }
+        Assert.Equal(accepted ? netChangeSha : laterSha, status.Verification?.Sha);
     }
 
     [Theory]
@@ -3834,7 +3800,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
-        Assert.Contains("Gate-neutral Dossier descriptor commits", completed.CompletionClaim?.Evidence);
+        Assert.Contains("Verification-neutral commits", completed.CompletionClaim?.Evidence);
     }
 
     [Fact]
@@ -3849,7 +3815,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
-        Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
+        Assert.Contains(laterBatch, completed.CompletionClaim?.Evidence);
     }
 
     [Theory]
@@ -3859,7 +3825,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         bool changesDossierTitle, bool accepted)
     {
         const string path = "docs/acceptance-dossier/workbench.json";
-        var (deps, _) = PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
+        PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
         RunGit(_repo, "checkout", "-q", "-B", "owner-decision", "origin/develop");
         File.WriteAllText(Path.Combine(_repo, path), JsonSerializer.Serialize(new
         {
@@ -3877,47 +3843,48 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
 
-        var result = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        const string decision = "owner-decision-card";
+        var decisionDeps = Build(decisionSha, batchGates: new BatchGateStore(Path.Combine(_tempDir, "batch-gates")),
+            taskKey: "FIX-DECISION", slug: decision);
+        var result = await decisionDeps.Transitions.MoveAsync(decision, TaskStates.Completed, _watchPath);
 
         Assert.Equal(accepted ? MoveJobStatus.Success : MoveJobStatus.IntegrationFailed, result.Status);
         if (accepted)
-            Assert.Contains(decisionSha, deps.Scanner.FindJob(Slug, _watchPath)?.CompletionClaim?.Evidence);
+            Assert.Contains(decisionSha, decisionDeps.Scanner.FindJob(decision, _watchPath)?.CompletionClaim?.Evidence);
         else
             Assert.Contains(decisionSha[..7], result.Message);
     }
 
     [Fact]
-    public async Task Acceptance_LaterPassedBatchDoesNotCoverUngatedCommitAfterDocumentKey()
+    public async Task Acceptance_LaterPassedPublicationCoversAnEarlierUngatedCodeChange()
     {
         var (deps, _) = PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
-        var ungated = PublishLaterCommit("still-ungated.txt");
-        var laterBatch = PublishLaterCommit("later-gated-batch.txt");
-        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
-            PassedPublishedGate(laterBatch, "AGT-LATER-KEY")));
+        PublishLaterCommit("still-ungated.txt");
+        var later = PublishLaterCommit("later-gated-batch.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(later, "AGT-LATER-KEY")));
 
-        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
-
-        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
-        Assert.Contains($"{ungated[..7]} \"", refused.Message);
-        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        Assert.Contains(later, deps.Scanner.FindJob(Slug, _watchPath)?.CompletionClaim?.Evidence);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Acceptance_DocumentKeyCommitWithOtherChangeOrLaterUngatedCommit_IsRefused(
-        bool otherChangeInKeyCommit)
+    public async Task Acceptance_UnverifiedCodeDoesNotInheritKeyCommitReceipt(bool otherChangeInKeyCommit)
     {
         var (deps, keySha) = PublishVerifiedDescriptorAndKey(otherChangeInKeyCommit);
-        var missingGateSha = otherChangeInKeyCommit ? keySha : PublishLaterCommit("ungated-after-key.txt");
-
-        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
-
+        var unverified = otherChangeInKeyCommit ? keySha : PublishLaterCommit("ungated-after-key.cs");
+        var slug = Slug;
+        if (!otherChangeInKeyCommit)
+        {
+            slug = "ungated-code";
+            deps = Build(unverified, batchGates: new BatchGateStore(Path.Combine(_tempDir, "batch-gates")),
+                taskKey: "FIX-CODE", slug: slug);
+        }
+        var refused = await deps.Transitions.MoveAsync(slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
-        Assert.Contains($"{missingGateSha[..7]} \"", refused.Message);
-        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
+        Assert.Contains($"An owner can record a verification for develop tip {unverified}", refused.Message);
     }
 
     [Fact]
@@ -3929,7 +3896,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
         // AGT-3753: the refusal names the uncovered commit instead of project.yml.
-        Assert.Contains($"{keySha[..7]} \"", refused.Message);
+        Assert.Contains(keySha, refused.Message);
         Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
@@ -3943,7 +3910,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Contains(receiptSha, completed.CompletionClaim?.Evidence);
-        Assert.Contains("Gate-neutral Dossier descriptor commits", completed.CompletionClaim?.Evidence);
+        Assert.Contains("Verification-neutral commits", completed.CompletionClaim?.Evidence);
     }
 
     [Theory]
@@ -3983,19 +3950,6 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var batchSha = PublishLaterCommit("batch-publication.txt");
         var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
         WriteBatchEvidence(batches, "descriptor-batch", deliverySha, batchSha);
-        var deps = Build(deliverySha, batchGates: batches);
-        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
-        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
-        {
-            State = IntegrationVerificationStates.Verified,
-            Sha = deliverySha,
-            IntegrationBranch = "develop",
-            DeliveryShas = [deliverySha],
-            Evidence = IntegrationVerificationEvidence.MergeGate,
-            GateVerdict = nameof(BuildTestGateVerdict.Ok),
-            Reason = "The batch gate passed on the published delivery tree.",
-        });
-
         RunGit(_repo, "checkout", "-q", "-B", "decision-receipt", "origin/develop");
         var history = rewriteHistory
             ? "[]"
@@ -4022,7 +3976,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var receiptSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
         RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
-        return (deps, receiptSha);
+        return (Build(receiptSha, batchGates: batches), receiptSha);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
@@ -4038,19 +3992,6 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var batchSha = PublishLaterCommit("batch-publication.txt");
         var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
         WriteBatchEvidence(batches, "descriptor-batch", deliverySha, batchSha);
-        var deps = Build(deliverySha, batchGates: batches);
-        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
-        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
-        {
-            State = IntegrationVerificationStates.Verified,
-            Sha = deliverySha,
-            IntegrationBranch = "develop",
-            DeliveryShas = [deliverySha],
-            Evidence = IntegrationVerificationEvidence.MergeGate,
-            GateVerdict = nameof(BuildTestGateVerdict.Ok),
-            Reason = "The batch gate passed on the published delivery tree.",
-        });
-
         RunGit(_repo, "checkout", "-q", "-B", "document-keys", "origin/develop");
         File.WriteAllText(Path.Combine(_repo, path),
             $$"""
@@ -4074,7 +4015,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var keySha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
         RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
-        return (deps, keySha);
+        return (Build(keySha, batchGates: batches), keySha);
     }
 
     [Fact]
@@ -4104,13 +4045,13 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
+        Assert.Contains("An owner can record a verification", refused.Message);
         // AGT-3756: the refusal names the recorded tree that does not carry the delivery.
         Assert.Contains($"verification tree {unrelated}", refused.Message);
     }
 
     [Fact]
-    public void Acceptance_BatchGateCannotReplaceFirstParentVerificationAncestry()
+    public void Acceptance_SideBranchReceiptRequiresAPassedPublishedCandidate()
     {
         var deliverySha = PublishDelivery("batch-side-delivery.txt", "delivered\n");
         RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
@@ -4130,19 +4071,17 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "fetch", "-q", "origin", "develop");
 
         var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
-        WriteBatchEvidence(batches, "side-batch", deliverySha, batchSha);
-        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
-        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
-            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
         {
-            TestStatusOverride = _ => VerifiedStatus(deliverySha, verifiedSide),
-        };
-
-        var status = service.BuildForAcceptance(card);
-
-        Assert.Equal(IntegrationVerificationStates.Unverified, status.Verification?.State);
-        Assert.Contains("first-parent", status.Verification?.Reason);
-        Assert.Contains(verifiedSide, status.Verification?.Reason);
+            State = IntegrationVerificationStates.Verified, Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok), Sha = verifiedSide,
+            IntegrationBranch = "develop", DeliveryShas = [deliverySha],
+        });
+        var service = Service(deps, batches);
+        Assert.Equal(IntegrationVerificationStates.Unverified, service.BuildForAcceptance(card).Verification?.State);
+        WriteBatchEvidence(batches, "side-batch", deliverySha, batchSha);
+        Assert.Equal(batchSha, service.BuildForAcceptance(card).Verification?.Sha);
+        Assert.Equal(IntegrationVerificationStates.Verified, service.BuildForAcceptance(card).Verification?.State);
     }
 
     [Fact]
@@ -4169,17 +4108,12 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
                 },
             ],
         };
-        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
-        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
-            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
-        {
-            TestStatusOverride = _ => VerifiedStatus(deliverySha, replaySha),
-        };
+        var service = Service(deps, batches);
 
         var status = service.BuildForAcceptance(card);
 
         Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
-        Assert.Contains("batch gate mapped-batch run run", status.Verification?.Reason);
+        Assert.Contains("Batch gate mapped-batch run run", status.Verification?.Reason);
     }
 
     [Fact]
@@ -4217,12 +4151,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
             PassedPublishedGate(laterSha, "AGT-LATER")));
         var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
-        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
-        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
-            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
-        {
-            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
-        };
+        var service = Service(deps, batches);
         int CountCalls()
         {
             using var telemetry = GitProcessTelemetry.BeginRequest(
@@ -4244,7 +4173,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.True(withStaleEvidence <= baseline,
             $"Stale evidence added Git calls: baseline={baseline}, with evidence={withStaleEvidence}.");
-        Assert.InRange(withStaleEvidence, 1, 8);
+        Assert.InRange(withStaleEvidence, 0, baseline);
     }
 
     private static TaskIntegrationStatus VerifiedStatus(string deliverySha, string verificationSha) => new()
@@ -4332,7 +4261,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("the integration verification check expected integrated-verified gate evidence", moved.Message);
+        Assert.Contains("An owner can record a verification", moved.Message);
     }
 
     [Theory]
@@ -5079,7 +5008,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         string contentStatus = "pass",
         string contentSummary = "The fixture delivery answers its brief.",
         string taskKey = TaskKey,
-        string slug = Slug)
+        string slug = Slug,
+        PostMergeRunStore? postMergeRuns = null)
     {
         var deliveryRef = taskKey == TaskKey ? DeliveryRef : $"runner/agent-runner-01/{taskKey}";
         var config = new ConfigurationBuilder()
@@ -5162,9 +5092,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             preMainTestGate: gateRunner == null ? null : new PreMainTestGate(gateRunner),
             preDevelopBuildGate: gateRunner == null ? null : new PreDevelopBuildGate(gateRunner),
             preDevelopTimeout: TimeSpan.FromSeconds(30));
-        var integration = new TaskIntegrationStatusService(
-            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
-            batchGates: batchGates, scanner: scanner);
+        var registry = postMergeRuns is null ? null : new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        registry?.EnsureProjectForStorage(_watchPath, Project, DefaultWorkspace.Id);
+        var integration = new TaskIntegrationStatusService(git, settings, pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, new FakeTimeProvider(new DateTimeOffset(VerificationFixtureAtUtc)),
+            registry, batchGates: batchGates, postMerge: postMergeRuns);
         var provenance = new TaskProvenanceService(
             git,
             settings,

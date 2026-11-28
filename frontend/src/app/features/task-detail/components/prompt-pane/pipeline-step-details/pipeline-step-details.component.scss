@@ -10,7 +10,7 @@
     justify-content: center;
     width: 22px;
     height: 22px;
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 1px solid var(--studio-border);
     border-radius: var(--studio-compat-radius-13);
     background: transparent;
@@ -72,7 +72,7 @@
     }
 
     p {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       color: var(--studio-fg-dim);
       font-size: var(--studio-font-size-sm);
       line-height: 1.5;
@@ -84,7 +84,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--studio-spacing-2);
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg-strong);
     font-size: var(--studio-compat-type-6);
     font-weight: 750;

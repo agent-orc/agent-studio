@@ -94,6 +94,200 @@ public sealed class IntegrationLeaseServiceTests
         Assert.Equal("task-b", staleHeartbeat.Lease!.TaskKey);
     }
 
+    [Fact]
+    public void TryAcquire_TwoWaitersKeepFifoPositionAcrossPollsAndRelease()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var holder = service.TryAcquire(Request("task-a", "runner-a"));
+        var first = Request("task-b", "runner-b");
+        var second = Request("task-c", "runner-c");
+        Assert.Equal(1, service.TryAcquire(first).QueuePosition);
+        Assert.Equal(2, service.TryAcquire(second).QueuePosition);
+
+        for (var poll = 0; poll < 3; poll++)
+        {
+            now = now.AddSeconds(1);
+            Assert.Equal(1, service.TryAcquire(first).QueuePosition);
+            Assert.Equal(2, service.TryAcquire(second).QueuePosition);
+            Assert.Equal(2, service.Peek(first.ProjectName, first.IntegrationBranch).QueuePosition);
+        }
+
+        Release(service, holder);
+        for (var poll = 0; poll < 3; poll++)
+        {
+            var queued = service.TryAcquire(second);
+            Assert.False(queued.Granted);
+            Assert.Equal(2, queued.QueuePosition);
+            Assert.Null(queued.Lease);
+            Assert.Contains("free", queued.Message!);
+            Assert.DoesNotContain("held by another runner", queued.Message!);
+        }
+
+        var firstGrant = service.TryAcquire(first);
+        Assert.True(firstGrant.Granted);
+        Assert.Equal("task-b", firstGrant.Lease!.TaskKey);
+        Assert.Equal(2, firstGrant.Lease.FencingToken);
+        var waitingForFirst = service.TryAcquire(second);
+        Assert.Equal(1, waitingForFirst.QueuePosition);
+        Assert.Equal("task-b", waitingForFirst.Lease!.TaskKey);
+        Release(service, firstGrant);
+
+        var secondGrant = service.TryAcquire(second);
+        Assert.True(secondGrant.Granted);
+        Assert.Equal("task-c", secondGrant.Lease!.TaskKey);
+        Assert.Equal(3, secondGrant.Lease.FencingToken);
+        Assert.Equal(0, service.Peek(first.ProjectName, first.IntegrationBranch).QueuePosition);
+    }
+
+    [Fact]
+    public void Peek_FreeLaneWithWaitersReportsQueued()
+    {
+        var service = NewService();
+        var holder = service.TryAcquire(Request("task-a", "runner-a"));
+        var first = Request("task-b", "runner-b");
+        service.TryAcquire(first);
+        service.TryAcquire(Request("task-c", "runner-c"));
+        Release(service, holder);
+
+        var peek = service.Peek(first.ProjectName, first.IntegrationBranch);
+
+        Assert.Equal("Queued", peek.Outcome);
+        Assert.Null(peek.Lease);
+        Assert.Equal(2, peek.QueuePosition);
+        Assert.DoesNotContain("held by another runner", peek.Message ?? "");
+    }
+
+    [Fact]
+    public void TryAcquire_AbandonedRemoteHeadExpiresWhileActiveSuccessorKeepsWaiting()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var holder = service.TryAcquire(Request("task-a", "runner-a", ttlSeconds: 2700));
+        var abandoned = Request("task-b", "runner-b");
+        var active = Request("task-c", "runner-c");
+        service.TryAcquire(abandoned);
+        service.TryAcquire(active);
+
+        now = now.AddMinutes(5);
+        Assert.Equal(2, service.TryAcquire(active).QueuePosition);
+        Release(service, holder);
+        now = now.AddMinutes(5).AddTicks(-1);
+        var beforeExpiry = service.TryAcquire(active);
+        Assert.Equal(2, beforeExpiry.QueuePosition);
+        Assert.False(beforeExpiry.Granted);
+        Assert.Null(beforeExpiry.Lease);
+        Assert.DoesNotContain("held by another runner", beforeExpiry.Message!);
+        now = now.AddTicks(1);
+
+        var granted = service.TryAcquire(active);
+        Assert.True(granted.Granted);
+        Assert.Equal(2, granted.Lease!.FencingToken);
+        Assert.Equal(1, service.TryAcquire(abandoned).QueuePosition);
+        Release(service, granted);
+        Assert.True(service.TryAcquire(abandoned).Granted);
+    }
+
+    [Fact]
+    public void Peek_PrunesAbandonedRemoteWaitersAtIdleDeadline()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var holder = service.TryAcquire(Request("task-a", "runner-a", ttlSeconds: 2700));
+        var first = Request("task-b", "runner-b");
+        service.TryAcquire(first);
+        service.TryAcquire(Request("task-c", "runner-c"));
+        now = now.AddMinutes(10);
+
+        var held = service.Peek(first.ProjectName, first.IntegrationBranch);
+        Assert.Equal("Held", held.Outcome);
+        Assert.Equal(holder.Lease, held.Lease);
+        Assert.Equal(0, held.QueuePosition);
+        Release(service, holder);
+        Assert.Equal("Free", service.Peek(first.ProjectName, first.IntegrationBranch).Outcome);
+    }
+
+    [Fact]
+    public void TryAcquire_PollRefreshesIdleDeadlineWithoutLosingHeadPosition()
+    {
+        var now = new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var holder = service.TryAcquire(Request("task-a", "runner-a", ttlSeconds: 2700));
+        var first = Request("task-b", "runner-b");
+        var second = Request("task-c", "runner-c");
+        service.TryAcquire(first);
+        service.TryAcquire(second);
+        for (var poll = 0; poll < 3; poll++)
+        {
+            now = now.AddMinutes(5);
+            Assert.Equal(1, service.TryAcquire(first).QueuePosition);
+            Assert.Equal(2, service.TryAcquire(second).QueuePosition);
+        }
+
+        Release(service, holder);
+        Assert.Equal(2, service.TryAcquire(second).QueuePosition);
+        Assert.True(service.TryAcquire(first).Granted);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WaitAcquireAsync_CancellationRemovesOnlyCancelledWaiter(bool cancelHead)
+    {
+        var service = NewService();
+        var holder = service.TryAcquire(Request("task-a", "runner-a"));
+        using var firstCancellation = new CancellationTokenSource();
+        using var secondCancellation = new CancellationTokenSource();
+        var first = Request("task-b", "runner-b");
+        var second = Request("task-c", "runner-c");
+        var firstWait = service.WaitAcquireAsync(first, TimeSpan.FromDays(1), firstCancellation.Token);
+        var secondWait = service.WaitAcquireAsync(second, TimeSpan.FromDays(1), secondCancellation.Token);
+        try
+        {
+            Assert.Equal(2, service.Peek(first.ProjectName, first.IntegrationBranch).QueuePosition);
+            (cancelHead ? firstCancellation : secondCancellation).Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelHead ? firstWait : secondWait);
+            var held = service.Peek(first.ProjectName, first.IntegrationBranch);
+            Assert.Equal(holder.Lease, held.Lease);
+            Assert.Equal(1, held.QueuePosition);
+            Release(service, holder);
+            Assert.True(service.TryAcquire(cancelHead ? second : first).Granted);
+        }
+        finally
+        {
+            firstCancellation.Cancel();
+            secondCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstWait);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => secondWait);
+        }
+    }
+
+    [Fact]
+    public void Release_WrongOwnerCannotReleaseHolderOrDisturbQueue()
+    {
+        var service = NewService();
+        var holder = service.TryAcquire(Request("task-a", "runner-a"));
+        var first = Request("task-b", "runner-b");
+        service.TryAcquire(first);
+        service.TryAcquire(Request("task-c", "runner-c"));
+        var lease = holder.Lease!;
+
+        var rejected = service.Release(new IntegrationLeaseReleaseRequest(
+            lease.ProjectName, lease.IntegrationBranch, lease.LeaseId, lease.FencingToken, "runner-b"));
+
+        Assert.Equal("StaleToken", rejected.Outcome);
+        Assert.Equal(lease, rejected.Lease);
+        Release(service, holder);
+        Assert.True(service.TryAcquire(first).Granted);
+    }
+
+    private static void Release(IntegrationLeaseService service, IntegrationLeaseResponse acquired)
+    {
+        var lease = acquired.Lease!;
+        Assert.Equal("Released", service.Release(new IntegrationLeaseReleaseRequest(
+            lease.ProjectName, lease.IntegrationBranch, lease.LeaseId, lease.FencingToken, lease.RunnerId)).Outcome);
+    }
+
     private static IntegrationLeaseService NewService(Func<DateTime>? utcNow = null)
         => new(NullLogger<IntegrationLeaseService>.Instance, utcNow);
 

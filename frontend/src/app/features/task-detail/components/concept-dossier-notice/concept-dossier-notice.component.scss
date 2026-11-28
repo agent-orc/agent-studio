@@ -51,7 +51,7 @@
 .dossier__action {
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;
@@ -68,7 +68,7 @@
   flex: 1 1 24rem;
   align-items: center;
   gap: var(--studio-spacing-2);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 }
 
 .dossier__input {

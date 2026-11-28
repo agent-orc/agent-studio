@@ -9,9 +9,17 @@ public sealed record CapacityCard(string CardKey, IReadOnlyList<CapacityBlock> B
 public sealed record CapacityChainHead(string CardKey, string State, int CardsBehind);
 public sealed record CapacitySubscription(string CliType, string? SubscriptionKey, string Window,
     double? UsedPercent, double? ElapsedPercent, double? LeftAtResetPercent, DateTime? ResetAt, string Status);
+public sealed record CapacityAllocation(string RunnerId, int? BootstrapSlots, int? ConfiguredSlots,
+    int? AdoptedSlots, string State);
 public sealed record CodingCapacityFact(string? Project, int TotalSlots, int UsedSlots, int FreeSlots,
     int Ready, int ClaimableNow, int DependencyWidth, int MaxConcurrentCards,
-    IReadOnlyList<CapacityCard> Cards, IReadOnlyList<CapacityChainHead> Heads, string Cause);
+    IReadOnlyList<CapacityCard> Cards, IReadOnlyList<CapacityChainHead> Heads, string Cause)
+{
+    public int AdmissibleSlots { get; init; } = FreeSlots;
+    public int RunnableNow { get; init; } = ClaimableNow;
+    public DateTime? LastProgressAt { get; init; }
+    public IReadOnlyList<CapacityAllocation> Allocations { get; init; } = [];
+}
 public sealed record CodingCapacityResponse(CodingCapacityFact Fleet, IReadOnlyList<CodingCapacityFact> Projects,
     IReadOnlyList<CapacitySubscription> Subscriptions);
 
@@ -26,7 +34,8 @@ public static class CodingCapacityProjection
     public static CodingCapacityFact Project(string? project, IReadOnlyList<TaskInfo> tasks,
         TaskReferenceIndex references, int totalSlots, int usedSlots,
         Func<TaskInfo, IReadOnlyList<CapacityBlock>> blocksOf,
-        Func<TaskInfo, WaitsOnStatus>? waitsOf = null)
+        Func<TaskInfo, WaitsOnStatus>? waitsOf = null, int? admissibleSlots = null,
+        IReadOnlyList<CapacityBlock>? admissionBlocks = null, DateTime? lastProgressAt = null)
     {
         // Match reference resolution: the first occurrence owns a stable card key.
         tasks = tasks.DistinctBy(Key, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -63,8 +72,19 @@ public static class CodingCapacityProjection
                 && !waits[Key(task)].CycleDetected).Select(Key).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var width = Width(nodes, ancestors);
         var claimable = cards.Count(card => card.Blocks.Count == 0);
-        var free = Math.Max(0, totalSlots - usedSlots);
-        var cause = ready.Length == 0 ? "Ready is empty; plan more cards."
+        usedSlots = Math.Max(0, usedSlots);
+        totalSlots = Math.Max(usedSlots, Math.Max(0, totalSlots));
+        var free = totalSlots - usedSlots;
+        var admissible = Math.Min(claimable, Math.Clamp(admissibleSlots ?? free, 0, free));
+        var runnable = cards.Count(card => card.Blocks.All(block => block.Class == "admission"));
+        var holds = cards.SelectMany(card => card.Blocks).Concat(admissionBlocks ?? [])
+            .Where(block => block.Class == "admission").Select(block => block.Reason).Distinct().ToArray();
+        var cause = free == 0 && totalSlots > 0 ? "Coding capacity is full."
+            : totalSlots == 0 ? "No fresh coding capacity is available; inspect execution hosts."
+            : ready.Length == 0 ? "Ready is empty; plan more cards."
+            : runnable >= free || runnable > 0 && claimable < runnable
+                ? $"{runnable} runnable cards awaiting admission for {admissible} admissible slots ({free} physical free slots)"
+                    + (holds.Length == 0 ? "; awaiting pickup progress." : $": {string.Join("; ", holds)}.")
             : heads.Any(head => head.State != "waiting")
                 ? string.Join("; ", heads.Where(head => head.State != "waiting").Select(head => $"{head.CardKey} is {head.State} and holds {head.CardsBehind} cards")) + "; resolve these chain heads."
             : claimable == 0 && cards.SelectMany(card => card.Blocks).FirstOrDefault(block => block.Class != "dependency") is { } block
@@ -75,7 +95,10 @@ public static class CodingCapacityProjection
                 ? $"{width} chains: at most {width} cards can run; plan independent cards."
                 : $"{claimable} claimable cards for {free} free slots; plan more cards.";
         return new(project, totalSlots, usedSlots, free, ready.Length, claimable, width,
-            Math.Min(totalSlots, width), cards, heads, cause);
+            Math.Min(totalSlots, width), cards, heads, cause)
+        {
+            AdmissibleSlots = admissible, RunnableNow = runnable, LastProgressAt = lastProgressAt,
+        };
     }
 
     // Dilworth's theorem: width = vertices minus maximum matching in the transitive DAG.
@@ -194,7 +217,8 @@ public static class CodingCapacityProjection
 /// <summary>Tracks observed continuous free capacity, independently of browser polling.</summary>
 public sealed class CapacityIdleTracker
 {
-    private readonly Dictionary<string, DateTime> _since = new(StringComparer.OrdinalIgnoreCase);
+    private sealed record Observation(DateTime Since, int Used, DateTime? Progress);
+    private readonly Dictionary<string, Observation> _since = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
 
     public void Reset() { lock (_gate) _since.Clear(); }
@@ -211,11 +235,16 @@ public sealed class CapacityIdleTracker
         {
             var key = fact.Project ?? "fleet";
             if (fact.FreeSlots <= 0) { _since.Remove(key); return null; }
-            if (!_since.TryGetValue(key, out var since) || since > now) _since[key] = since = now;
+            if (!_since.TryGetValue(key, out var previous) || previous.Since > now
+                || previous.Used != fact.UsedSlots || previous.Progress != fact.LastProgressAt)
+                _since[key] = previous = new(now, fact.UsedSlots, fact.LastProgressAt);
+            var since = previous.Since;
             var surplus = quota.FirstOrDefault(row => row.LeftAtResetPercent > CodingCapacityProjection.LeftoverSharePercent);
-            var shortage = reportShortage && (fact.ClaimableNow == 0 || fact.Ready > 0 && fact.ClaimableNow < fact.FreeSlots);
-            if (now - since <= TimeSpan.FromMinutes(CodingCapacityProjection.IdleMinutes) || !shortage && surplus is null) return null;
-            var reason = shortage ? fact.Cause
+            var shortage = reportShortage && (fact.RunnableNow < fact.FreeSlots);
+            var stalled = reportShortage && fact.Ready > 0 && (fact.ClaimableNow < fact.RunnableNow
+                || fact.AdmissibleSlots < fact.FreeSlots || surplus is null && fact.RunnableNow >= fact.FreeSlots);
+            if (now - since <= TimeSpan.FromMinutes(CodingCapacityProjection.IdleMinutes) || !shortage && !stalled && surplus is null) return null;
+            var reason = shortage || stalled ? fact.Cause
                 : FormattableString.Invariant($"{surplus!.CliType} {surplus.Window} projects {surplus.LeftAtResetPercent:0.#}% left at reset, above {CodingCapacityProjection.LeftoverSharePercent}% (used {surplus.UsedPercent:0.#}%, elapsed {surplus.ElapsedPercent:0.#}%); plan work for this subscription.");
             return new(OperatorDecisionTypes.CapacityUnderused, $"{OperatorDecisionTypes.CapacityUnderused}|{key}|{since:O}",
                 fact.Project, shortage ? fact.Heads.FirstOrDefault()?.CardKey : null, reason, since,

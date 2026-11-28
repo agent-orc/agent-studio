@@ -218,6 +218,7 @@ public sealed class ModelSelectionService : IModelSelectionService
         {
             NowUtc = now,
             Caps = _caps,
+            PaceFor = (cli, window) => workspacePolicy?.PaceFor(cli, window) ?? QuotaPace.Steady,
             ShortStepReservePoints = workspacePolicy?.ShortStepReservePoints ?? 10,
             ProviderUnavailable = Unavailable,
             SnapshotFor = call.SnapshotOverride ?? (cli => string.IsNullOrWhiteSpace(cli) ? null : EvidenceFor(cli).Snapshot),
@@ -305,7 +306,8 @@ public sealed class ModelSelectionService : IModelSelectionService
                     // Preflight and dispatch can select the same remote claim twice.
                     var key = string.Join("|", call.ExecutionPath, call.DecisionKey,
                         request.Project, request.TaskKey, request.Host?.HostId,
-                        result.Outcome, result.Rule, result.Primary, result.Route);
+                        result.Outcome, result.Rule, result.Primary, result.Route,
+                        System.Text.Json.JsonSerializer.Serialize(result.Quota?.WindowPaces));
                     lock (_receiptSync)
                     {
                         if (!_receiptIds.TryGetValue(key, out var id))

@@ -12,6 +12,8 @@ namespace AgentStudio.Runner;
 public sealed class IntegrationLeaseService
 {
     public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
+    // Acquire polls keep a waiter's place alive independently of the holder's TTL.
+    public static readonly TimeSpan QueueIdleTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MinTtl = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(45);
 
@@ -40,12 +42,12 @@ public sealed class IntegrationLeaseService
         {
             var slot = SlotFor(key);
             PruneExpiredCurrent(slot, key, now);
-            RemoveDuplicateQueued(slot, owner);
+            PruneExpiredQueued(slot, now);
 
             if (slot.Current is { } current && current.Owner.SameOwner(owner))
                 return new IntegrationLeaseResponse("AlreadyOwn", true, ToDto(current), 0);
 
-            slot.Queue.Enqueue(new IntegrationLeaseQueueEntry(owner, now));
+            QueueOrRefresh(slot, owner, now);
 
             if (slot.Current is null && slot.Queue.TryPeek(out var head) && head.Owner.SameOwner(owner))
             {
@@ -67,7 +69,9 @@ public sealed class IntegrationLeaseService
                 false,
                 ToDto(slot.Current),
                 position,
-                $"Integration branch '{key.IntegrationBranch}' is held by another runner; queued at position {position}.");
+                slot.Current is null
+                    ? $"Integration branch '{key.IntegrationBranch}' is free with earlier queued waiters; queued at position {position}."
+                    : $"Integration branch '{key.IntegrationBranch}' is held by another runner; queued at position {position}.");
         }
     }
 
@@ -168,8 +172,11 @@ public sealed class IntegrationLeaseService
         {
             if (!_slots.TryGetValue(key, out var slot))
                 return new IntegrationLeaseResponse("Free", false, null, 0);
-            PruneExpiredCurrent(slot, key, _utcNow());
-            return new IntegrationLeaseResponse(slot.Current is null ? "Free" : "Held", false, ToDto(slot.Current), slot.Queue.Count);
+            var now = _utcNow();
+            PruneExpiredCurrent(slot, key, now);
+            PruneExpiredQueued(slot, now);
+            var outcome = slot.Current is not null ? "Held" : slot.Queue.Count > 0 ? "Queued" : "Free";
+            return new IntegrationLeaseResponse(outcome, false, ToDto(slot.Current), slot.Queue.Count);
         }
     }
 
@@ -243,10 +250,22 @@ public sealed class IntegrationLeaseService
         slot.Current = null;
     }
 
-    private static void RemoveDuplicateQueued(IntegrationLeaseSlot slot, IntegrationLeaseOwner owner)
+    private static void PruneExpiredQueued(IntegrationLeaseSlot slot, DateTime now)
     {
         slot.Queue = new Queue<IntegrationLeaseQueueEntry>(
-            slot.Queue.Where(q => !q.Owner.SameOwner(owner)));
+            slot.Queue.Where(q => q.LastSeenAt.Add(QueueIdleTimeout) > now));
+    }
+
+    private static void QueueOrRefresh(IntegrationLeaseSlot slot, IntegrationLeaseOwner owner, DateTime now)
+    {
+        if (slot.Queue.Any(q => q.Owner.SameOwner(owner)))
+        {
+            slot.Queue = new Queue<IntegrationLeaseQueueEntry>(
+                slot.Queue.Select(q => q.Owner.SameOwner(owner) ? q with { LastSeenAt = now } : q));
+            return;
+        }
+
+        slot.Queue.Enqueue(new IntegrationLeaseQueueEntry(owner, now, now));
     }
 
     private static int QueuePosition(IntegrationLeaseSlot slot, IntegrationLeaseOwner owner)
@@ -350,7 +369,7 @@ public sealed class IntegrationLeaseService
                 Normalize(request.BackendName));
     }
 
-    private sealed record IntegrationLeaseQueueEntry(IntegrationLeaseOwner Owner, DateTime QueuedAt);
+    private sealed record IntegrationLeaseQueueEntry(IntegrationLeaseOwner Owner, DateTime QueuedAt, DateTime LastSeenAt);
 
     private sealed record IntegrationLeaseRecord(
         string ProjectName,

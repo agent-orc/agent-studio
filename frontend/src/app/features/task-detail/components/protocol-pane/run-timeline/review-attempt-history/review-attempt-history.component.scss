@@ -45,8 +45,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--studio-spacing-2);
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 
@@ -81,7 +81,7 @@
 }
 
 .review-attempts__body p {
-  margin: var(--studio-spacing-1) 0;
+  margin: var(--studio-spacing-1) var(--studio-spacing-0);
   color: var(--studio-fg);
   font-size: var(--studio-compat-type-19);
   line-height: 1.4;

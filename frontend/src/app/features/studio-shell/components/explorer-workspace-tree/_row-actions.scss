@@ -8,9 +8,9 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-fg-muted);
   cursor: pointer;
@@ -26,7 +26,7 @@
 .studio-explorer-tree__row-action:hover,
 .studio-explorer-tree__row-action:focus-visible {
   background: var(--studio-bg-hover);
-  color: var(--studio-accent);
+  color: var(--studio-link-ink);
   opacity: 1;
 }
 
@@ -40,14 +40,14 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   background: transparent;
   color: var(--studio-fg-muted);
   cursor: pointer;
 
-  &:hover { background: var(--studio-bg-hover); color: var(--studio-accent); }
+  &:hover { background: var(--studio-bg-hover); color: var(--studio-link-ink); }
   &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 }
 

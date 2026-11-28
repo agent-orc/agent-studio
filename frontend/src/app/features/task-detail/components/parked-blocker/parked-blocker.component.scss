@@ -33,7 +33,7 @@
   }
 
   &__collapsed-reason {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg-strong);
     font-size: var(--studio-compat-type-70);
     overflow: hidden;
@@ -59,7 +59,7 @@
   }
 
   &__question {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg-strong);
     font-size: var(--studio-compat-type-32);
     font-weight: 600;
@@ -75,7 +75,7 @@
     display: flex;
     align-items: baseline;
     gap: var(--studio-spacing-1);
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg);
     font-size: var(--studio-compat-type-6);
   }
@@ -84,8 +84,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--studio-spacing-1);
-    margin: 0;
-    padding: 0;
+    margin: var(--studio-spacing-0);
+    padding: var(--studio-spacing-0);
     list-style: none;
   }
 
@@ -132,7 +132,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: var(--studio-spacing-1) var(--studio-spacing-3);
-    margin: 0;
+    margin: var(--studio-spacing-0);
     font-size: var(--studio-font-size-sm);
   }
 
@@ -145,7 +145,7 @@
     }
 
     dd {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       color: var(--studio-fg-strong);
       min-width: 0;
       overflow-wrap: anywhere;
@@ -156,17 +156,17 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--studio-spacing-2);
-    margin: 0;
-    padding: 0;
+    margin: var(--studio-spacing-0);
+    padding: var(--studio-spacing-0);
     font-size: var(--studio-font-size-sm);
     list-style: none;
   }
 
   &__link {
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 0;
     background: none;
-    color: var(--studio-accent);
+    color: var(--studio-link-ink);
     cursor: pointer;
     font: inherit;
     text-decoration: underline;
@@ -194,7 +194,7 @@
       display: flex;
       flex-direction: column;
       gap: var(--studio-spacing-1);
-      margin: 0;
+      margin: var(--studio-spacing-0);
       padding-inline-start: var(--studio-spacing-4);
       color: var(--studio-fg);
     }
@@ -240,7 +240,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
     gap: var(--studio-spacing-2);
-    margin: 0;
+    margin: var(--studio-spacing-0);
 
     div {
       display: flex;
@@ -256,7 +256,7 @@
     }
 
     dd {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       color: var(--studio-fg-strong);
       font-family: var(--studio-font-mono, monospace);
       font-size: var(--studio-font-size-sm);
@@ -271,7 +271,7 @@
     gap: var(--studio-spacing-2);
 
     h3 {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       color: var(--studio-fg-strong);
       font-size: var(--studio-font-size-sm);
     }
@@ -282,7 +282,7 @@
   &__failure pre,
   &__prompt pre {
     max-height: 14rem;
-    margin: 0;
+    margin: var(--studio-spacing-0);
     overflow: auto;
     border: 1px solid var(--studio-border);
     border-radius: var(--studio-compat-radius-7);
@@ -294,7 +294,7 @@
   }
 
   &__session-state {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg);
     font-size: var(--studio-font-size-sm);
   }
@@ -305,7 +305,7 @@
 
   &__full-log {
     align-self: flex-start;
-    color: var(--studio-accent);
+    color: var(--studio-link-ink);
     font-size: var(--studio-font-size-sm);
     text-underline-offset: 2px;
   }

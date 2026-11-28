@@ -1,15 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
-/// <summary>
-/// AGT-3753 - when a later first-parent publication turns a verified delivery
-/// into unverified at acceptance, the refusal names that commit (short SHA and
-/// subject) and what each gate source answered for it, and the Human Review
-/// card detail projection shows the same reason.
-/// </summary>
 public sealed partial class AcceptanceIntegrationRoundTripTests
 {
     [Fact]
@@ -46,7 +41,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.True(acceptedLater.Status == MoveJobStatus.Success, acceptedLater.Message);
         deps.Scanner.InvalidateCache();
         Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob("later-no-gate", _watchPath)?.State);
-        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "no-gate-batches")), earlier);
+        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "no-gate-batches")));
 
         Assert.Equal(IntegrationVerificationStates.Verified,
             service.BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification?.State);
@@ -80,7 +75,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         });
         deps.Scanner.InvalidateCache();
 
-        var result = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "untrusted-batches")), earlier)
+        var result = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "untrusted-batches")))
             .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, result?.State);
@@ -117,7 +112,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
     }
 
     [Fact]
-    public void Acceptance_UncoveredLaterPublication_NamesTheCommitAndEverySourceAnswer()
+    public void Acceptance_MissingBaseVerdictEvidenceNamesTheTipAnOwnerCanVerify()
     {
         var deliverySha = PublishDelivery("uncovered-delivery.txt", "verified delivery\n");
         RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
@@ -128,28 +123,19 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         var uncovered = PublishLaterCommit("uncovered-first.txt");
         var covered = PublishLaterCommit("uncovered-second.txt");
-        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(covered, "AGT-LATER")));
         var batches = new BatchGateStore(Path.Combine(_tempDir, "uncovered-base-gates"));
         batches.RecordBaseVerdict(new BatchGateBaseVerdict(Project, uncovered,
             BatchGatePilotService.GateProfile(deps.Settings.Get(Project).BuildProfile, _repo), "pass", null,
             "verify gate passed", Path.Combine(_tempDir, "no-such-evidence.json"),
             DateTimeOffset.UnixEpoch.AddDays(1), BatchGateBaseCheckSources.FullSuite));
-        var service = Service(deps, batches, deliverySha);
+        var service = Service(deps, batches);
 
         var verification = service.BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
-        Assert.Equal($"{uncovered[..7]} \"later published delivery\"", verification?.UncoveredPublication);
-        Assert.Contains($"First uncovered commit after verified tree {deliverySha[..7]} up to {covered[..7]}: "
-            + $"{uncovered[..7]} \"later published delivery\"", verification?.Reason);
-        Assert.Contains("no published gate evidence for that tree", verification?.Reason);
-        Assert.Contains("a batch base check passed on it but is not counted: its evidence file is missing",
-            verification?.Reason);
-        Assert.Contains("no batch publication covering it", verification?.Reason);
-        Assert.Contains("Commit author: test", verification?.Reason);
-        Assert.Contains($"POST /api/projects/{Project}/operator-candidate-verifications for {uncovered}",
-            verification?.Reason);
-        Assert.DoesNotContain(covered[..7] + " \"", verification?.Reason);
+        Assert.Equal(covered, verification?.UncoveredPublication);
+        Assert.Contains($"An owner can record a verification for develop tip {covered}", verification?.Reason);
+        Assert.Contains("minutes ago", verification?.Reason);
     }
 
     [Fact]
@@ -165,11 +151,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
             PassedPublishedGate(covering, "AGT-LATER") with { TestLevel = TestExecutionLevels.Full }));
 
-        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "full-cover-gates")),
-            deliverySha).BuildForAcceptance(card).Verification;
+        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "full-cover-gates"))).BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
-        Assert.Contains($"publication {covering}", verification?.Reason);
+        Assert.Equal(covering, verification?.Sha);
     }
 
     [Fact]
@@ -181,16 +166,6 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var batches = new BatchGateStore(Path.Combine(_tempDir, "later-covering-batch"));
         var deps = Build(deliverySha, batchGates: batches);
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
-        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
-        {
-            State = IntegrationVerificationStates.Verified,
-            Sha = deliverySha,
-            IntegrationBranch = "develop",
-            DeliveryShas = [deliverySha],
-            Evidence = IntegrationVerificationEvidence.MergeGate,
-            GateVerdict = nameof(BuildTestGateVerdict.Ok),
-            Reason = "The delivery gate passed.",
-        });
         PublishLaterCommit("batch-cover-hole.txt");
         var covering = PublishLaterCommit("batch-cover-candidate.txt");
 
@@ -204,8 +179,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
 
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var evidence = deps.Scanner.FindJob(Slug, _watchPath)!.CompletionClaim?.Evidence;
-        Assert.Contains($"covered by the passed gate of {covering} at "
-            + $"{DateTimeOffset.UnixEpoch.AddDays(1):O}", evidence);
+        Assert.Contains($"passed on {covering} at {DateTimeOffset.UnixEpoch.AddDays(1):O}", evidence);
     }
 
     [Fact]
@@ -226,7 +200,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         WriteBatchEvidence(batches, "failed-cover", hole, failedTree,
             outcome: "fail", published: false);
 
-        var verification = Service(deps, batches, deliverySha)
+        var verification = Service(deps, batches)
             .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
@@ -251,7 +225,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var batches = new BatchGateStore(Path.Combine(_tempDir, "side-covering-batch"));
         WriteBatchEvidence(batches, "side-cover", deliverySha, sideTree);
 
-        var verification = Service(deps, batches, deliverySha)
+        var verification = Service(deps, batches)
             .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
@@ -277,11 +251,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         WriteBatchEvidence(batches, "pending-cover", hole, candidate,
             outcome: null, published: false);
 
-        var verification = Service(deps, batches, deliverySha)
+        var verification = Service(deps, batches)
             .BuildForAcceptance(deps.Scanner.FindJob(Slug, _watchPath)!).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
-        Assert.Contains($"Acceptance waits for the running gate of {candidate}", verification?.Reason);
+        Assert.Contains($"running gate of {candidate}", verification?.Reason);
         Assert.DoesNotContain("operator-candidate-verifications", verification?.Reason);
     }
 
@@ -302,11 +276,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
             $"verdict=Ok exit=0 failureKind=None\nexpectedSha={covering} testedSha={covering}\n"
             + "reason=passed; test-level=full; full-suite=required-and-run\nverdictSource=Executed\n");
 
-        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "receipt-cover-gates")),
-            deliverySha).BuildForAcceptance(card).Verification;
+        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "receipt-cover-gates"))).BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
-        Assert.Contains($"publication {covering}", verification?.Reason);
+        Assert.Equal(covering, verification?.Sha);
     }
 
     [Theory]
@@ -329,12 +302,10 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
                 System.Text.Json.JsonSerializer.Serialize(new[] { gate },
                     new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
 
-        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "not-full-cover-gates")),
-            deliverySha).BuildForAcceptance(card).Verification;
+        var verification = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "not-full-cover-gates"))).BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
-        Assert.Contains((verdict == nameof(BuildTestGateVerdict.Ok) ? hole : later)[..7],
-            verification?.UncoveredPublication);
+        Assert.Equal(later, verification?.UncoveredPublication);
     }
 
     [Fact]
@@ -357,15 +328,12 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
             BatchGatePilotService.GateProfile(deps.Settings.Get(Project).BuildProfile, _repo),
             "pass", null, "stale batch check", Path.Combine(_tempDir, "missing-red-base-evidence.json"),
             DateTimeOffset.UnixEpoch.AddDays(1), BatchGateBaseCheckSources.FullSuite));
-        var service = Service(deps, batches, deliverySha);
+        var service = Service(deps, batches);
 
         var verification = service.BuildForAcceptance(card).Verification;
 
         Assert.Equal(IntegrationVerificationStates.Unverified, verification?.State);
-        Assert.Contains("published gate evidence is not counted: gate "
-            + $"{IntegrationGateJournal.PreDevelopBuildGateStep} of AGT-RED returned Fail", verification?.Reason);
-        Assert.DoesNotContain("batch", verification?.Reason, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Commit author: test", verification?.Reason);
+        Assert.Contains($"An owner can record a verification for develop tip {later}", verification?.Reason);
     }
 
     [Fact]
@@ -378,7 +346,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, card.State);
         var later = PublishLaterCommit("projection-later.txt");
-        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "projection-gates")), deliverySha);
+        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "projection-gates")));
 
         var projected = service.BuildProjectionLookup([card])[card.TaskKey].Verification;
         var acceptance = service.BuildForAcceptance(card).Verification;
@@ -386,17 +354,14 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         Assert.Equal(IntegrationVerificationStates.Unverified, projected?.State);
         Assert.Equal(later, projected?.Sha);
         Assert.Equal(acceptance?.Reason, projected?.Reason);
-        Assert.Equal($"{later[..7]} \"later published delivery\"", projected?.UncoveredPublication);
+        Assert.Equal(later, projected?.UncoveredPublication);
         // Lanes other than Human Review keep the completion projection.
-        Assert.Equal(IntegrationVerificationStates.Verified, service.BuildProjectionLookup(
-            [card with { State = TaskStates.Completed }])[card.TaskKey].Verification?.State);
+        Assert.Null(service.BuildProjectionLookup(
+            [card with { State = TaskStates.Completed }])[card.TaskKey].Verification?.UncoveredPublication);
     }
 
-    private TaskIntegrationStatusService Service(Deps deps, BatchGateStore batches, string deliverySha)
+    private static TaskIntegrationStatusService Service(Deps deps, BatchGateStore batches)
         => new(new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration), deps.Settings,
-            deps.Pipeline, NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches,
-            scanner: deps.Scanner)
-        {
-            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
-        };
+            deps.Pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
+            new FakeTimeProvider(new DateTimeOffset(VerificationFixtureAtUtc)), batchGates: batches);
 }

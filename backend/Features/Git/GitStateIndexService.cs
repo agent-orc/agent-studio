@@ -173,7 +173,7 @@ public sealed class GitStateIndexService : BackgroundService
                 var entries = project.PublishAutomation is null ? "" : string.Join(";",
                     project.PublishAutomation.OrderBy(pair => pair.Key, StringComparer.Ordinal)
                         .Select(pair => $"{pair.Key}={pair.Value}"));
-                return $"{project.IntegrationBranch}\0{entries}";
+                return $"{project.IntegrationBranch}\0{entries}\0{integrationStatus.PostMergeEvidenceVersion(projectName)}";
             },
             originStore,
             // Publish under the same root TaskIntegrationStatusService asks for.

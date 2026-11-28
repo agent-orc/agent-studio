@@ -36,7 +36,7 @@
 .ready-wait__dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-status-neutral);
   flex: 0 0 auto;
 }

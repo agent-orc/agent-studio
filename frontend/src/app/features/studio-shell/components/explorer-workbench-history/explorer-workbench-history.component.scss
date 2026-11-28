@@ -19,9 +19,9 @@
 }
 
 .studio-workbench-history__label {
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 9px;
+  font-size: var(--studio-compat-type-4);
   font-weight: 700;
   line-height: var(--studio-spacing-5);
   letter-spacing: 0.06em;
@@ -32,13 +32,13 @@
   display: block;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
 }
 
 .studio-workbench-status-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--studio-compat-radius-4);
   background: var(--studio-fg-muted);
   flex: none;
 }

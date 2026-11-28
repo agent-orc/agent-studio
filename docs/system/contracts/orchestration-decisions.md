@@ -1144,7 +1144,11 @@ delivery commits in its brief.
 
 `PostMergeSchedulingPolicy` owns window age promotion, the three-window owner
 deadline, gate queue priority and the last supersedable phase. Hosts collect
-clock, window and gate-phase facts. The gate authority serializes conditional
+clock, window and gate-phase facts. `PostMergeQueueOrder` places attempt age
+before kind priority and arrival order. Both authorities retain this order
+before each 32-item page and continue past ineligible candidates. The library
+also bounds daemon flights and protects the integration share of host grants.
+The gate authority serializes conditional
 cancellation against the worker's transition to `running` immediately before
 tests. Run-host promotion keeps the worker test envelope and load receipts.
 This changes verification placement, never the project's testing strategy.

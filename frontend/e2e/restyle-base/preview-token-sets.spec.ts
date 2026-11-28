@@ -1,9 +1,12 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect as playwrightExpect, test, type Locator, type Page, type Route } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
+import { readinessItem } from '../../src/app/features/acceptance-readiness/testing/acceptance-readiness.fixtures';
 import { securityPostureFixture } from '../../src/app/features/project-detail/testing/security-posture-fixtures';
 
+// The production shell loads its settings and board chunks on demand.
+const expect = playwrightExpect.configure({ timeout: 45_000 });
 const PROJECT = 'Card flow fixture';
 const WATCH = '/fixtures/card-flow';
 const NOW = '2026-11-26T09:00:00Z';
@@ -16,15 +19,23 @@ const make = (key: string, state: string, extra = {}) => ({
   folderPath: `${WATCH}/${state}/${key.toLowerCase()}`, agent: 'codex', cliType: 'codex',
   createdAt: NOW, lastActivity: NOW, enteredLaneAt: NOW, commits: [], tags: [], ...extra,
 });
-const ready = [make('AGT-4129', '2-ready', { ownerClientId: SA_ID })];
-const cards = ready;
 const json = (route: Route, body: unknown) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
 
-async function installFixture(page: Page) {
+async function installFixture(page: Page, synthesis = false) {
+  const ready = synthesis ? [
+    make('AGT-4141', '2-ready', { title: 'Preserve claims on reconnect', ownerClientId: SA_ID }),
+    make('AGT-4148', '2-ready', { title: 'Compare the workbench directions' }),
+  ] : [make('AGT-4129', '2-ready', { ownerClientId: SA_ID })];
+  const progress = synthesis ? [make('AGT-4138', '3-in-progress', { title: 'Separate host slots from project quota' })] : [];
+  const humanReview = synthesis ? [make('AGT-4142', '5-human-review', { title: 'Verify the integration evidence' })] : [];
+  const cards = [...ready, ...progress, ...humanReview];
+  page.setDefaultTimeout(45_000);
+  page.setDefaultNavigationTimeout(60_000);
   await page.clock.setFixedTime(new Date(NOW));
-  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+  await page.addInitScript(synthesis => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify(synthesis && !location.hash
+    ? { v: 1, tabs: [], activeKey: null } : {
     v: 1, tabs: [{ kind: 'board', projectName: '__all__' }, { kind: 'workspace-settings' }], activeKey: 'board:__all__',
-  })));
+  })), synthesis);
   await page.route('**/api/**', route => json(route, []));
   // The static prebuilt proxy does not forward the application's build-health probe.
   await page.route('**/healthz', route => route.fulfill({ contentType: 'text/plain', body: 'ok' }));
@@ -74,11 +85,17 @@ async function installFixture(page: Page) {
     execution: null, executions: [], config: {}, cost: null,
   }));
   await page.route('**/code-review/list**', route => json(route, { entries: [] }));
+  await page.route('**/api/tasks/acceptance-readiness', route => json(route, {
+    checkedAtUtc: NOW, counts: { ready: humanReview.length },
+    items: humanReview.map(card => readinessItem(card.id, 'ready', {
+      taskKey: card.taskKey, key: card.key, title: card.title, projectName: PROJECT,
+    })),
+  }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route(/\/api\/tasks(\?|$)/, route => json(route, cards));
   await page.route('**/api/v1/studio/board**', route => json(route, {
-    backlog: [], preparation: [], orchestratorPrep: [], ready, progress: [], failedPickup: [],
-    codeNotComplete: [], autoReview: [], review: [], humanReview: [], escalated: [], completed: [], archive: [],
+    backlog: [], preparation: [], orchestratorPrep: [], ready, progress, failedPickup: [],
+    codeNotComplete: [], autoReview: [], review: [], humanReview, escalated: [], completed: [], archive: [],
   }));
   await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/agt-[0-9]+(?:\?|$)/, route => {
     const id = /\/tasks\/(agt-[0-9]+)/.exec(route.request().url())![1];
@@ -199,7 +216,8 @@ async function auditContrast(page: Page, name: string) {
 for (const width of [1440, 390]) {
   for (const theme of ['light', 'dark'] as const) {
     test(`preview directions ${theme} at ${width}px`, async ({ page }) => {
-      test.setTimeout(180_000);
+      // Each of the three persisted previews reloads the production shell.
+      test.setTimeout(3 * 180_000);
       await page.setViewportSize({ width, height: 900 });
       await installFixture(page);
       await page.addInitScript(theme => {
@@ -300,3 +318,117 @@ for (const width of [1440, 390]) {
     });
   }
 }
+
+// Check actual rendered sibling boxes inside each surface. The board scrolls by
+// design, so the container is the card or row being read, not the entire lane strip.
+async function expectLayout(container: Locator, selector: string) {
+  await expect(container).toBeVisible();
+  const findings = await container.evaluate((el, selector) => {
+    const parent = el.getBoundingClientRect();
+    const scrolls = ['auto', 'scroll'].includes(getComputedStyle(el).overflowY);
+    const top = parent.top - (scrolls ? el.scrollTop : 0);
+    const bottom = scrolls ? top + Math.max(el.scrollHeight, parent.height) : parent.bottom;
+    const children = [...el.querySelectorAll<HTMLElement>(selector)]
+      .filter(child => child.checkVisibility() && child.offsetWidth && child.offsetHeight)
+      .map(child => ({ label: child.getAttribute('data-testid') || child.className, box: child.getBoundingClientRect() }));
+    const issues: string[] = [];
+    for (const [i, { label, box }] of children.entries()) {
+      if (box.left < parent.left - 1 || box.right > parent.right + 1 ||
+          box.top < top - 1 || box.bottom > bottom + 1) issues.push(`${label} outside container`);
+      for (const other of children.slice(0, i)) {
+        if (Math.min(box.right, other.box.right) - Math.max(box.left, other.box.left) > 1 &&
+            Math.min(box.bottom, other.box.bottom) - Math.max(box.top, other.box.top) > 1) {
+          issues.push(`${label} overlaps ${other.label}`);
+        }
+      }
+    }
+    return { count: children.length, issues };
+  }, selector);
+  expect.soft(findings.count).toBeGreaterThan(1);
+  expect.soft(findings.issues).toEqual([]);
+}
+
+for (const width of [1440, 390]) {
+  for (const theme of ['light', 'dark'] as const) {
+    test(`synthesis surfaces in ${theme} at ${width}px`, async ({ page }) => {
+      test.setTimeout(300_000);
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await installFixture(page, true);
+      await page.addInitScript(theme => {
+        localStorage.setItem('atp.studio.theme', theme);
+        localStorage.setItem('atp.studio.openProjectChatOnEntry.v1', '0');
+      }, theme);
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      const shot = (name: string) => capture(page, `synthesis-${name}-${width}-${theme}`);
+
+      await page.goto('/#/workspace/settings/appearance');
+      const picker = page.getByTestId('settings-token-set');
+      await expect(picker).toHaveValue('studio-default');
+      await picker.selectOption('preview-4');
+      const html = page.locator('html');
+      await expect(html).toHaveAttribute('data-studio-token-set', `preview-4.${theme}`);
+      await page.reload();
+      await expect(picker).toHaveValue('preview-4');
+      await expect(html).toHaveAttribute('data-studio-token-set', `preview-4.${theme}`);
+      await page.goto('/?fixture=welcome', { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('studio-welcome-content')).toBeVisible();
+      await expectLayout(page.locator('.studio').first(), ':scope > .studio-titlebar, :scope > .studio-body, :scope > .studio-statusbar');
+      await expectLayout(page.getByTestId('cockpit-header-nav-row'), ':scope > *');
+      await shot('shell');
+
+      await page.goto('/#/board');
+      if (width === 390) await page.getByRole('combobox', { name: 'Board lane', exact: true }).selectOption('2-ready');
+      const card = page.getByTestId('task-card').filter({ hasText: 'AGT-4141' });
+      await expect(card.getByTestId('task-card-owner')).toContainText(OWNER);
+      await expectLayout(card, '[data-testid="task-card-key"], [data-testid="task-card-title"], [data-testid="task-card-owner"]');
+      await expect(card.getByTestId('task-card-key')).toBeInViewport();
+      await shot('board');
+
+      await card.getByTestId('task-card-title').click();
+      const detail = page.getByTestId('overview-title-block');
+      await expect(detail).toContainText('Preserve claims on reconnect');
+      await expectLayout(detail, '[data-testid="overview-title"], [data-testid="overview-title-subline"]');
+      await expect(page.getByTestId('overview-title')).toHaveCSS('font-size', '24px');
+      await shot('card');
+
+      await page.goto('/#/projects/card-flow-fixture/operations');
+      const project = page.getByTestId('project-operations-area');
+      await expect(project.getByTestId('project-operations-environments')).toBeVisible();
+      await expectLayout(project, ':scope > a');
+      const linkColours = await project.evaluate(el => ({
+        foreground: getComputedStyle(el.querySelector('a')!).color,
+        background: getComputedStyle(el).backgroundColor,
+      }));
+      expect(contrastRatio(linkColours.foreground, linkColours.background)).toBeGreaterThanOrEqual(4.5);
+      await shot('project-operations');
+      await page.goto('/#/workspace/settings/operations');
+      const operations = page.getByTestId('workspace-operations');
+      await expect(operations.getByTestId('operations-security-total')).toHaveText('6');
+      await expectLayout(operations, ':scope > header, :scope > nav');
+      await expectLayout(operations.getByRole('navigation'), 'button');
+      await shot('operations');
+      expect(errors).toEqual([]);
+    });
+  }
+}
+
+test('project board loads the synthesis filter and dossier views on demand', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installFixture(page);
+  await page.addInitScript(() => localStorage.setItem('atp.studio.openProjectChatOnEntry.v1', '0'));
+  const capacity = { totalSlots: 3, usedSlots: 1, freeSlots: 2, ready: 1, claimableNow: 1, dependencyWidth: 1, cause: 'available' };
+  await page.route('**/api/operator/coding-capacity', route => json(route, {
+    fleet: { ...capacity, project: null }, projects: [{ ...capacity, project: PROJECT }],
+  }));
+  await page.goto('/?tokenSet=preview-4#/projects/card-flow-fixture/board');
+  await page.getByTestId('studio-ab-filters').click({ timeout: 45_000 });
+  await expect(page.getByTestId('kanban-filter-sidesheet-search')).toBeVisible();
+  await page.getByTestId('studio-ab-explorer').click();
+  const toggle = page.getByTestId('studio-board-dossier-toggle');
+  await toggle.click();
+  await expect(page.getByTestId('dossier-group-board')).toBeVisible();
+  await toggle.click();
+  await expect(page.getByTestId('task-card').filter({ hasText: 'AGT-4129' })).toBeVisible();
+});

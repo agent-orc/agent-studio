@@ -104,3 +104,54 @@ public sealed class StudioReleaseProjectionTests : IDisposable
     }
     public void Dispose() => Directory.Delete(_repo, true);
 }
+
+public sealed class StudioReleaseOccurrenceProjectionTests
+{
+    private readonly DateTime _now = new(2026, 11, 26, 12, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void Repeated_revisions_keep_occurrences_and_restart_only_the_interrupted_live_interval()
+    {
+        var a = new string('a', 40);
+        var b = new string('b', 40);
+        var revisions = new[] { Revision(a, -4), Revision(b, -3), Revision(a, -2), Revision(b, -1) };
+        var cards = new[] { Card("DEMO-1", a), Card("DEMO-2", b) };
+        var calls = new Dictionary<(string, string), int>();
+        bool? Contains(string from, string to)
+        {
+            calls[(from, to)] = calls.GetValueOrDefault((from, to)) + 1;
+            return from == a || to == b;
+        }
+
+        var rollback = StudioReleaseProjection.Build("demo", a, b, _now, revisions[..3], cards, Contains);
+        Assert.Equal(3, rollback.Releases.Count);
+        Assert.Same(rollback.Releases[2], Assert.Single(rollback.Releases, row => row.Running));
+        Assert.Equal("DEMO-2", Assert.Single(rollback.Pending).Key);
+        Assert.Equal(revisions[0].AtUtc, rollback.CardStates["DEMO-1"].SinceUtc);
+
+        calls.Clear();
+        var returned = StudioReleaseProjection.Build("demo", b, b, _now, revisions, cards, Contains);
+        Assert.Equal(4, returned.Releases.Count);
+        Assert.Equal(4, returned.Releases.Select(row => row.OccurrenceId).Distinct().Count());
+        Assert.Same(returned.Releases[3], Assert.Single(returned.Releases, row => row.Running));
+        Assert.Equal(new StudioCardLiveState("live", b, revisions[3].AtUtc), returned.CardStates["DEMO-2"]);
+        Assert.Equal(new StudioCardLiveState("live", a, revisions[0].AtUtc), returned.CardStates["DEMO-1"]);
+        Assert.Empty(returned.Releases[2].Cards);
+        Assert.Equal("DEMO-2", Assert.Single(returned.Releases[1].Cards).Key);
+        Assert.Equal("DEMO-2", Assert.Single(returned.Releases[3].Cards).Key);
+        Assert.All(calls.Values, count => Assert.Equal(1, count));
+    }
+
+    [Fact]
+    public void Unknown_history_cannot_prove_continuous_liveness()
+    {
+        var revisions = new[] { Revision("live", -3), Revision("unknown", -2), Revision("live", -1) };
+        var view = StudioReleaseProjection.Build("demo", "live", "live", _now, revisions,
+            [Card("DEMO-1", "delivery")], (_, to) => to == "unknown" ? null : true);
+        Assert.Equal(revisions[2].AtUtc, view.CardStates["DEMO-1"].SinceUtc);
+        Assert.NotNull(view.Detail);
+    }
+
+    private StudioRevision Revision(string sha, int hours) => new(sha, _now.AddHours(hours), false);
+    private StudioReleaseCard Card(string key, string sha) => new(key, "Title " + key, "bug", "#/tasks/" + key, [sha], _now.AddHours(-9));
+}

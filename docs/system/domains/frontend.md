@@ -62,10 +62,11 @@ rejects growth against the checked-in baseline.
 `frontend/src/app/features/studio-shell/services/theme-token-sets.ts` supplies
 palette families with both light and dark variants. The default family is
 `studio-default`: its two empty override maps use the existing library CSS
-unchanged. Appearance also offers three opt-in preview families from AGT-4070,
-AGT-4071 and AGT-4072: `preview-1` (calm and dense), `preview-2` (editorial),
-and `preview-3` (workbench). Each has a description and both themes. Only roles
-with current token consumers are mapped; page structure stays unchanged.
+unchanged. Appearance offers four opt-in families. AGT-4070, AGT-4071 and
+AGT-4072 provide `preview-1` (calm and dense), `preview-2` (editorial) and
+`preview-3` (workbench). The AGT-4148 synthesis, `preview-4`, applies
+hairline surfaces, rounded controls and monospace record keys to the shell,
+board, card detail and Operations. Each family supports both themes.
 This checkout has no hosted font assets, so previews use the supplied system
 fallbacks rather than fetching fonts. Contrast corrections live in the preview
 maps and their text/surface matrix is covered by unit and browser tests.
@@ -249,6 +250,7 @@ stylesheet. Angular counts 1 kB as 1,000 bytes.
 |---|---|---:|---:|---:|
 | 11 November 2026 (AGT-3745), before | `develop` at `3c3f72609` | 2,100,405 B | 2,050 kB | 2,102 kB |
 | 11 November 2026 (AGT-3745), after | AGT-3745 delivery | 1,922,039 B | 1,980 kB | 2,114 kB |
+| 28 November 2026 (AGT-4272) | Direction 4 synthesis | 1,998,675 B | 2,060 kB | 2,114 kB |
 
 The rule: `maximumWarning` sits about 3 % and `maximumError` about 10 %
 above the last measured initial total. Ordinary growth from several
@@ -273,7 +275,8 @@ feature's `lazy.ts`, and keep services and model helpers that eager code needs
 in `runtime.ts` or `index.ts`. Verify the view loads in Playwright after
 splitting it.
 
-The board shell, columns, and cards stay eager. Workspace settings and the
+The board shell, columns, and cards stay eager. Tab actions, the filter panel,
+the dossier board and the welcome view load at their use sites. Workspace settings and the
 orchestrator sheet mount through small hosts when opened. Their view components
 and the execution-host dialogs use feature `lazy.ts` entry points; keep those
 components out of feature runtime barrels so a board service import cannot

@@ -68,14 +68,11 @@ public static class RemoteDeliveryIntegrationPolicy
                 + ReviewMeasurementPolicy.Summary(reviewPlan, verdicts));
         }
 
-        static bool IsBuildTestAspect(string aspect) =>
-            string.Equals(aspect, "build-tests", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(aspect, "review-verification", StringComparison.OrdinalIgnoreCase);
         var buildTests = verdicts
-            .Where(verdict => IsBuildTestAspect(verdict.Aspect))
+            .Where(verdict => ReviewMeasurementPolicy.IsBuildTestAspect(verdict.Aspect))
             .ToList();
         if (!string.IsNullOrWhiteSpace(reviewPlan?.VerifyDefinitionMissing)
-            && buildTests.All(IsNotApplicable))
+            && buildTests.All(ReviewMeasurementPolicy.IsNotApplicable))
         {
             return new RemoteDeliveryIntegrationDecision(
                 false,
@@ -87,8 +84,8 @@ public static class RemoteDeliveryIntegrationPolicy
         if (buildTests.Count == 0)
         {
             var buildTestWasPlanned = reviewPlan?.Commands.Any(command =>
-                                          IsBuildTestAspect(command.Aspect)) == true
-                                      || reviewPlan?.RequiredAspects.Any(IsBuildTestAspect) == true;
+                                          ReviewMeasurementPolicy.IsBuildTestAspect(command.Aspect)) == true
+                                      || reviewPlan?.RequiredAspects.Any(ReviewMeasurementPolicy.IsBuildTestAspect) == true;
             if (reviewPlan is null || buildTestWasPlanned)
             {
                 return new RemoteDeliveryIntegrationDecision(
@@ -118,9 +115,6 @@ public static class RemoteDeliveryIntegrationPolicy
         return new(true, gateClass, string.Join(" ", measurements.Select(item => item.Summary))
             + (integrationBranchDefect ? " A gate was already red on the integration branch; its defect remains recorded." : ""));
     }
-
-    private static bool IsNotApplicable(Contract.ReviewVerdictDto verdict)
-        => ReviewMeasurementPolicy.IsNotApplicable(verdict);
 }
 
 public enum ReviewMeasurementDisposition

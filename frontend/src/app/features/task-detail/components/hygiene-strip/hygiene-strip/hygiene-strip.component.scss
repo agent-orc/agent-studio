@@ -5,10 +5,10 @@
   /* Icon row sits inline with the protocol-pane chrome — no surrounding
      card so it reads as part of the header strip rather than a separate
      section. The warning banners below restore their own padding. */
-  padding: 0;
+  padding: var(--studio-spacing-0);
   background: transparent;
   border: 0;
-  margin: 0 0 var(--studio-compat-space-2) 0;
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-compat-space-2) var(--studio-spacing-0);
   font-size: var(--studio-compat-type-5);
   color: var(--studio-fg);
 

@@ -20,10 +20,8 @@ export type { PendingAttachment } from './components/create-task-dialog/create-t
 export { BulkLaneActionsComponent } from './components/bulk-lane-actions/bulk-lane-actions.component';
 export { DecisionBacklogHintComponent } from './components/decision-backlog-hint/decision-backlog-hint.component';
 export type { TypeFilterOption } from './components/filters-dropdown/filters-dropdown.component';
-export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sidesheet/kanban-filter-sidesheet.component';
 export { TaskCardComponent } from './components/task-card/task-card.component';
 export { TaskColumnComponent } from './components/task-column/task-column';
-export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
 export { DeliverySectionComponent } from './components/delivery-section/delivery-section';
 export { BoardGroupSwitcherComponent } from './components/board-group-switcher/board-group-switcher';
 // FiltersDropdownComponent and ProjectTabsComponent are legacy-layout chrome; see ./lazy.
