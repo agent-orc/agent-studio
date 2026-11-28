@@ -62,34 +62,41 @@ public sealed class PostMergeGateScheduler(IBatchGateSubjectAuthority gates, Pos
         var hosts = await gates.PostMergeHostsAsync(ct);
         foreach (var project in projects.List().Where(project => !project.Archived))
         {
-            var state = store.Read(project.Id);
-            if (state.GateSubjectId is { } subjectId)
+            var guard = store.ClaimLock(project.Id);
+            await guard.WaitAsync(ct);
+            try
             {
-                var status = await gates.GetAsync(subjectId, ct);
-                if (status is null || GateStates.IsTerminal(status.Phase))
+                if (store.ReadGrant(project.Id)?.Lease.ExpiresAtUtc > clock.GetUtcNow()) continue;
+                var state = store.Read(project.Id);
+                if (state.GateSubjectId is { } subjectId)
                 {
-                    store.EndGateRun(project.Id, subjectId, clock.GetUtcNow(), "gate ended without a completed measurement");
-                    store.SetGateSubject(project.Id, null);
-                    state = store.Read(project.Id);
+                    var status = await gates.GetAsync(subjectId, ct);
+                    if (status is null || GateStates.IsTerminal(status.Phase))
+                    {
+                        store.EndGateRun(project.Id, subjectId, clock.GetUtcNow(), "gate ended without a completed measurement");
+                        store.SetGateSubject(project.Id, null);
+                        state = store.Read(project.Id);
+                    }
+                }
+                if (state.PendingWindow is null) continue;
+                var reason = !hosts.Gate && !hosts.Coding ? "no connected execution host"
+                    : RemoteProjectRepositoryResolver.ResolveRepositoryUrl(project) is null ? "no repository configured"
+                    : !TestingStrategies.ExpectsPostMergeRuns(TestingStrategies.Resolve(settings.Get(project.DisplayName)))
+                        ? "project no longer uses post-merge verification" : null;
+                if (reason is not null)
+                {
+                    if (state.GateSubjectId is { } id && !await gates.CancelBeforeTestsAsync(id, ct)) continue;
+                    store.CloseWindow(project.Id, reason, clock.GetUtcNow());
+                }
+                else if (hosts.Gate && MonolithTransitionAdapter.PostMergeDeadlineReached(state.PendingWindow.OpenedAtUtc,
+                    state.PendingWindow.WindowMinutes, clock.GetUtcNow()))
+                {
+                    var branch = settings.Get(project.DisplayName).IntegrationBranch;
+                    await PlaceAsync(project, state.PendingWindow.TipSha,
+                        new(project.DisplayName, string.IsNullOrWhiteSpace(branch) ? "develop" : branch, "window"), ct);
                 }
             }
-            if (state.PendingWindow is null) continue;
-            var reason = !hosts.Gate && !hosts.Coding ? "no connected execution host"
-                : RemoteProjectRepositoryResolver.ResolveRepositoryUrl(project) is null ? "no repository configured"
-                : !TestingStrategies.ExpectsPostMergeRuns(TestingStrategies.Resolve(settings.Get(project.DisplayName)))
-                    ? "project no longer uses post-merge verification" : null;
-            if (reason is not null)
-            {
-                if (state.GateSubjectId is { } id && !await gates.CancelBeforeTestsAsync(id, ct)) continue;
-                store.CloseWindow(project.Id, reason, clock.GetUtcNow());
-            }
-            else if (hosts.Gate && MonolithTransitionAdapter.PostMergeDeadlineReached(state.PendingWindow.OpenedAtUtc,
-                state.PendingWindow.WindowMinutes, clock.GetUtcNow()))
-            {
-                var branch = settings.Get(project.DisplayName).IntegrationBranch;
-                await PlaceAsync(project, state.PendingWindow.TipSha,
-                    new(project.DisplayName, string.IsNullOrWhiteSpace(branch) ? "develop" : branch, "window"), ct);
-            }
+            finally { guard.Release(); }
         }
     }
 }

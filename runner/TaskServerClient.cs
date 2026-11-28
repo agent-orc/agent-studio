@@ -221,6 +221,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                     : RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
                 : [
                     Contract.ReviewCapabilities.CodingExecutor,
+                    .. (options.PostMergeEnabled ? new[] { Contract.CapabilityProtocol.CodingPostMerge } : []),
                     "claim",
                     "events",
                     "artifacts",

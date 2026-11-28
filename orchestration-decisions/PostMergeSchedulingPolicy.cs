@@ -3,6 +3,13 @@ namespace AgentStudio.OrchestrationDecisions;
 /// <summary>Post-merge admission facts, independent of host queues and transports.</summary>
 public static class PostMergeSchedulingPolicy
 {
+    public static bool CodingHostHasCapacity(int occupiedSlots, int slots, double? loadPerCore, double maxLoadPerCore)
+        => occupiedSlots >= 0 && occupiedSlots < slots
+           && (loadPerCore is null || double.IsFinite(loadPerCore.Value) && loadPerCore >= 0 && loadPerCore <= maxLoadPerCore);
+
+    public static bool MayClaimWindow(bool grantLive, bool ownsGrant, bool mayRecoverActiveRun, bool mayReplaceActiveRun)
+        => (!grantLive || ownsGrant) && (ownsGrant || mayRecoverActiveRun || mayReplaceActiveRun);
+
     public static bool DeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
         => opened is { } at && now - at >= TimeSpan.FromMinutes(Math.Max(0, minutes));
 

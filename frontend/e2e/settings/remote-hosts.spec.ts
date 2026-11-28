@@ -121,7 +121,7 @@ async function stubOnlineJobsHub(page: Page) {
   });
 }
 
-async function stubGroupedHostApis(page: Page, claimGate = false, oneShotRoute = false) {
+async function stubGroupedHostApis(page: Page, claimGate = false, oneShotRoute = false, postMergeStatus?: string) {
   const now = new Date();
   const observed = now.toISOString();
   const codingObserved = new Date(now.getTime() - 1_000).toISOString();
@@ -226,6 +226,7 @@ async function stubGroupedHostApis(page: Page, claimGate = false, oneShotRoute =
         hostAdmission: admission,
         capabilities: [
           capability('executor:coding'),
+          ...(postMergeStatus ? [{ ...capability('coding:post-merge'), advertisedStatus: postMergeStatus }] : []),
           ...Array.from({ length: 13 }, (_, index) => capability(`tool:${index + 1}`)),
         ],
         telemetry: {
@@ -379,6 +380,21 @@ test.describe('Execution Hosts settings section', () => {
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await panel.screenshot({ path: join(output, 'fresh-environment--390px.png') });
+  });
+
+  test('shows whether the coding role accepts after-merge work', async ({ page }) => {
+    await stubGroupedHostApis(page, false, false, 'disabled');
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const coding = page.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' }).first();
+    await coding.click();
+    const setting = page.getByTestId('remote-host-post-merge');
+    await expect(setting).toHaveText('Excluded');
+    const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await setting.locator('..').screenshot({ path: join(output, `after-merge-host-${theme}.png`) });
+    }
   });
 
   test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {

@@ -4783,8 +4783,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 item.LastSeenAt > _time.GetUtcNow().UtcDateTime.AddMinutes(-3)).ToArray();
             return new(fresh.Any(item => item.Capabilities.Contains(Contract.GateCapabilities.Executor)
                 && item.Capabilities.Contains(Contract.GateCapabilities.PostMerge)),
-                fresh.Any(item => item.Capabilities.Contains(Contract.ReviewCapabilities.CodingExecutor)
-                    || item.Capabilities.Contains(Contract.CapabilityProtocol.CodingExecutor)));
+                fresh.Any(item => item.Capabilities.Contains(Contract.CapabilityProtocol.CodingPostMerge)));
         }
     }
 

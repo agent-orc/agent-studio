@@ -12,6 +12,10 @@ public sealed class PostMergeRunStore
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _root;
     private readonly object _gate = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _claims = new();
+
+    // Serialize route writes with lease changes, including asynchronous gate placement.
+    internal SemaphoreSlim ClaimLock(string projectId) => _claims.GetOrAdd(projectId, _ => new(1));
 
     private readonly Dictionary<string, (DateTime WriteTime, long Length, PostMergeAcceptanceEvidence Evidence)> _acceptance = [];
 
@@ -313,8 +317,18 @@ public sealed class PostMergeRunStore
         lock (_gate) return ReadCustodyLocked(projectId);
     }
 
+    internal PostMergeWindowGrant? ReadGrant(string projectId)
+    {
+        lock (_gate) return ReadMetadata(PathFor(projectId))?.Grant;
+    }
+
+    internal void WriteGrant(string projectId, PostMergeWindowGrant? grant)
+    {
+        lock (_gate) WriteLocked(projectId, ReadLocked(projectId), grant: grant, replaceGrant: true);
+    }
+
     private sealed record StoredMetadata(PostMergeCustody? Custody, PostMergeWindowObservation? PendingWindow,
-        DateTimeOffset? AdmissionWaitingSinceUtc);
+        DateTimeOffset? AdmissionWaitingSinceUtc, PostMergeWindowGrant? Grant);
 
     private static StoredMetadata? ReadMetadata(string path) => File.Exists(path)
         ? JsonSerializer.Deserialize<StoredMetadata>(File.ReadAllText(path), Json) : null;
@@ -345,13 +359,15 @@ public sealed class PostMergeRunStore
             ?? throw new IOException($"Post-merge state for {projectId} is empty.");
 
     private void WriteLocked(string projectId, PostMergeProjectState state,
-        PostMergeCustody? custody = null, bool replaceCustody = false)
+        PostMergeCustody? custody = null, bool replaceCustody = false,
+        PostMergeWindowGrant? grant = null, bool replaceGrant = false)
     {
         var path = PathFor(projectId);
         Directory.CreateDirectory(_root);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var document = JsonSerializer.SerializeToNode(state, Json)!;
         var previous = ReadMetadata(path);
+        document["grant"] = JsonSerializer.SerializeToNode(replaceGrant ? grant : previous?.Grant, Json);
         document["custody"] = JsonSerializer.SerializeToNode(replaceCustody ? custody : previous?.Custody, Json);
         if (state.PendingWindow is { AdmissionReason.Length: > 0 } pending)
         {
@@ -380,3 +396,5 @@ internal sealed record PostMergeAcceptanceEvidence(IReadOnlyList<PostMergeLastRe
     string? LastGreenSha, PostMergeWindowObservation? PendingWindow, DateTimeOffset? AdmissionWaitingSinceUtc, string Version);
 
 public sealed record PostMergeCustody(string RunId, string Owner, long Fence, DateTimeOffset ExpiresAtUtc, string? RecoveryId = null);
+
+internal sealed record PostMergeWindowGrant(string RunnerId, string InstanceId, string HostId, PostMergeGrant Lease);

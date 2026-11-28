@@ -1399,7 +1399,8 @@ public sealed class AccessSecurityMiddleware
             return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
         if (path.Equals("/api/runner/post-merge/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/runner/post-merge/projects/", StringComparison.OrdinalIgnoreCase))
-            return HttpMethods.IsGet(method) ? RunnerScopes.Claim : RunnerScopes.Completion;
+            return HttpMethods.IsGet(method) || path.EndsWith("/claim", StringComparison.OrdinalIgnoreCase) ? RunnerScopes.Claim
+                : path.EndsWith("/grant", StringComparison.OrdinalIgnoreCase) ? RunnerScopes.Lease : RunnerScopes.Completion;
         return GateRunnerScope(method, path);
     }
 

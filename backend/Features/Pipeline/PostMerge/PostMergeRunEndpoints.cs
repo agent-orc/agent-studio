@@ -35,15 +35,59 @@ public static class PostMergeRunEndpoints
                     };
                 }).ToArray());
         });
-        app.MapGet("/api/runner/post-merge/projects", (ProjectRegistry registry,
-            ProjectSettingsService settings) => Results.Ok(registry.List()
-            .Where(project => !project.Archived
-                && IntegrationTestModes.Resolve(settings.Get(project.DisplayName)) == IntegrationTestModes.PostMerge)
-            .Select(project => (Project: project, Repository: RemoteProjectRepositoryResolver.Resolve(
-                project, settings.Get(project.DisplayName).IntegrationBranch)))
-            .Where(item => item.Repository is not null)
-            .Select(item => new PostMergeProjectTarget(item.Project.Id, item.Project.DisplayName,
-                item.Repository!.RepositoryUrl, item.Repository.DefaultBranch)).ToArray()));
+        app.MapGet("/api/projects/{project}/post-merge-runs", (string project, HttpContext context,
+            ProjectRegistry registry, PostMergeRunStore store) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project);
+            var allowed = GateEconomicsEndpoints.AccessFilter(context, registry);
+            if (record is null || record.Archived || allowed?.Invoke(record.DisplayName) == false) return Results.NotFound();
+            var state = store.Read(record.Id);
+            var runs = state.ActiveRun is { } active ? state.Runs.Append(active) : state.Runs;
+            return Results.Ok(runs.Reverse().Select(run => new PostMergeRunSummary(run.Id, run.Kind, run.Status,
+                run.TipSha, run.StartedAtUtc, run.ExecutionHost)).ToArray());
+        });
+        app.MapGet("/api/runner/post-merge/projects", async (HttpContext context, ProjectRegistry registry,
+            ProjectSettingsService settings) =>
+        {
+            RunnerCapabilitySnapshotDto? host = null;
+            if (!PostMergeWindowClaims.IsLocalManual(context))
+            {
+                if (PostMergeWindowClaims.Instance(context) is null
+                    || await PostMergeWindowClaims.HostAsync(context) is not { } eligible
+                    || !PostMergeWindowClaims.Enabled(eligible) || eligible.HostAdmission.AdmissionState != "open")
+                    return Results.Ok(Array.Empty<PostMergeProjectTarget>());
+                host = eligible;
+            }
+            return Results.Ok(registry.List().Where(project => PostMergeWindowClaims.Allows(context, registry, project, host))
+                .Select(project => PostMergeWindowClaims.Target(project, settings)).OfType<PostMergeProjectTarget>().ToArray());
+        });
+        app.MapPost("/api/runner/post-merge/projects/{project}/claim", async (string project, PostMergeClaimRequest request,
+            HttpContext context, ProjectRegistry registry, ProjectSettingsService settings, PostMergeRunStore store, TimeProvider clock) =>
+        {
+            var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
+            if (record is null || PostMergeWindowClaims.Target(record, settings) is not { } target) return Results.NotFound();
+            if (PostMergeWindowClaims.Instance(context) is null
+                || await PostMergeWindowClaims.HostAsync(context) is not { } host
+                || !PostMergeWindowClaims.Allows(context, registry, record, host)) return Results.NoContent();
+            return PostMergeWindowClaims.Claim(context, record, target, request, host, store, clock.GetUtcNow());
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync);
+        app.MapPost("/api/runner/post-merge/projects/{project}/grant", (string project, bool? release, HttpContext context,
+            ProjectRegistry registry, PostMergeRunStore store, TimeProvider clock) =>
+        {
+            var record = (registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project))!;
+            var now = clock.GetUtcNow();
+            var current = store.ReadGrant(record.Id);
+            if (!PostMergeWindowClaims.Owns(context, current, now))
+                return release == true ? Results.NoContent() : Results.Conflict();
+            if (release == true)
+            {
+                store.WriteGrant(record.Id, null);
+                return Results.NoContent();
+            }
+            var grant = current!.Lease with { ExpiresAtUtc = now + PostMergeClaimProtocol.GrantDuration };
+            store.WriteGrant(record.Id, current with { Lease = grant });
+            return Results.Ok(grant);
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/placement", async (string project,
             PostMergeWindowObservation observation, string? kind, ProjectRegistry registry,
             PostMergeGateScheduler scheduler, ProjectSettingsService settings, CancellationToken ct) =>
@@ -55,7 +99,8 @@ public static class PostMergeRunEndpoints
             var branch = settings.Get(record.DisplayName).IntegrationBranch;
             return Results.Ok(await scheduler.PlaceAsync(record, observation.TipSha,
                 new(record.DisplayName, string.IsNullOrWhiteSpace(branch) ? "develop" : branch, kind ?? "window"), ct));
-        });
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/close-window", (string project,
             PostMergeWindowClosure closure, ProjectRegistry registry, PostMergeRunStore store, TimeProvider clock) =>
         {
@@ -66,7 +111,8 @@ public static class PostMergeRunEndpoints
                 return Results.Conflict();
             store.CloseWindow(record.Id, closure.Reason, clock.GetUtcNow(), closure.TipSha);
             return Results.NoContent();
-        });
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/window", (string project,
             PostMergeWindowObservation observation, ProjectRegistry registry, PostMergeRunStore store) =>
         {
@@ -77,12 +123,17 @@ public static class PostMergeRunEndpoints
                 return Results.BadRequest(new { error = "invalid post-merge window observation" });
             store.ObserveWindow(record.Id, observation);
             return Results.NoContent();
-        });
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
         app.MapGet("/api/runner/post-merge/projects/{project}", (string project,
-            ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings, PostMergeIncidentService incidents) =>
+            ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings, PostMergeIncidentService incidents,
+            HttpContext context, TimeProvider clock) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
-            if (record is null) return Results.NotFound();
+            if (record is null || !PostMergeWindowClaims.Allows(context, registry, record)) return Results.NotFound();
+            if (PostMergeWindowClaims.Instance(context) is not null
+                && !PostMergeWindowClaims.Owns(context, store.ReadGrant(record.Id), clock.GetUtcNow()))
+                return Results.Conflict();
             var state = store.Read(record.Id);
             var projectSettings = settings.Get(record.DisplayName);
             var strategy = TestingStrategies.Resolve(projectSettings);
@@ -103,7 +154,8 @@ public static class PostMergeRunEndpoints
             if (record is null) return Results.NotFound();
             incidents.AskOwnerWhenOverdue(record);
             return Results.NoContent();
-        });
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/runs", (string project,
             PostMergeRunRecord run, ProjectRegistry registry, PostMergeRunStore store,
             PostMergeIncidentService incidents, HttpContext context, TimeProvider clock) =>
@@ -160,6 +212,7 @@ public static class PostMergeRunEndpoints
             }
             var safe = run with
             {
+                ExecutionHost = context.Items[typeof(PostMergeWindowGrant)] is PostMergeWindowGrant grant ? grant.HostId : run.ExecutionHost,
                 Verdicts = run.Verdicts.Select(verdict => verdict with
                 { OutputTail = verdict.OutputTail is null ? null : CredentialRedactor.Redact(verdict.OutputTail),
                     FailureMessages = verdict.FailureMessages?.ToDictionary(pair => pair.Key,
@@ -173,7 +226,8 @@ public static class PostMergeRunEndpoints
             if (state is not null) incidents.Apply(record, safe);
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
                 : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record), Holds = incidents.ActiveHolds(record) });
-        });
+        }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
     }
 
     // RT-3 (AGT-3988) receipt fields. All are optional, so receipts of older

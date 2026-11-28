@@ -346,6 +346,7 @@
 /api/projects/{project}/environments/{environment}/secrets/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{project}/environments/{environment}/secrets/{name}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{project}/interventions	free	-	-	-
+/api/projects/{project}/post-merge-runs	free	-	-	-
 /api/projects/{project}/publish-status	reachable	frozen	Publishing	Publishing background projection
 /api/projects/{project}/publish/{targetId}/panel	reachable	frozen	Publishing	Publishing background projection
 /api/projects/{project}/publish/{targetId}/run	reachable	gap	Publishing	Publishing background projection

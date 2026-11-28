@@ -1135,6 +1135,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 |---|---|---|---|
 | `RUNNER_SERVER_URL` | `--server` | `http://127.0.0.1:5030` | Task Server base URL (or the tunnelled address). |
 | `RUNNER_POST_MERGE_STATE_URL` | `--post-merge-state-url` | `RUNNER_SERVER_URL` | Studio API URL for T3 containment facts. Set it when the integration host connects directly to the Task Server. |
+| `RUNNER_POST_MERGE_ENABLED` | `--post-merge` | `true` | Set to `false` in a coding role to keep after-merge claims off that role. |
 | `RUNNER_ID` | `--runner-id` | `agent-runner-<host>` | Stable lease owner identity. Fencing is per task, not per pid. |
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |
@@ -1947,40 +1948,51 @@ stale once the checkout's HEAD moves past it.
 
 ### Post-merge develop checks
 
-The coding Runner automatically polls registered projects using the `fast` or
-`balanced` testing strategy (`testing.mode` = `post-merge`). No project environment
-file or timer is needed. The project registry supplies the repository URL, and
-its integration branch setting supplies the branch. The default strategy is
-`fast`; `strict` (`pre-merge`) projects are excluded. Model review aspects still
-run before integration in every strategy. See the
+Coding roles ask Studio for eligible projects using the `fast` or `balanced`
+testing strategy. Studio applies the Runner credential's project binding and
+the Task Server host project policy when present. The project registry supplies
+the repository URL and integration branch. Model review aspects still run
+before integration in every strategy. See the
 [testing strategy overview](../../system/domains/pipeline.md#testing-strategy-agt-3965).
 
-The host uses its existing Runner service credential, registered client identity,
-and TLS settings. When
-`RUNNER_SERVER_URL` addresses Task Server directly, set the existing
-`RUNNER_POST_MERGE_STATE_URL` to Studio. Dedicated checkouts live below
-`RUNNER_STATE_DIR/post-merge/<project-id>`; each poll updates the registered
-origin and fetches the configured branch. The host restores tracked changes left
-by previous test commands in its owned clone; cached and untracked build outputs
-remain available. Manual checkouts retain their dirty-tree refusal. No card
-checkout is used. Repository
-access uses the service account's existing Git credential setup.
+To trial a second machine with coding work only, set
+`RUNNER_POST_MERGE_ENABLED=false` in that machine's coding role environment
+file. For the supervised host agent, use the environment file configured for
+its coding role. The systemd coding role normally reads
+`/etc/agent-runner/runner-coding.env` or `/etc/agent-runner/runner.env`, as listed
+in the role table above. Apply the setting with the role's normal drain and
+restart procedure. Settings → Environment shows **After-merge work** on the
+coding role, with **Excluded** after the new role advertises. The default is
+**Enabled**. During rollout, deploy Studio first and upgrade the participating
+runners to the claim protocol. Older coding daemons cannot claim windows.
 
-Every minute, the host observes all eligible projects, including while another
-project's suite is executing. A locked active checkout is observed through a
-separate Git ref (`refs/agent-studio/post-merge-observed`) using
-`--no-write-fetch-head`; neither the tested worktree nor
-its pinned `FETCH_HEAD` changes. Its one sequential post-merge executor also counts
-as occupied admission for other queued projects. The host discovers local sibling
-state roots and reuses `COVERAGE_RUN_STATE_DIRS` when already configured, so coding,
-review and gate claims keep their existing admission effect. Window sizing comes from the project's look-ahead minutes and maximum batch
-size. A connected gate executor advertising `gate:post-merge` takes due merge
-windows and nightly runs through the claimable gate transport. Without one, the
-run host executes a merge window once the oldest pending integration reaches the
-project's `windowMinutes`, despite occupied coding slots or host load. Only the
-nightly fallback still waits for free coding capacity. Observation and fetching
-continue while tests wait. `/api/develop-states` includes
-`pendingWindow` with the fetched tip, opening and observation timestamps,
+A coding host probes the configured integration branch with its service
+account's Git credentials. Failed access produces one log line per outage for
+that repository and branch. The host backs off the probe and can resume
+automatically after access is restored. Studio grants only one eligible coding
+host custody of a project's window at a time, subject to host admission and
+free capacity. Only that host observes the window, updates its pending state,
+or runs its tests. A role drain ends new claims and lets the owner finish and
+release its current grant. Another eligible host can then claim the project.
+After a process loss, the grant expires and the existing exact-tip receipt
+recovery rules apply.
+
+The host uses its existing Runner service credential, registered client
+identity and TLS settings. When `RUNNER_SERVER_URL` addresses Task Server
+directly, set `RUNNER_POST_MERGE_STATE_URL` to Studio. Dedicated checkouts live
+below `RUNNER_STATE_DIR/post-merge/<project-id>`. A grant holder can continue
+observing a moving branch through a separate Git ref while its suite tests a
+pinned tip. The host discovers local sibling state roots and reuses
+`COVERAGE_RUN_STATE_DIRS` when configured.
+
+A connected gate executor advertising `gate:post-merge` takes due windows
+and nightly runs through the existing gate claims. The coding grant holder is
+the fallback when there is no connected gate executor. Window sizing comes
+from the project's look-ahead minutes and maximum batch size. Project
+**Operations** lists the recorded host on each run, including the active run.
+Older receipts can show **Unknown** for host.
+`/api/develop-states` includes `pendingWindow` with the fetched tip, opening
+and observation timestamps,
 window minutes, admission reason, and `starved`. Operations shows an alert when
 admission kept a changed branch waiting longer than its window. An admitted
 window clears its pending observation. These facts do not change a test verdict

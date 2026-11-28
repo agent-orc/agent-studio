@@ -398,7 +398,11 @@ ignored. The runner state route
 (`affected` or `routine`), and the merge-window run selects from it.
 
 In a post-merge strategy develop is checked by T3. The coding daemon discovers
-fast and balanced projects through `GET /api/runner/post-merge/projects`.
+in-scope fast and balanced projects through `GET /api/runner/post-merge/projects`.
+It proves read access on the configured branch and claims project custody
+before fetching or writing window state. Studio fences window mutations with
+the renewable grant. Exact-tip run custody and terminal receipts use their
+existing fence. See [host placement and exclusion](../../operations/setup/linux-runner-host.md#post-merge-develop-checks).
 AGT-4075 places due merge windows and nightly runs on a connected gate executor
 advertising `gate:post-merge`, through the existing claimable gate transport.
 The gate subject freezes the tip, project, branch and run kind. The gate worker
@@ -408,11 +412,11 @@ envelope, attribution and post-merge receipts. The gate host needs the same
 URL differs from Studio. Older gate workers without that capability leave
 execution on the run host until they are upgraded.
 
-The run host is the fallback. Once the oldest pending integration reaches the
-project's `windowMinutes`, occupied coding slots and host load no longer veto
-that window. It runs sequentially inside the existing worker test envelope;
-its receipt retains starting occupancy, starting load and peak load. A nightly
-fallback still waits for free coding capacity. Gate queue ordering uses attempt
+The coding grant holder is the fallback. Studio admits a coding grant only
+when the host has free capacity. The window still closes on its merge-count
+or age threshold. The fallback runs sequentially inside the existing worker
+test envelope. Its receipt retains the execution host, starting occupancy,
+starting load and peak load. Gate queue ordering uses attempt
 creation time first, with merge precedence only at the same instant. Both
 authorities scan bounded pages of 32 in that order until eligible work is found,
 so later arrivals cannot indefinitely overtake either queue. The daemon keeps
@@ -577,20 +581,19 @@ time and gate minutes per card for comparison after a project switches.
 
 ### Post-merge develop checks (T3, AGT-3311)
 
-`agent-host post-merge-run --mode window|nightly` is a scheduled, project-scoped
-runner unit. The window timer polls each minute; the pure close rule runs after
-six first-parent integration commits or 30 minutes from the oldest pending
-commit, whichever comes first. The worker fetches develop once and pins
+The coding role polls for project claims every minute while idle. The default
+window closes after six first-parent integration commits or 30 minutes from
+the oldest pending commit, whichever comes first. The worker fetches develop once and pins
 `FETCH_HEAD` before selecting the union of changed paths. Affected windows use
 the shared `testSelection` map above. Unknown paths and projects without a map
 select every routine suite. A full fallback or strategy-requested full routine window also runs the base suite.
-The nightly timer runs at 02:15 and 04:15 in
-the existing coverage slot window. It runs the routine full suite on the same
-exact-tip rule, using AGT-3232 class partitions across free local host slots.
+Nightly work can claim between 02:15 and 06:15 UTC. It runs the full routine
+suite on the same exact-tip rule, using AGT-3232 class partitions across free
+local host slots.
 T3 treats a suite without `shards` as `auto`; a declared shard count still
 controls that suite. T1's opt-in sharding policy is unchanged.
-The timers use a dedicated checkout and a local exclusive claim file; the
-server fences the active run ID. A second claim waits. AGT-4117 adds durable
+The worker uses a dedicated checkout and a local exclusive claim file. The
+server grants access before checkout and fences the active run ID. AGT-4117 adds durable
 host custody in `.post-merge-journal.json` in that dedicated checkout. The host
 flushes the identity before admission, each completed command result before
 continuing, and the exact terminal receipt before delivery. The exclusive
@@ -608,9 +611,11 @@ the persisted owner, fence and recovery request ID, advances the fence, and
 retries the same recovery request idempotently if its acknowledgement was lost.
 If that replayed lease has expired, the host obtains fresh custody before
 executing a command. Older owners and unfenced receipts cannot settle a fenced active run. An exact
-terminal replay remains acceptable after lease expiry while its run is still
-current, and after successful settlement. It does not require waiting four or
-fourteen hours. A changed terminal receipt cannot replace recorded evidence.
+terminal replay remains acceptable after receipt custody expires while its run
+is current, and after successful settlement. A coding host first reacquires a
+project grant if that grant expired. It can use its persisted custody owner
+to recover its current run before the four-hour or fourteen-hour takeover
+bounds. A changed terminal receipt cannot replace recorded evidence.
 
 Recovery reconstructs the original plan and per-test ledger from saved raw
 command results. It reuses completed commands only when the saved workspace

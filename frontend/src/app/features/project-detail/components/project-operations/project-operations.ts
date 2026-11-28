@@ -11,6 +11,15 @@ import { LoadingSurfaceComponent, PendingButtonDirective } from '@studio/ui/comp
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import type { PostMergeCoverage, ProjectTesting } from '../../../../models/task.model';
 
+interface AfterMergeRun {
+  id: string;
+  kind: 'window' | 'nightly';
+  status: string;
+  tipSha: string;
+  startedAtUtc: string;
+  executionHost: string | null;
+}
+
 @Component({
   selector: 'app-project-operations', standalone: true, imports: [IsolatedTestsComponent, StatusIndicatorComponent, DatePipe, OperationsTrendComponent, LoadingSurfaceComponent, PendingButtonDirective],
   templateUrl: './project-operations.html', styleUrl: './project-operations.scss',
@@ -30,6 +39,8 @@ export class ProjectOperationsComponent {
   /** AGT-3965: a fast or balanced project whose develop moved without a post-merge run says so here. */
   readonly postMergeCoverage = signal<PostMergeCoverage | null>(null);
   readonly error = signal<string | null>(null);
+  readonly afterMergeRuns = signal<AfterMergeRun[]>([]);
+  readonly afterMergeError = signal(false);
   readonly pendingWindow = signal<{ starved: boolean; openedAtUtc: string; admissionReason: string } | null>(null);
   readonly selectedEnvironment = signal('');
   readonly since = signal('');
@@ -77,6 +88,12 @@ export class ProjectOperationsComponent {
       next: rows => { if (generation === this.readGeneration)
         this.pendingWindow.set(rows.find(row => row.project === project)?.pendingWindow ?? null); },
       error: () => { /* Keep the application Operations snapshot available during a state read failure. */ },
+    });
+    this.afterMergeRuns.set([]);
+    this.afterMergeError.set(false);
+    this.http.get<AfterMergeRun[]>(`/api/projects/${encodeURIComponent(project)}/post-merge-runs`).pipe(take(1)).subscribe({
+      next: runs => { if (generation === this.readGeneration) this.afterMergeRuns.set(runs); },
+      error: () => { if (generation === this.readGeneration) this.afterMergeError.set(true); },
     });
     ++this.logGeneration;
     ++this.traceGeneration;

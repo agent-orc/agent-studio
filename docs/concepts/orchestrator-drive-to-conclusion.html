@@ -3750,6 +3750,15 @@
             <code>WaitForCapabilityRecovery</code>. A new subscription window reopens model probing.
             The next ready advertisement clears the recorded dispatch wait.</td>
         </tr>
+        <tr id="case-after-merge-two-coding-hosts">
+          <td>2026-11-28</td>
+          <td><code>AGT-4433</code><br><span class="small">after-merge-two-coding-hosts</span></td>
+          <td>A second coding daemon fetched projects outside its binding. Git authentication failed on six projects.
+            Its receipts for the first host's running window ended in HTTP 409, while four other windows closed without tests.</td>
+          <td>Every coding daemon polled globally. The server's receipt fence acted after discovery and execution admission.</td>
+          <td>Studio grants window custody before observation and execution. A competing host receives no claim.
+            Receipt conflicts return immediately and exact-tip terminal replay stays fenced.</td>
+        </tr>
       </tbody>
     </table>
 

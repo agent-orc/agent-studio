@@ -1,8 +1,13 @@
+using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Clients;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
+using AgentStudio.Runner;
+using AgentStudio.Security;
+using Microsoft.AspNetCore.Mvc.Testing;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +22,118 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
 {
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 22, 3, 0, 0, TimeSpan.Zero));
     private readonly string _root = Path.Combine(Path.GetTempPath(), "post-merge-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task OnlyAnEligibleCodingHostCanWriteAndTheNextHostTakesOverAfterRelease()
+    {
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root, ["Security:Profile"] = "networked", ["AllowedHosts"] = "studio.test",
+            }));
+            builder.ConfigureServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.Replace(ServiceDescriptor.Singleton(new PostMergeRunStore(Path.Combine(_root, "post-merge"))));
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            });
+        });
+        var options = new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false };
+        using var startup = factory.CreateClient(options);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        var projects = factory.Services.GetRequiredService<WorkspaceRegistry>();
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var administrator = security.Bootstrap(new("first.owner", "correct horse battery staple!", null)).User;
+        foreach (var name in new[] { "one", "two" })
+        {
+            var path = Directory.CreateDirectory(Path.Combine(_root, name)).FullName;
+            var project = registry.EnsureProjectForStorage(path, name, DefaultWorkspace.Id, _clock);
+            registry.Update(project.Id, new UpdateProjectRequest { RepositoryUrl = $"https://example.invalid/{name}.git" },
+                projects, actor: administrator);
+            settings.SetIntegrationBranch(name, "develop");
+            settings.SetTestingStrategy(name, TestingStrategies.Fast);
+        }
+
+        var one = registry.FindByIdOrDisplayName("one")!;
+        var hosts = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        using var first = Host("host-first", ["*"]);
+        using var second = Host("host-second", [one.Id]);
+        using var excluded = Host("host-excluded", ["*"], enabled: false);
+        const string route = "/api/runner/post-merge/projects";
+        var claimRoute = $"{route}/one/claim";
+        var runsRoute = $"{route}/one/runs";
+        Assert.Equal("one", Assert.Single((await second.GetFromJsonAsync<PostMergeProjectTarget[]>(route))!).Project);
+        Assert.Empty((await excluded.GetFromJsonAsync<PostMergeProjectTarget[]>(route))!);
+
+        var now = _clock.GetUtcNow();
+        var tip = new string('a', 40);
+        var request = new PostMergeClaimRequest("https://example.invalid/one.git", "develop", tip, 0, 0.1);
+        using (var outOfScope = await second.PostAsJsonAsync($"{route}/two/claim", request))
+            Assert.Equal(HttpStatusCode.NotFound, outOfScope.StatusCode);
+        using (var noAccess = await first.PostAsJsonAsync(claimRoute, request with { ReadTip = "" }))
+            Assert.Equal(HttpStatusCode.NoContent, noAccess.StatusCode);
+        using (var busy = await second.PostAsJsonAsync(claimRoute, request with { OccupiedSlots = 1 }))
+            Assert.Equal(HttpStatusCode.NoContent, busy.StatusCode);
+        using (var disabled = await excluded.PostAsJsonAsync(claimRoute, request))
+            Assert.Equal(HttpStatusCode.NoContent, disabled.StatusCode);
+
+        // Either host may win the race. Only the winner receives a grant.
+        var offers = await Task.WhenAll(first.PostAsJsonAsync(claimRoute, request), second.PostAsJsonAsync(claimRoute, request));
+        using var firstOffer = offers[0];
+        using var secondOffer = offers[1];
+        Assert.Equal(1, offers.Count(response => response.StatusCode == HttpStatusCode.OK));
+        Assert.Equal(1, offers.Count(response => response.StatusCode == HttpStatusCode.NoContent));
+        var firstWon = firstOffer.StatusCode == HttpStatusCode.OK;
+        var owner = firstWon ? first : second;
+        var peer = firstWon ? second : first;
+        var grant = await offers.Single(response => response.StatusCode == HttpStatusCode.OK).Content.ReadFromJsonAsync<PostMergeGrant>();
+        owner.DefaultRequestHeaders.Add(PostMergeClaimProtocol.GrantHeader, grant!.Id);
+        var observation = new PostMergeWindowObservation(tip, now.AddMinutes(-30), now, 30, null);
+        using (var observed = await owner.PostAsJsonAsync($"{route}/one/window", observation))
+            Assert.Equal(HttpStatusCode.NoContent, observed.StatusCode);
+        using (var refused = await peer.PostAsJsonAsync($"{route}/one/close-window", new PostMergeWindowClosure(tip, now, "stale")))
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        var running = new PostMergeRunRecord("first-window", "one", "window", tip, null, null, null, 1,
+            ["test"], [], "running", now, null) { ExecutionHost = "client-supplied" };
+        using (var started = await owner.PostAsJsonAsync(runsRoute, running)) started.EnsureSuccessStatusCode();
+        using (var refused = await peer.PostAsJsonAsync(claimRoute, request))
+            Assert.Equal(HttpStatusCode.NoContent, refused.StatusCode);
+        var terminal = running with { Status = "green", FinishedAtUtc = now, Verdicts = [new("test", 0, false)] };
+        using (var posted = await owner.PostAsJsonAsync(runsRoute, terminal)) posted.EnsureSuccessStatusCode();
+        using (var replay = await owner.PostAsJsonAsync(runsRoute, terminal)) replay.EnsureSuccessStatusCode();
+        using (var released = await owner.PostAsync($"{route}/one/grant?release=true", null))
+            Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+
+        using var next = await peer.PostAsJsonAsync(claimRoute, request with { ReadTip = new string('b', 40) });
+        next.EnsureSuccessStatusCode();
+        var nextGrant = await next.Content.ReadFromJsonAsync<PostMergeGrant>();
+        Assert.NotEqual(grant.Id, nextGrant!.Id);
+        using (var late = await owner.PostAsJsonAsync($"{route}/one/window", observation))
+            Assert.Equal(HttpStatusCode.Conflict, late.StatusCode);
+        var store = factory.Services.GetRequiredService<PostMergeRunStore>();
+        Assert.Equal(firstWon ? "host-first" : "host-second", Assert.Single(store.Read(one.Id).Runs).ExecutionHost);
+
+        HttpClient Host(string machine, string[] bindings, bool enabled = true)
+        {
+            var enrollment = security.EnrollRunner(security.CreateEnrollment(
+                new RunnerEnrollmentRequest(machine, null, null, null, bindings)).Code);
+            var id = enrollment.Runner.Id;
+            const string instance = "instance-1";
+            hosts.Register(id, new RegisterRunnerRequest(machine, machine, instance, "1", TaskServerProtocol.Current,
+                [ReviewCapabilities.CodingExecutor], BootstrapMaxParallelism: 1));
+            hosts.AdvertiseCapabilities(id, new CapabilityAdvertisementRequest(id, instance,
+                CapabilityProtocol.CurrentSchemaVersion, _clock.GetUtcNow().UtcDateTime, 120, 1,
+                [new(CapabilityProtocol.CodingExecutor, "executor", Identity: "coding"),
+                 new(CapabilityProtocol.CodingPostMerge, "executor", enabled ? "ready" : "disabled")]));
+            var client = factory.CreateClient(options);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", enrollment.Secret);
+            client.DefaultRequestHeaders.Add(PostMergeClaimProtocol.InstanceHeader, instance);
+            return client;
+        }
+    }
 
     [Fact]
     public async Task DiscoveryUsesRegisteredBranchesExcludesStrictAndExposesStarvedWindow()
@@ -80,6 +197,9 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Equal(1, receiptState!.Runs[^1].FlakyCount);
         Assert.Equal(6, receiptState.Runs[^1].StartOccupiedSlots);
         Assert.Equal(0.4, receiptState.Runs[^1].StartLoadPerCore);
+        var history = await client.GetFromJsonAsync<PostMergeRunSummary[]>("/api/projects/one/post-merge-runs");
+        Assert.Equal("second", history![0].Id);
+        Assert.Null(history[0].ExecutionHost);
         var states = await client.GetFromJsonAsync<DevelopStateSummary[]>("/api/develop-states");
         var pending = states!.Single(state => state.Project == "one").PendingWindow;
         var summary = states.Single(state => state.Project == "one");

@@ -17,6 +17,7 @@ public sealed class RunnerOptions
 
     /// <summary>Studio API URL for red-develop containment facts when integration claims use a direct Task Server URL.</summary>
     public string? PostMergeStateUrl { get; init; }
+    public bool PostMergeEnabled { get; init; } = true;
 
     /// <summary>Stable per-runner identity used as the lease owner (fencing is per task, not per pid).</summary>
     public required string RunnerId { get; init; }
@@ -564,6 +565,7 @@ public sealed class RunnerOptions
             Hostname = Val("hostname", "RUNNER_HOSTNAME", Environment.MachineName),
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
+            PostMergeEnabled = OptOut(Val("post-merge", "RUNNER_POST_MERGE_ENABLED")),
             HostAdapter = OptIn(Val("host-adapter", "RUNNER_HOST_ADAPTER")),
             AuthToken = authToken.Length > 0 ? authToken : null,
             AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,

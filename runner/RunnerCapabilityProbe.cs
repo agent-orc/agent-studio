@@ -177,6 +177,8 @@ internal static class RunnerCapabilityProbe
         }
         if (options.Role == "coding")
         {
+            list.Add(Capability(CapabilityProtocol.CodingPostMerge, "executor", null, null,
+                options.PostMergeEnabled ? "ready" : "disabled"));
             // The advertised status is the only lever that keeps a card away from
             // a host whose provider login is gone: the task server admits a claim
             // only while every required capability reads exactly "ready"

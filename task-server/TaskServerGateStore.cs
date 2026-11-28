@@ -143,7 +143,7 @@ public sealed partial class TaskServerStore
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) roles.Add(JsonSerializer.Deserialize<string[]>(reader.GetString(0), GateJson) ?? []);
         return new(roles.Any(role => role.Contains(GateCapabilities.Executor) && role.Contains(GateCapabilities.PostMerge)),
-            roles.Any(role => role.Contains(ReviewCapabilities.CodingExecutor) || role.Contains(CapabilityProtocol.CodingExecutor)));
+            roles.Any(role => role.Contains(CapabilityProtocol.CodingPostMerge)));
     }
 
     public async Task<GateStatus> CreateGateSubjectAsync(CreateGateSubjectRequest request, string actorId, CancellationToken ct)

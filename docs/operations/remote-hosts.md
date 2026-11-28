@@ -4,6 +4,18 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## After-merge work
+
+Studio grants after-merge windows to coding roles with the project binding,
+repository access and spare capacity. A connected post-merge gate role can
+execute a due window through its gate claim. Draining a coding role stops new
+claims and lets its current work finish. Project **Operations** lists the
+machine that ran each window or nightly run.
+
+For a coding-only host, set `RUNNER_POST_MERGE_ENABLED=false` in its coding role
+environment. Settings → Environment shows the setting as **Excluded** on the
+role after it advertises. See the [runner host setup](setup/linux-runner-host.md#post-merge-develop-checks).
+
 ## Cloudflare request limits
 
 The public host URL has a 100 second request and 100 MB body ceiling. Host

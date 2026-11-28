@@ -382,6 +382,9 @@ public sealed class GateVerificationAuthorityTests
         Assert.Equal(new PostMergeHostAvailability(true, false), await store.PostMergeHostsAsync(default));
         await store.RegisterRunnerAsync("coding", new RegisterRunnerRequest("coding", "run-host", "coding-instance",
             "1", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor]), "coding", default);
+        Assert.Equal(new PostMergeHostAvailability(true, false), await store.PostMergeHostsAsync(default));
+        await store.RegisterRunnerAsync("coding", new RegisterRunnerRequest("coding", "run-host", "coding-instance",
+            "1", TaskServerProtocol.Current, [ReviewCapabilities.CodingExecutor, CapabilityProtocol.CodingPostMerge]), "coding", default);
         Assert.Equal(new PostMergeHostAvailability(true, true), await store.PostMergeHostsAsync(default));
         await CreateMergeAsync(store, clock, 1);
         var claim = await store.ClaimGateAsync(new("gate-a", "instance-a", RequestedTtlSeconds: 600), "gate-a", default);

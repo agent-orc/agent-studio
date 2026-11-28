@@ -19,6 +19,27 @@
       </div>
     }
   }
+  @if (afterMergeRuns().length || afterMergeError()) {
+    <section aria-labelledby="after-merge-runs-title" data-testid="after-merge-runs">
+      <h3 id="after-merge-runs-title">After-merge runs</h3>
+      @if (afterMergeError()) {
+        <p role="status">After-merge runs could not be loaded.</p>
+      } @else {
+        <div class="project-operations__table-wrap">
+          <table>
+            <thead><tr><th scope="col">Started</th><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Tip</th><th scope="col">Host</th></tr></thead>
+            <tbody>
+              @for (run of afterMergeRuns(); track run.id) {
+                <tr><td>{{ run.startedAtUtc | date:'medium' }}</td><td>{{ run.kind === 'window' ? 'Merge window' : 'Nightly' }}</td>
+                  <td>{{ run.status }}</td><td><code [title]="run.tipSha">{{ run.tipSha.slice(0, 12) }}</code></td>
+                  <td>{{ run.executionHost ?? 'Unknown' }}</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
   <app-isolated-tests [projectName]="projectName()" (openCard)="openCard.emit($event)" />
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
   @if (snapshot(); as state) {

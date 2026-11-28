@@ -922,6 +922,36 @@ test.describe('Project Deploy area (mocked)', () => {
     await panel.screenshot({ path: path.join(results, 'telemetry-tokens-production-dark--mocked.png') });
   });
 
+  test('Operations shows the host on each after-merge run', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [], dora: { successfulProductionDeploys: 0, deploysPerWeek: 0,
+        medianCardToProductionHours: null, cardsMeasured: 0, changeFailureRate: null,
+        medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.route(`**/api/projects/${PROJECT}/post-merge-runs`, route => answer(route, [
+      { id: 'current', kind: 'window', status: 'running', tipSha: 'a'.repeat(40),
+        startedAtUtc: '2026-10-20T01:00:00Z', executionHost: 'coding-host-02' },
+      { id: 'nightly', kind: 'nightly', status: 'green', tipSha: 'b'.repeat(40),
+        startedAtUtc: '2026-10-20T00:00:00Z', executionHost: 'gate-host-01' },
+      { id: 'legacy', kind: 'window', status: 'red', tipSha: 'c'.repeat(40),
+        startedAtUtc: '2026-10-19T00:00:00Z', executionHost: null },
+    ]));
+    await page.getByTestId('deploy-tab-operations').click();
+    const runs = page.getByTestId('after-merge-runs');
+    await expect(runs.getByRole('row').nth(1)).toContainText('coding-host-02');
+    await expect(runs.getByRole('row').nth(2)).toContainText('gate-host-01');
+    await expect(runs.getByRole('row').nth(3)).toContainText('Unknown');
+    await expect(page.getByTestId('operations-dora')).toBeVisible();
+    await expect(page.getByTestId('error-dialog-overlay')).toBeHidden();
+    fs.mkdirSync(results, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await runs.screenshot({ path: path.join(results, `after-merge-runs-${theme}.png`) });
+    }
+  });
+
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
     await openDeploy(page, fullMocks());
     const release = deployReleasesFixture()[0];

@@ -8,6 +8,7 @@ public static class CapabilityProtocol
     public const int LegacySchemaVersion = 1;
 
     public const string CodingExecutor = "executor:coding";
+    public const string CodingPostMerge = "coding:post-merge";
     public const string ReviewExecutor = "executor:review";
     public const string GitFetch = "git:fetch";
     public const string GitPush = "git:push";

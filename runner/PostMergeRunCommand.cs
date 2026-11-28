@@ -13,6 +13,7 @@ public sealed record PostMergeRunOptions(string Project, string Checkout, string
     TimeSpan Window, int MaxSlots, IReadOnlyList<string> StateDirectories, bool DryRun)
 {
     public string? RepositoryUrl { get; init; }
+    public string? StateProjectId { get; init; }
     public bool RecordSkips { get; init; } = true;
     public bool UseGateCapacity { get; init; }
     public bool GateExecution { get; init; }
@@ -129,19 +130,27 @@ public sealed class PostMergeRunCommand
             // Observers must leave the interrupted workspace and its evidence untouched.
             if (observeOnly || claim is null) return 0;
             _journal = ReadJournal();
-            if (_journal.Terminal is not null)
+            if (_options.StateProjectId is not null && await WasSupersededAsync(ct))
             {
-                await DeliverTerminalAsync(ct);
-                return 0;
+                ArchiveJournal();
+                _journal = null;
             }
-            await RecoverAsync(ct);
-            await ReapInterruptedAsync(ct);
-            if (_journal.InFlight || _journal.WorkspaceDigest is null || _journal.WorkspaceDigest != CheckpointDigest())
+            else
             {
-                await InterruptAsync("host interrupted with an incomplete command or changed workspace", ct);
-                return 1;
+                if (_journal.Terminal is not null)
+                {
+                    await DeliverTerminalAsync(ct);
+                    return 0;
+                }
+                await RecoverAsync(ct);
+                await ReapInterruptedAsync(ct);
+                if (_journal.InFlight || _journal.WorkspaceDigest is null || _journal.WorkspaceDigest != CheckpointDigest())
+                {
+                    await InterruptAsync("host interrupted with an incomplete command or changed workspace", ct);
+                    return 1;
+                }
+                return await ExecuteOwnedAsync(ct);
             }
-            return await ExecuteOwnedAsync(ct);
         }
         using (var escalation = await _http.PostAsync(StateUrl() + "/escalation-check", null, ct))
             escalation.EnsureSuccessStatusCode();
@@ -218,7 +227,8 @@ public sealed class PostMergeRunCommand
             var skipped = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
                 state.LastWindowTipSha, null, null, 0, [], [], "skipped", now, now,
                 nightlyChecked ? "nightly routine suite already green on this tip today"
-                    : "develop has not moved since the last green run");
+                    : "develop has not moved since the last green run")
+            { ExecutionHost = _hostOptions?.Hostname ?? Environment.MachineName };
             await Post(skipped, ct);
             _output.WriteLine($"post-merge skipped tip={tip}");
             return 0;
@@ -527,6 +537,8 @@ public sealed class PostMergeRunCommand
     private bool _terminalDelivered;
     private string JournalPath => Path.Combine(_options.Checkout, ".post-merge-journal.json");
 
+    internal string? RecoveryOwner() => File.Exists(JournalPath) ? ReadJournal().Owner : null;
+
     internal PostMergeHostJournal ReadJournal()
         => JsonSerializer.Deserialize<PostMergeHostJournal>(File.ReadAllText(JournalPath), Json)
             ?? throw new IOException("Post-merge journal is empty.");
@@ -661,17 +673,32 @@ public sealed class PostMergeRunCommand
         }
     }
 
+    private async Task<bool> WasSupersededAsync(CancellationToken ct)
+    {
+        var state = await _http.GetFromJsonAsync<PostMergeProjectState>(StateUrl(), Json, ct)
+            ?? throw new IOException("Post-merge state was unavailable during recovery.");
+        var journal = _journal!;
+        if (state.ActiveRun?.Id == journal.Started.Id) return false;
+        var recorded = state.Runs.FirstOrDefault(run => run.Id == journal.Started.Id);
+        return recorded is not null
+            ? journal.Terminal is null || recorded.Status != journal.Terminal.Status || recorded.Reason != journal.Terminal.Reason
+            : journal.Fence != 0;
+    }
+
+    private void ArchiveJournal()
+    {
+        var directory = Path.Combine(_options.Checkout, ".post-merge-evidence");
+        Directory.CreateDirectory(directory);
+        File.Move(JournalPath, Path.Combine(directory, _journal!.Owner + ".json"), overwrite: true);
+    }
+
     private async Task DeliverTerminalAsync(CancellationToken ct)
     {
         await Post(_journal!.Terminal!, ct);
         lock (_journalGate)
         {
             if (_journal.Terminal!.Status == "inconclusive")
-            {
-                var directory = Path.Combine(_options.Checkout, ".post-merge-evidence");
-                Directory.CreateDirectory(directory);
-                File.Move(JournalPath, Path.Combine(directory, _journal.Owner + ".json"), overwrite: true);
-            }
+                ArchiveJournal();
             else File.Delete(JournalPath);
             _terminalDelivered = true;
         }
@@ -1143,7 +1170,7 @@ public sealed class PostMergeRunCommand
 
     internal Func<TimeSpan, CancellationToken, Task> ReceiptDelay { get; init; } = Task.Delay;
 
-    private string StateUrl() => $"api/runner/post-merge/projects/{Uri.EscapeDataString(_options.Project)}";
+    private string StateUrl() => $"api/runner/post-merge/projects/{Uri.EscapeDataString(_options.StateProjectId ?? _options.Project)}";
     private async Task Post(PostMergeRunRecord run, CancellationToken ct)
     {
         for (var attempt = 0; attempt < 3; attempt++)
@@ -1167,7 +1194,8 @@ public sealed class PostMergeRunCommand
                 if ((int)response.StatusCode < 500 || attempt == 2)
                     response.EnsureSuccessStatusCode();
             }
-            catch (HttpRequestException) when (attempt < 2 && !ct.IsCancellationRequested)
+            catch (HttpRequestException exception) when (attempt < 2 && !ct.IsCancellationRequested
+                && (exception.StatusCode is null || (int)exception.StatusCode >= 500))
             {
                 _output.WriteLine($"post-merge receipt retry {attempt + 1}/3");
             }
@@ -1177,7 +1205,8 @@ public sealed class PostMergeRunCommand
     }
 
     private Task<ProcessResult> Git(CancellationToken ct, params string[] arguments)
-        => ProcessRunner.RunAsync("git", ["-C", _options.Checkout, .. arguments], ct: ct);
+        => ProcessRunner.RunAsync("git", ["-C", _options.Checkout, .. arguments],
+            environment: _options.StateProjectId is null ? null : PostMergeHostScheduler.GitEnvironment, ct: ct);
 }
 
 internal sealed record PostMergeHostJournal(PostMergeRunRecord Started, PostMergeProjectState State,

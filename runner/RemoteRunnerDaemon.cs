@@ -415,9 +415,6 @@ public sealed class RemoteRunnerDaemon
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var preparationSweep = preparationCopies.MonitorAsync(auxiliaryStop.Token);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
-        var postMergePoll = _options.Role == "coding"
-            ? PostMergeHostScheduler.RunForHostAsync(_options, _client.ClientId, _log, auxiliaryStop.Token)
-            : Task.CompletedTask;
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
@@ -506,6 +503,11 @@ public sealed class RemoteRunnerDaemon
         var cliUpdateAttempted = false;
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(auxiliaryStop.Token);
+        using var postMergeStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var postMergePoll = _options.Role == "coding" && _options.PostMergeEnabled
+            ? PostMergeHostScheduler.RunForHostAsync(_options, _client,
+                () => active.Count + interactiveChat.HeavyCount, _log, postMergeStop.Token)
+            : Task.CompletedTask;
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var personaPoll = new PersonaLeaseRunner(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var oneShotPoll = new OneShotJobAdmission(_options, _client, _log, route: _oneShotClaimRoute).PollAsync(auxiliaryStop.Token);
@@ -564,7 +566,7 @@ public sealed class RemoteRunnerDaemon
                     auxiliaryStop.Cancel();
                     var persisted = state.LoadAll();
                     var occupied = Math.Max(active.Count, persisted.Count)
-                                   + hostJournal.RecoverAcceptedWork().Count;
+                                   + hostJournal.RecoverAcceptedWork().Count + (postMergePoll.IsCompleted ? 0 : 1);
                     if (drain is not null)
                         CodingDrainGuard.Acknowledge(_options.StateDir, drain, occupied);
                     if (hostDrain is not null)
@@ -1044,6 +1046,7 @@ public sealed class RemoteRunnerDaemon
         // workers are intentionally left alive for the replacement daemon.
         state.Flush();
         auxiliaryStop.Cancel();
+        postMergeStop.Cancel();
         var codingHandoffs = active
             .Where(slot => slot.TaskKey is not null)
             .Select(slot => slot.Execution)

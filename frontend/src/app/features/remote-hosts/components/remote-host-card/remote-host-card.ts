@@ -173,6 +173,11 @@ export class RemoteHostCardComponent {
   /** AGT-3840: re-probe one held capability of this role. */
   readonly capabilityReprobe = output<{ id: string; capability: string }>();
   readonly capacityChange = output<RuntimeCapacityChange>();
+  readonly postMergeSetting = computed(() => {
+    const capability = this.host().capabilityHealth?.find(item => item.key === 'coding:post-merge');
+    if (!capability) return 'Unknown';
+    return capability.advertisedStatus === 'ready' ? 'Enabled' : 'Excluded';
+  });
   readonly projectPolicyChange = output<HostProjectPolicyChange>();
   readonly setup = output<RemoteHost>();
   readonly expandedChange = output<boolean>();

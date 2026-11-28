@@ -224,7 +224,22 @@ public sealed record PostMergeOwnerQuestion(IReadOnlyList<string> Options, strin
     public DateTimeOffset? AskedAtUtc { get; init; }
 }
 
-/// <summary>Registry-derived execution target for the host-owned T3 scheduler.</summary>
+/// <summary>Wire constants for server-granted post-merge window custody.</summary>
+public static class PostMergeClaimProtocol
+{
+    public const string InstanceHeader = "X-Post-Merge-Instance";
+    public const string GrantHeader = "X-Post-Merge-Grant";
+    public const double MaxLoadPerCore = 0.5;
+    public static readonly TimeSpan GrantDuration = TimeSpan.FromMinutes(3);
+}
+
+public sealed record PostMergeClaimRequest(string RepositoryUrl, string Branch, string ReadTip,
+    int OccupiedSlots, double? LoadPerCore, string? RecoveryOwner = null);
+public sealed record PostMergeGrant(string Id, DateTimeOffset ExpiresAtUtc);
+public sealed record PostMergeRunSummary(string Id, string Kind, string Status, string TipSha,
+    DateTimeOffset StartedAtUtc, string? ExecutionHost);
+
+/// <summary>Registry-derived execution target for post-merge admission.</summary>
 public sealed record PostMergeProjectTarget(string ProjectId, string Project, string RepositoryUrl, string Branch);
 
 /// <summary>Fetched branch facts, reported even when execution admission is closed.</summary>
