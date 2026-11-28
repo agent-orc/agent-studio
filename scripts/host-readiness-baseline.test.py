@@ -15,11 +15,11 @@ def capture(kind, data, profile="task-server-a", scope="deployment"):
 
 
 class HostReadinessBaselineTests(unittest.TestCase):
-    def run_export(self, data):
+    def run_export(self, data, **kwargs):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "capture.json"
             path.write_text(json.dumps(data), encoding="utf-8")
-            return subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True)
+            return subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True, **kwargs)
 
     def export(self, *captures):
         result = self.run_export(captures)
@@ -74,6 +74,49 @@ class HostReadinessBaselineTests(unittest.TestCase):
         self.assertEqual("conflicting", mapping["status"])
         self.assertIsNone(mapping["physicalMachineId"])
 
+    def test_conflicting_reported_ancestors_survive_receipt_join(self):
+        role = {"runnerId": "review-1", "instanceId": "active", "telemetry": {"placement": {
+            "kind": "container", "ancestors": [
+                {"id": "metal-b", "kind": "physical"},
+                {"id": "metal-a", "kind": "physical"},
+                {"id": "guest", "kind": "vm"},
+            ],
+        }}}
+        receipt = {"subjectProfile": "task-server-a", "runnerId": "review-1",
+                   "instanceId": "active", "physicalMachineId": "metal-a"}
+        for receipts in ([], [receipt]):
+            with self.subTest(receipt_count=len(receipts)):
+                report = self.export(capture("task-server-roles", [role]),
+                                     capture("role-profile", receipts, "owner-a"))
+                mapping = report["observations"][0]["facts"][0]["physicalMapping"]
+                self.assertEqual("conflicting", mapping["status"])
+                self.assertIsNone(mapping["physicalMachineId"])
+                self.assertEqual(["metal-a", "metal-b"], mapping["reportedPhysicalMachineIds"])
+                self.assertEqual(len(receipts), len(mapping["profileReceipts"]))
+
+    @unittest.skipUnless(sys.platform == "linux", "address-space limit requires Linux")
+    def test_rejects_projection_fanout_within_memory_limit(self):
+        import resource
+
+        def limit_memory():
+            ceiling = 96 * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (ceiling, ceiling))
+
+        # All arrays fit the row cap and the raw input fits the byte cap. The
+        # same inventory ID can appear in multiple independently reported views.
+        inventory = [{"id": "container-a"}] * 128
+        roles = [{"runnerId": f"review-{i}", "containers": inventory} for i in range(128)]
+        receipts = [{"subjectProfile": "task-server-a", "containerId": "container-a",
+                     "physicalMachineId": f"metal-{i}"} for i in range(128)]
+        result = self.run_export(
+            [capture("task-server-roles", roles), capture("role-profile", receipts, "owner-a")],
+            preexec_fn=limit_memory, timeout=15,
+        )
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout)
+        self.assertEqual("Capture exceeds 2 MiB after projection. Select a smaller sample.\n",
+                         result.stderr)
+
     def test_projects_queue_phases_and_secrets(self):
         secret = "private metadata sentinel"
         digest = "a" * 64
@@ -106,6 +149,7 @@ class HostReadinessBaselineTests(unittest.TestCase):
     def test_rejects_oversized_malformed_and_undated_inputs(self):
         for data in ([capture("task-server-roles", [{}] * 129)], [capture("studio-gates", [])],
                      [capture("task-server-roles", "x" * (2 * 1024 * 1024))],
+                     [capture("task-server-roles", [{"containers": []}, {"containers": [None]}])],
                      [dict(capture("task-server-roles", []), capturedAt="undated")]):
             with self.subTest(size=len(str(data))):
                 result = self.run_export(data)

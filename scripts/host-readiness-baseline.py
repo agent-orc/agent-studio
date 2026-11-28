@@ -2,6 +2,7 @@
 """Project a bounded host baseline from explicitly selected, saved metadata."""
 
 import argparse
+from collections.abc import Iterator
 from datetime import datetime, timezone
 import json
 import math
@@ -17,6 +18,7 @@ DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 CPU_MAX = re.compile(r"(?:max|[0-9]{1,15}) [0-9]{1,15}\Z")
 LABEL = re.compile(r"[A-Za-z0-9 ()-]{1,80}\Z")
 PROJECT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+ ()-]{0,127}\Z")
+JSON = json.JSONEncoder(allow_nan=False)
 
 SOURCES = {
     "task-server-roles": "Standalone Task Server GET /api/v1/management/remote-hosts",
@@ -105,15 +107,16 @@ def rows(value):
 
 def project_rows(value, project):
     items = rows(value)
-    return None if items is None else [project(item) for item in items]
+    return None if items is None else (project(item) for item in items)
 
 
-def role(row):
+def role(row, physical_link):
     telemetry = row.get("telemetry") or {}
     placement = telemetry.get("placement") or {}
     structure = telemetry.get("structure") or {}
     ancestors = project_rows(placement.get("ancestors"), lambda item: fields(
         item, ids="id", kind=("vm", "physical")))
+    ancestors = None if ancestors is None else list(ancestors)
     physical = {item["id"] for item in ancestors or [] if item["kind"] == "physical" and item["id"]}
     topology = fields(placement, ids="containerName parentMachineId kernelId machineName machineVirtualization",
                       kind=("physical", "vm", "container", "unknown"))
@@ -124,6 +127,7 @@ def role(row):
     readiness = project_rows(row.get("capabilities"), lambda item: fields(
         item, ids="key category advertisedStatus healthState", booleans="isFresh",
         times="advertisedAt freshUntil expiresAt lastRealSuccessAt"))
+    readiness = None if readiness is None else list(readiness)
     roles = sorted({ROLE_KEYS[item["key"]] for item in readiness or [] if item["key"] in ROLE_KEYS})
     reported_role = scalar(structure.get("role"), ("coding", "review", "gate", "integration", "post", "deploy"))
     containers = row.get("containers")
@@ -133,10 +137,16 @@ def role(row):
     allowed = policy.get("allowedProjectIds")
     if allowed is not None and (not isinstance(allowed, list) or len(allowed) > MAX_ROWS):
         raise ValueError("invalid project allowlist")
+    identity = fields(row, ids="runnerId hostId instanceId runnerVersion status",
+                      numbers="protocolVersion roleMaxParallelism effectiveMaxParallelism runtimeCapacityAppliedVersion activeGateCount",
+                      times="registeredAt lastSeenAt runtimeCapacityAppliedAt")
+
+    def map_container(projected):
+        # Inventories can come from a remote runtime. Require exact container evidence.
+        return {**projected, "physicalMapping": physical_link(("container", projected["id"]))}
+
     return {
-        **fields(row, ids="runnerId hostId instanceId runnerVersion status",
-                 numbers="protocolVersion roleMaxParallelism effectiveMaxParallelism runtimeCapacityAppliedVersion activeGateCount",
-                 times="registeredAt lastSeenAt runtimeCapacityAppliedAt"),
+        **identity,
         "advertisedRoles": roles,
         "reportedRole": reported_role,
         "release": fields(row.get("release"), ids="releaseId version", times="builtAt", commit=SHA),
@@ -160,10 +170,11 @@ def role(row):
                                        "workerEnvelopeCpuQuotaPercent currentCeiling throttledShare",
                                booleans="sustainedThrottling"),
         "topology": topology,
-        "containers": project_rows(containers, lambda item: fields(
-            item, ids="id name state", imageDigest=re.compile(r"sha256:[a-f0-9]{64}\Z"))),
-        "structureContainers": project_rows(structure.get("studioContainers"), lambda item: fields(
-            item, ids="id role", numbers="restarts uptimeSeconds")),
+        "containers": project_rows(containers, lambda item: map_container(fields(
+            item, ids="id name state", imageDigest=re.compile(r"sha256:[a-f0-9]{64}\Z")))),
+        "structureContainers": project_rows(structure.get("studioContainers"), lambda item: map_container(fields(
+            item, ids="id role", numbers="restarts uptimeSeconds"))),
+        "physicalMapping": physical_link(("runner", identity["runnerId"], identity["instanceId"]), physical),
     }
 
 
@@ -237,9 +248,9 @@ def monolith_queue(value):
             **summary, "tasks": project_rows(value.get("items"), item)}
 
 
-def project_source(kind, value):
+def project_source(kind, value, physical_link):
     if kind in ("task-server-roles", "monolith-roles"):
-        return project_rows(value, role)
+        return project_rows(value, lambda item: role(item, physical_link))
     if kind == "task-server-quotas":
         return project_rows(value, quota)
     if kind == "role-profile":
@@ -276,20 +287,21 @@ def project_source(kind, value):
     return integration(value)
 
 
-def add_topology_links(observations):
+def topology_receipts(captures):
     # Source profiles remain independent. An explicit receipt can cross that boundary
     # only by naming the subject profile and exact runner instance or container ID.
     receipts = {}
-    for observation in observations:
-        if observation["kind"] != "role-profile":
+    for kind, origin, payload in captures:
+        if kind != "role-profile":
             continue
-        for receipt in observation["facts"]:
-            scope = observation["scope"]
+        for row in rows(payload):
+            receipt = fields(row, ids="subjectProfile physicalMachineId runnerId instanceId containerId")
+            scope = origin["scope"]
             profile = receipt["subjectProfile"]
             parent = receipt["physicalMachineId"]
             if not profile or not parent:
                 continue
-            evidence = (parent, observation["profile"], observation["capturedAt"])
+            evidence = (parent, origin["profile"], origin["capturedAt"])
             if receipt["runnerId"] and receipt["instanceId"]:
                 key = (scope, profile, "runner", receipt["runnerId"], receipt["instanceId"])
                 receipts.setdefault(key, set()).add(evidence)
@@ -297,37 +309,24 @@ def add_topology_links(observations):
                 key = (scope, profile, "container", receipt["containerId"])
                 receipts.setdefault(key, set()).add(evidence)
 
-    def link(key, reported=None):
-        evidence = sorted(receipts.get(key, ()))
-        parents = {item[0] for item in evidence}
-        if reported:
-            parents.add(reported)
-        return {
-            "status": "mapped" if len(parents) == 1 else "conflicting" if parents else "unresolved",
-            "physicalMachineId": next(iter(parents)) if len(parents) == 1 else None,
-            "profileReceipts": [{"physicalMachineId": parent, "profile": profile, "capturedAt": captured_at}
-                                for parent, profile, captured_at in evidence],
-        }
-
-    for observation in observations:
-        if observation["kind"] not in ("task-server-roles", "monolith-roles"):
-            continue
-        scope = observation["scope"]
-        profile = observation["profile"]
-        for row in observation["facts"]:
-            row["physicalMapping"] = link(
-                (scope, profile, "runner", row["runnerId"], row["instanceId"]),
-                row["topology"]["physicalMachineId"])
-            # An inventory can be exposed by a remote runtime. Its containers
-            # need their own exact-ID evidence, even if the reporting role maps.
-            for container in (row["containers"] or []) + (row["structureContainers"] or []):
-                container["physicalMapping"] = link((scope, profile, "container", container["id"]))
+    return receipts
 
 
-def export(captures):
+def physical_mapping(evidence, reported):
+    parents = set(reported)
+    parents.update(item[0] for item in evidence)
+    return {
+        "status": "mapped" if len(parents) == 1 else "conflicting" if parents else "unresolved",
+        "physicalMachineId": next(iter(parents)) if len(parents) == 1 else None,
+        "reportedPhysicalMachineIds": sorted(reported),
+        "profileReceipts": ({"physicalMachineId": parent, "profile": profile, "capturedAt": captured_at}
+                            for parent, profile, captured_at in sorted(evidence)),
+    }
+
+
+def validate_captures(captures):
     if not isinstance(captures, list):
         raise ValueError("expected an array of captures")
-    observations = []
     for capture in rows(captures):
         kind = capture.get("kind")
         if not isinstance(kind, str) or kind not in SOURCES:
@@ -339,20 +338,71 @@ def export(captures):
         payload = capture.get("data")
         if payload is None:
             raise ValueError("capture requires data; omit an unavailable capture")
-        observations.append({
-            "kind": kind, "source": SOURCES[kind], **origin, "facts": project_source(kind, payload),
-        })
-    add_topology_links(observations)
+        yield kind, origin, payload
+
+
+def export(captures):
+    captures = list(validate_captures(captures))
+    receipts = topology_receipts(captures)
+
+    def observations():
+        for kind, origin, payload in captures:
+            def link(subject, reported=()):
+                key = (origin["scope"], origin["profile"], *subject)
+                return physical_mapping(receipts.get(key, ()), reported)
+
+            yield {"kind": kind, "source": SOURCES[kind], **origin,
+                   "facts": project_source(kind, payload, link)}
+
+    deployed_kinds = {kind for kind, origin, _ in captures if origin["scope"] == "deployment"}
     return {
         "schemaVersion": 1,
         "supplied": {"source": "AGT-4152 production facts P1/P2 and AGT-4396 card brief", "facts": SUPPLIED},
         "roleFactOwners": {field: owner for names, owner in ROLE_FACT_OWNERS.items() for field in names.split()},
-        "observations": observations,
-        "deploymentSourcesWithoutCapture": [
-            kind for kind in SOURCES if not any(row["kind"] == kind and row["scope"] == "deployment"
-                                                for row in observations)
-        ],
+        "observations": observations(),
+        "deploymentSourcesWithoutCapture": [kind for kind in SOURCES if kind not in deployed_kinds],
     }
+
+
+def json_chunks(value, depth=0):
+    # Walk lazy arrays one row at a time, including nested receipt joins.
+    if isinstance(value, dict):
+        first, last, entries = "{", "}", value.items()
+    elif isinstance(value, (list, Iterator)):
+        first, last, entries = "[", "]", ((None, item) for item in value)
+    else:
+        yield JSON.encode(value)
+        return
+
+    yield first
+    populated = False
+    for key, item in entries:
+        if populated:
+            yield ","
+        populated = True
+        yield "\n" + "  " * (depth + 1)
+        if key is not None:
+            yield JSON.encode(key) + ": "
+        yield from json_chunks(item, depth + 1)
+    if populated:
+        yield "\n" + "  " * depth
+    yield last
+
+
+class ProjectionTooLarge(ValueError):
+    pass
+
+
+def bounded_document(value):
+    # Keep the complete receipt private until validation and sizing both pass.
+    data = bytearray()
+    for chunk in json_chunks(value):
+        encoded = chunk.encode("utf-8")
+        if len(data) + len(encoded) + 1 > MAX_BYTES:
+            raise ProjectionTooLarge
+        data.extend(encoded)
+    data.extend(b"\n")
+    return data
 
 
 def main():
@@ -364,12 +414,12 @@ def main():
             data = stream.read(MAX_BYTES + 1)
         if len(data) > MAX_BYTES:
             raise ValueError("input exceeds 2 MiB")
-        result = json.dumps(export(json.loads(data)), indent=2, allow_nan=False) + "\n"
-        if len(result.encode("utf-8")) > MAX_BYTES:
-            raise ValueError("export exceeds 2 MiB; select a smaller sample")
+        result = bounded_document(export(json.loads(data)))
+    except ProjectionTooLarge:
+        parser.exit(2, "Capture exceeds 2 MiB after projection. Select a smaller sample.\n")
     except (OSError, ValueError, TypeError, AttributeError, RecursionError):
         parser.exit(2, "Invalid or oversized capture. Check the documented metadata schema and bounds.\n")
-    sys.stdout.write(result)
+    sys.stdout.buffer.write(result)
 
 
 if __name__ == "__main__":
