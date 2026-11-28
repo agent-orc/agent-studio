@@ -681,33 +681,38 @@ public sealed class DeliveryFailureDiagnosisTests
     }
 
     [Theory]
-    [InlineData(false, false, DeliveryFailureDiagnosis.Environment, "Pass")]
-    [InlineData(false, true, DeliveryFailureDiagnosis.Environment, "Pass")]
-    [InlineData(true, false, DeliveryFailureDiagnosis.Environment, "Pass")]
-    [InlineData(true, true, DeliveryFailureDiagnosis.Environment, "Pass")]
-    [InlineData(false, false, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
-    [InlineData(false, true, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
-    [InlineData(true, false, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
-    [InlineData(true, true, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
+    [Trait("Category", "Guard")]
+    [InlineData(false, false, DeliveryFailureDiagnosis.Environment, "Pass", false)]
+    [InlineData(false, true, DeliveryFailureDiagnosis.Environment, "Pass", false)]
+    [InlineData(true, false, DeliveryFailureDiagnosis.Environment, "Pass", false)]
+    [InlineData(true, true, DeliveryFailureDiagnosis.Environment, "Pass", false)]
+    [InlineData(false, false, DeliveryFailureDiagnosis.Product, "ReviewInfra", false)]
+    [InlineData(false, true, DeliveryFailureDiagnosis.Product, "ReviewInfra", false)]
+    [InlineData(true, false, DeliveryFailureDiagnosis.Product, "ReviewInfra", false)]
+    [InlineData(true, true, DeliveryFailureDiagnosis.Product, "ReviewInfra", false)]
+    [InlineData(true, true, DeliveryFailureDiagnosis.Environment, "ReviewInfra", true)]
     public void Repeat_only_new_failure_is_not_a_reproduced_candidate_assertion(
-        bool candidateOnlyFailure, bool sharedRepeatFailure, string classification, string expected)
+        bool candidateOnlyFailure, bool sharedRepeatFailure, string classification, string expected, bool originalRepeated)
     {
         var candidate = FailedCommand("verify-repeat-only", classification, false) with
         {
             FileName = "dotnet", Arguments = ["test", "runner.Tests/Synthetic.csproj"],
             BaselineSha = "base", BaselineExitCode = 1,
             InitialFailures = candidateOnlyFailure ? ["Product.Tests.A", "Product.Tests.B"] : ["Product.Tests.B"],
-            NewFailures = ["Product.Tests.C"], PreExistingFailures = ["Product.Tests.B"],
+            NewFailures = originalRepeated ? ["Product.Tests.A", "Product.Tests.C"] : ["Product.Tests.C"],
+            PreExistingFailures = ["Product.Tests.B"],
             Diagnosis = new(classification, 0.9,
                 [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "failure sets vary"]),
         };
         var clean = candidate with
         {
             Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
-            InitialFailures = sharedRepeatFailure ? ["Product.Tests.B", "Product.Tests.C"] : ["Product.Tests.C"],
+            InitialFailures = originalRepeated ? ["Product.Tests.A", "Product.Tests.B", "Product.Tests.C"]
+                : sharedRepeatFailure ? ["Product.Tests.B", "Product.Tests.C"] : ["Product.Tests.C"],
         };
         var productClaim = classification == DeliveryFailureDiagnosis.Product;
-        Assert.Equal(productClaim, ReviewRepeatFilterPolicy.RequiresAssertionProof(candidate, clean));
+        var requiresProof = productClaim || originalRepeated;
+        Assert.Equal(requiresProof, ReviewRepeatFilterPolicy.RequiresAssertionProof(candidate, clean));
         var report = EmptyReport("Pass") with
         {
             Commands = [candidate, clean],
@@ -720,8 +725,10 @@ public sealed class DeliveryFailureDiagnosisTests
         var settled = AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, plan);
 
         Assert.Equal(expected, settled.Outcome);
-        Assert.Equal(productClaim ? DeliveryFailureDiagnosis.FirstOccurrence : classification,
+        Assert.Equal(requiresProof ? DeliveryFailureDiagnosis.FirstOccurrence : classification,
             Assert.Single(settled.Verdicts).Diagnosis?.Classification);
+        Assert.Equal(candidate.InitialFailures, Assert.Single(settled.Commands, item => item.WorkspaceRole == "candidate").InitialFailures);
+        Assert.Equal(clean.InitialFailures, Assert.Single(settled.Commands, item => item.WorkspaceRole == "clean-repeat").InitialFailures);
         Assert.Equal(expected, AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(settled, plan).Outcome);
     }
 

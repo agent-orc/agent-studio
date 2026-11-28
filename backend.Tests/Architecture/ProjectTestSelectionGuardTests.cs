@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -7,6 +8,40 @@ namespace AgentStudio.Tests.Architecture;
 
 public sealed class ProjectTestSelectionGuardTests
 {
+    [Theory]
+    [Trait("Category", "Guard")]
+    [InlineData("backend.Tests/OrchestratorApi.Tests.csproj", "Category!=MachineBound", "&Category!=ReviewBase")]
+    [InlineData("orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj", "Category!=MachineBound",
+        "&FullyQualifiedName!~OrchestratorEngine.Tests.StandaloneReviewLoopCutoverTests")]
+    [InlineData("backend.Tests/OrchestratorApi.Tests.csproj", "Category!=ReviewFlaky", null)]
+    [InlineData("orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj", "Category!=ReviewFlaky", null)]
+    public void Fixed_checks_only_replace_cases_covered_by_the_same_project_and_filter(
+        string project, string filter, string? fixedExclusion)
+    {
+        const string selectedClass = "OrchestratorEngine.Tests.StandaloneReviewLoopCutoverTests";
+        var root = RepositoryRoot.Find();
+        var declared = VerifyCommandPlanner.Plan(root, null);
+        var original = Assert.Single(declared.Commands, command => command.Command.StartsWith(
+            $"dotnet test {project} --no-build ", StringComparison.Ordinal));
+        var slice = $"({filter})&(FullyQualifiedName~{selectedClass})";
+        var selected = original with { Command = $"dotnet test {project} --no-build --filter \"{slice}\"" };
+
+        var plan = PerCardVerifyPlanner.WithReviewBase(root, declared,
+            new StagedVerifyPlan([selected], new TestSelectionAudit()), ["contracts/Changed.cs"]);
+
+        var retained = Assert.Single(plan.Commands, command => command.TestScope != ReviewBaseChecks.Scope);
+        var expected = fixedExclusion is null ? selected.Command
+            : $"dotnet test {project} --no-build --filter \"({slice})&(Category!=Guard&FullyQualifiedName!~.Architecture.{fixedExclusion})\"";
+        Assert.Equal(expected, retained.Command);
+        var replacement = Assert.Single(plan.Commands, command => command.TestScope == ReviewBaseChecks.Scope
+            && command.Command.StartsWith($"dotnet test {project} ", StringComparison.Ordinal));
+        Assert.Contains("(Category!=MachineBound)&(", replacement.Command);
+        Assert.Contains(GuardFirstGatePlan.GuardFilter, replacement.Command);
+        Assert.Contains(TestSelectionPlanner.Describe(retained), plan.Audit.SelectedCommands);
+        Assert.Contains(TestSelectionPlanner.Describe(replacement), plan.Audit.SelectedCommands);
+        Assert.Empty(plan.Audit.AttemptedTestCommands);
+    }
+
     [Fact]
     [Trait("Category", "Guard")]
     [Trait("Category", "MachineBound")]

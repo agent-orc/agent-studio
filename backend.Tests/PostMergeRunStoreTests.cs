@@ -136,8 +136,9 @@ public sealed class PostMergeRunStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData("valid")]
-    [InlineData("fixed-valid")]
+    [Trait("Category", "Guard")]
+    [InlineData("valid", true)]
+    [InlineData("fixed-valid", true)]
     [InlineData("fixed-missing")]
     [InlineData("missing")]
     [InlineData("duplicate")]
@@ -158,11 +159,20 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("extra-settings")]
     [InlineData("extra-argument")]
     [InlineData("extra-positional")]
-    [InlineData("valid-quoted-path")]
+    [InlineData("valid-quoted-path", true)]
+    [InlineData("windows-drive", true, @"C:\runner\post-merge-shards\shard-0.runsettings", @"C:/runner/post-merge-shards\shard-1.runsettings")]
+    [InlineData("windows-unc", true, @"\\host\share\post-merge-shards\shard-0.runsettings", @"\\host\share\post-merge-shards\shard-1.runsettings")]
+    [InlineData("windows-unc-slash-backslash", true, @"\\host\share\post-merge-shards\shard-0.runsettings", @"/\host/share\post-merge-shards\shard-1.runsettings")]
+    [InlineData("windows-unc-backslash-slash", true, @"\\host\share\post-merge-shards\shard-0.runsettings", @"\/host/share\post-merge-shards\shard-1.runsettings")]
+    [InlineData("windows-unc-forward-prefix", true, @"\\host\share\post-merge-shards\shard-0.runsettings", @"//host/share/post-merge-shards\shard-1.runsettings")]
+    [InlineData("windows-unc-other-share", false, @"\\host\share\post-merge-shards\shard-0.runsettings", @"/\host/other\post-merge-shards\shard-1.runsettings")]
+    [InlineData("posix-literal-backslash", false, "/runner/post-merge-shards/shard-0.runsettings", @"/runner/post-merge-shards\shard-1.runsettings")]
+    [InlineData("posix-redundant-leading-slashes", false, "///runner/post-merge-shards/shard-0.runsettings", @"///runner/post-merge-shards\shard-1.runsettings")]
     [InlineData("leading-zero")]
     [InlineData("plus-sign")]
     [InlineData("index-whitespace")]
-    public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
+    public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence, bool accepted = false,
+        string? firstSettings = null, string? secondSettings = null)
     {
         const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
         var envelope = new PostMergeEnvelopeFingerprint("a", "b", "worker", null, 2, null, "tests=auto", null, null);
@@ -170,13 +180,18 @@ public sealed class PostMergeRunStoreTests : IDisposable
         if (evidence == "unplanned") run = run with { Envelope = envelope with { ShardPlan = "tests=1" } };
         if (evidence.StartsWith("fixed-", StringComparison.Ordinal)) run = run with { Envelope = envelope with { ShardPlan = "tests=2" } };
         var store = new PostMergeRunStore(_root);
-        store.Record(Project, run);
+        Assert.NotNull(store.Record(Project, run));
         var settingsRoot = evidence == "valid-quoted-path" ? Path.Combine(_root, "runner's files") : _root;
         var shardCommands = Runner::AgentRunner.PostMergeShards.Commands(command, ["Tests.One", "Tests.Two"], 2,
             Path.Combine(settingsRoot, "post-merge-shards"));
         Assert.Equal(2, shardCommands.Count);
         var shard = new PostMergeCommandVerdict(shardCommands[0], 0, false) { SuiteId = "tests" };
         var second = shard with { Command = shardCommands[1] };
+        if (firstSettings is not null && secondSettings is not null)
+        {
+            shard = shard with { Command = $"dotnet test tests.csproj --no-build --settings '{firstSettings}'" };
+            second = second with { Command = $"dotnet test tests.csproj --no-build --settings '{secondSettings}'" };
+        }
         var receipt = run with { Status = "green", FinishedAtUtc = Now,
             Verdicts = [new("build", 0, false), shard, second],
             Envelope = envelope with { ShardPlan = "tests=2" },
@@ -240,10 +255,12 @@ public sealed class PostMergeRunStoreTests : IDisposable
                 ? verdict : verdict with { Command = verdict.Command.Replace(" --settings '",
                     " --settings '/tmp/ignored'" + extra + " '", StringComparison.Ordinal) }).ToArray() };
         }
-        if (evidence is not ("valid" or "fixed-valid" or "valid-quoted-path"))
+        if (!accepted)
         {
             Assert.Null(store.Record(Project, receipt));
-            Assert.Null(store.Read(Project).LastGreenSha);
+            var state = store.Read(Project);
+            Assert.Null(state.LastGreenSha);
+            Assert.Equal(run.Id, state.ActiveRun?.Id);
             return;
         }
         Assert.NotNull(store.Record(Project, receipt));
@@ -251,14 +268,23 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt));
     }
 
-    [Fact]
-    public void PersistedDuplicatePlanReceiptCanReplayExactlyWithoutRevalidatingCoverage()
+    [Theory]
+    [Trait("Category", "Guard")]
+    [InlineData(true, "exact", true)]
+    [InlineData(false, "exact", true)]
+    [InlineData(true, "reason", false)]
+    [InlineData(true, "id", false)]
+    [InlineData(true, "command-spacing", false)]
+    [InlineData(true, "verdict-order", false)]
+    public void PersistedReceiptRequiresExactReplay(bool duplicate, string change, bool accepted)
     {
         var store = new PostMergeRunStore(_root);
         var receipt = Run("legacy", First, "window") with
         {
-            Commands = ["build", "build"], Status = "green", FinishedAtUtc = Now,
-            Verdicts = [new("build", 0, false), new("build", 0, false)],
+            Commands = duplicate ? ["build", "dotnet test", "build"] : ["build", "dotnet test"],
+            Status = "green", FinishedAtUtc = Now,
+            Verdicts = duplicate ? [new("build", 0, false), new("dotnet test", 0, false), new("build", 0, false)]
+                : [new("build", 0, false), new("dotnet test", 0, false)],
         };
         Directory.CreateDirectory(_root);
         var state = PostMergeProjectState.Empty(Project) with
@@ -267,11 +293,19 @@ public sealed class PostMergeRunStoreTests : IDisposable
         };
         File.WriteAllText(Path.Combine(_root, Project + ".json"),
             System.Text.Json.JsonSerializer.Serialize(state, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
-        Assert.NotNull(store.Record(Project, receipt));
-        Assert.Null(store.Record(Project, receipt with { Reason = "changed receipt" }));
-        Assert.Null(store.Record(Project, receipt with { Id = "new-receipt" }));
+        var replay = change switch
+        {
+            "exact" => receipt,
+            "reason" => receipt with { Reason = "changed receipt" },
+            "id" => receipt with { Id = "new-receipt" },
+            "command-spacing" => receipt with { Commands = ["build", "dotnet  test", "build"] },
+            "verdict-order" => receipt with { Verdicts = [receipt.Verdicts[1], receipt.Verdicts[0], receipt.Verdicts[2]] },
+            _ => throw new ArgumentOutOfRangeException(nameof(change)),
+        };
+        Assert.Equal(accepted, store.Record(Project, replay) is not null);
         Assert.Equal(First, store.Read(Project).LastGreenSha);
-        Assert.Single(store.Read(Project).Runs);
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(receipt),
+            System.Text.Json.JsonSerializer.Serialize(Assert.Single(store.Read(Project).Runs)));
     }
 
     [Fact]

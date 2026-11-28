@@ -208,6 +208,7 @@ public sealed class PostMergeRunStore
             _ => new List<PostMergeCommandVerdict>(), StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var shardIds = new HashSet<(string Command, int Index)>();
+        var shardDirectories = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var verdict in run.Verdicts)
         {
             if (verdict is null || string.IsNullOrWhiteSpace(verdict.Command) || !seen.Add(verdict.Command))
@@ -244,7 +245,13 @@ public sealed class PostMergeRunStore
             const string escapedQuote = "'\\''";
             if (settingsArgument.Replace(escapedQuote, "", StringComparison.Ordinal).Contains('\''))
                 return false;
-            var settings = settingsArgument.Replace(escapedQuote, "'", StringComparison.Ordinal).Replace('\\', '/');
+            var settings = settingsArgument.Replace(escapedQuote, "'", StringComparison.Ordinal);
+            // Windows drive and UNC roots can use either separator, regardless
+            // of the host OS. A backslash in a POSIX path is part of the filename.
+            var uncRoot = settings is ['/' or '\\', '/' or '\\', not ('/' or '\\'), ..];
+            var driveRoot = settings is [var drive, ':', '/' or '\\', ..] && char.IsAsciiLetter(drive);
+            if (uncRoot || driveRoot)
+                settings = settings.Replace('\\', '/');
             var marker = "/post-merge-" + active.Id + "/shard-";
             var markerIndex = settings.LastIndexOf(marker, StringComparison.Ordinal);
             if (markerIndex < 0 || !settings.EndsWith(".runsettings", StringComparison.Ordinal)
@@ -252,6 +259,9 @@ public sealed class PostMergeRunStore
                 || index < 0 || index >= count
                 || settings[(markerIndex + marker.Length)..] != index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".runsettings"
                 || !shardIds.Add((original, index))) return false;
+            var directory = settings[..settings.LastIndexOf('/')];
+            if (!shardDirectories.TryAdd(original, directory) && shardDirectories[original] != directory)
+                return false;
             coverage[original].Add(verdict);
         }
         foreach (var (command, verdicts) in coverage)
@@ -271,10 +281,6 @@ public sealed class PostMergeRunStore
                 || !ShardCount(run.Envelope?.ShardPlan, suite, out var completed)
                 || !int.TryParse(completed, out var count)
                 || (run.Status == "green" ? verdicts.Count != count : verdicts.Count > count)) return false;
-            // Paths are shard identities, even if a command uses different separators.
-            var paths = verdicts.Select(verdict => verdict.Command.Replace('\\', '/')).ToArray();
-            if (paths.Select(path => path[..path.LastIndexOf('/')]).Distinct(StringComparer.Ordinal).Count() != 1)
-                return false;
         }
         return run.Status != "green" || active.Commands.Count > 0;
     }
