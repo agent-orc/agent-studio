@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
 import { sampleColours, setTheme } from '../helpers/theme';
-import { expandToFullPage, pilotEnrollmentCode, pilotToken, stubPilotOwner } from './access-pilot.fixture';
+import { expandToFullPage, pilotEnrollmentCode, pilotRunners, pilotToken, stubPilotOwner } from './access-pilot.fixture';
 
 /**
  * AGT-4029: Settings > Access as the pilot page of the UI standard. Every
@@ -31,6 +31,74 @@ async function theme(page: Page, value: 'light' | 'dark'): Promise<void> {
 }
 
 const rowOpen = (access: Locator, testId: string) => access.getByTestId(testId).getByRole('button', { name: /^Open details of/ });
+
+test('runner renewal health and refused reuse are visible and the owner can turn renewal off', async ({ page }) => {
+  test.setTimeout(150_000);
+  await stubPilotOwner(page);
+  const shots = join(results, 'runner-renewal');
+  mkdirSync(shots, { recursive: true });
+  const runner = pilotRunners().runners[0];
+  const renewal = {
+    enabled: true, installationEnabled: true, runnerEnabled: true,
+    currentExpiresAt: '2026-12-02T09:00:00Z', lastRenewalAt: '2026-11-02T09:00:00Z',
+    nextRenewalAt: '2026-11-22T09:00:00Z', failingSince: '2026-11-22T09:15:00Z',
+    failureReason: 'The runner could not write its credential file.', lastReplayAt: '2026-11-02T09:01:00Z',
+  };
+  let enabled = true;
+  await page.route('**/api/auth/runners', route => route.fulfill({ json: [{
+    ...runner,
+    renewal: { ...renewal, enabled, runnerEnabled: enabled, failingSince: enabled ? renewal.failingSince : null,
+      nextRenewalAt: enabled ? renewal.nextRenewalAt : null },
+  }] }));
+  await page.route('**/api/auth/runners/runner_coding/renewal', route => {
+    expect(route.request().method()).toBe('PUT');
+    enabled = route.request().postDataJSON().enabled;
+    return route.fulfill({ json: {} });
+  });
+  await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({ json: {
+    generatedAt: '2026-11-24T09:00:00Z',
+    items: [{ id: 'runner-credential', category: 'service', hostId: runner.id, kind: 'service_credential',
+      label: 'Coding runner credential', scopes: ['runner.claim'], state: 'expiring', required: false,
+      expiresAt: renewal.currentExpiresAt, detail: 'Enrolled identity', affectedCards: [],
+      lifetimeClass: 'long-lived', renewal }],
+  } }));
+
+  const access = await openAccess(page);
+  await rowOpen(access, 'access-runner-runner_coding').click();
+  const detail = page.getByTestId('access-runner-renewal');
+  const section = page.getByRole('region', { name: 'Credential', exact: true });
+  await expect(detail).toContainText('Current credential expires');
+  await expect(detail).toContainText('Last renewal');
+  await expect(detail).toContainText('Next renewal');
+  await expect(detail).toContainText('Renewal failing since');
+  await expect(detail).toContainText(renewal.failureReason);
+  await expect(detail).toContainText('Old credential reused');
+  for (const [viewport, size] of [[DESKTOP, 'desktop'], [PHONE, 'phone']] as const) {
+    await page.setViewportSize(viewport);
+    for (const mode of ['light', 'dark'] as const) {
+      await theme(page, mode);
+      await section.screenshot({ path: join(shots, `access-${size}-${mode}.png`) });
+    }
+  }
+  await page.getByTestId('access-runner-renewal-toggle').click();
+  await expect(page.getByTestId('access-runner-renewal-toggle')).toHaveText('Turn automatic renewal on');
+  await expect(detail).toContainText('Unscheduled');
+
+  await page.goto('/#/workspace/settings/credentials', { waitUntil: 'domcontentloaded' });
+  const item = page.getByRole('article').filter({ hasText: 'Coding runner credential' });
+  await expect(item).toContainText('Last renewal 2026-11-02');
+  await expect(item).toContainText('Next renewal 2026-11-22');
+  await expect(item).toContainText('Renewal failing since');
+  await expect(item).toContainText('Studio refused a renewal from a retired credential');
+  await expect(item.getByRole('button', { name: 'Open Access' })).toBeVisible();
+  for (const [viewport, size] of [[DESKTOP, 'desktop'], [PHONE, 'phone']] as const) {
+    await page.setViewportSize(viewport);
+    for (const mode of ['light', 'dark'] as const) {
+      await theme(page, mode);
+      await item.screenshot({ path: join(shots, `inventory-${size}-${mode}.png`) });
+    }
+  }
+});
 
 test('a service account shows its bindings and tokens in one detail; a new token is shown once; a revoke is confirmed in place', async ({ page }) => {
   const { calls } = await stubPilotOwner(page);

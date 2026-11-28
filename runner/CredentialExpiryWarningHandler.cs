@@ -1,13 +1,13 @@
 using System.Globalization;
+using Protocol = AgentStudio.TaskServer.Contracts.RunnerCredentialRenewalProtocol;
 
 namespace AgentRunner;
 
 /// <summary>
-/// SM-9: the server names the end of this host's runner credential on every
-/// answer. In its last days the host warns once a day, so the operator rotates
-/// before claims stop instead of after.
+/// Warns once a day in the final days when renewal is off or has failed.
 /// </summary>
-internal sealed class CredentialExpiryWarningHandler(HttpMessageHandler inner, Action<string> warn, TimeProvider clock)
+internal sealed class CredentialExpiryWarningHandler(HttpMessageHandler inner, Action<string> warn, TimeProvider clock,
+    bool renews = false)
     : DelegatingHandler(inner)
 {
     public const string Header = "X-Principal-Credential-Expires-At";
@@ -17,24 +17,30 @@ internal sealed class CredentialExpiryWarningHandler(HttpMessageHandler inner, A
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var response = await base.SendAsync(request, cancellationToken);
-        if (response.Headers.TryGetValues(Header, out var values)
-            && DateTime.TryParse(values.FirstOrDefault(), CultureInfo.InvariantCulture,
-                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var expiresAt))
+        var state = RunnerCredentialRenewalHandler.ReadState(response);
+        if ((state is not (Protocol.Scheduled or Protocol.Due) || !renews) && ReadTime(response, Header) is { } expiresAt)
         {
-            var now = clock.GetUtcNow().UtcDateTime;
+            var authorityNow = ReadTime(response, Protocol.ServerTimeHeader) ?? clock.GetUtcNow().UtcDateTime;
             string? message = null;
             lock (_gate)
             {
-                if (CredentialExpiryWarning.ShouldWarn(expiresAt, now, _lastWarnedAt))
+                if (CredentialExpiryWarning.ShouldWarn(expiresAt, authorityNow, _lastWarnedAt))
                 {
-                    _lastWarnedAt = now;
-                    message = CredentialExpiryWarning.Message(expiresAt, now);
+                    _lastWarnedAt = authorityNow;
+                    message = state is Protocol.Failing or Protocol.Due or Protocol.Scheduled
+                        ? $"WARNING: automatic runner credential renewal is failing. Check the writable token file and renewal status in Studio. This credential expires at {expiresAt:O}."
+                        : CredentialExpiryWarning.Message(expiresAt, authorityNow);
                 }
             }
             if (message is not null) warn(message);
         }
         return response;
     }
+
+    private static DateTime? ReadTime(HttpResponseMessage response, string header)
+        => response.Headers.TryGetValues(header, out var values)
+           && DateTime.TryParse(values.FirstOrDefault(), CultureInfo.InvariantCulture,
+               DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var date) ? date : null;
 }
 
 /// <summary>When and how a host warns about its credential's end.</summary>

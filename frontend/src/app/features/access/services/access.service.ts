@@ -143,6 +143,10 @@ export class AccessService {
     return this.mutate(this.http.put(`/api/auth/runners/${encodeURIComponent(id)}/projects`, { projects }));
   }
 
+  setRunnerRenewal(id: string, enabled: boolean): Promise<unknown> {
+    return this.mutate(this.http.put(`/api/auth/runners/${encodeURIComponent(id)}/renewal`, { enabled }));
+  }
+
   revokeEnrollment(id: string): Promise<unknown> {
     return this.mutate(this.http.delete(`/api/auth/runner-enrollments/${encodeURIComponent(id)}`));
   }

@@ -26,7 +26,8 @@ public static class LocalCredentialInventory
         SecretListing Secrets,
         IReadOnlyList<RunnerServiceIdentity> Runners,
         IReadOnlyList<RunnerCapabilitySnapshotDto> Hosts,
-        IReadOnlyList<HostGitAccess> HostGit);
+        IReadOnlyList<HostGitAccess> HostGit,
+        bool RunnerRenewalEnabled = false);
 
     /// <summary>Reads every local source and projects them; the Credentials page and the security view share it.</summary>
     public static async Task<CredentialInventoryDto> ReadAsync(GitHubAppBroker broker, GitHubAppHostKeys hostKeys,
@@ -42,7 +43,7 @@ public static class LocalCredentialInventory
                 .Where(client => client.RunnerGitStatus is not null && client.Kind != AgentStudio.Shared.ClientIdentityKind.Retired)
                 .Select(client => new HostGitAccess(
                     client.Id, client.RunnerGitStatus!, client.RunnerGitDetail, client.RunnerGitCheckedAt))
-                .ToArray()), now);
+                .ToArray(), security.RunnerRenewalEnabled), now);
 
     public static CredentialInventoryDto Project(Sources sources, DateTime now)
     {
@@ -51,7 +52,7 @@ public static class LocalCredentialInventory
         AddHostTokens(items, sources.App, now);
         AddHostKeys(items, sources.App, sources.HostKeys);
         AddSecrets(items, sources.Secrets);
-        AddServiceIdentities(items, sources.Runners, now);
+        AddServiceIdentities(items, sources.Runners, sources.RunnerRenewalEnabled, now);
         AddProviderLogins(items, sources.Hosts);
         AddHostGit(items, sources.HostGit);
         return new CredentialInventoryDto(now, items.Select(item => CredentialLifecyclePolicy.Complete(item, now)).ToArray());
@@ -147,25 +148,39 @@ public static class LocalCredentialInventory
         }
     }
 
-    private static void AddServiceIdentities(List<CredentialInventoryItemDto> items, IReadOnlyList<RunnerServiceIdentity> runners, DateTime now)
+    private static void AddServiceIdentities(List<CredentialInventoryItemDto> items, IReadOnlyList<RunnerServiceIdentity> runners,
+        bool renewalEnabled, DateTime now)
     {
-        foreach (var runner in runners.Where(runner => runner.RevokedAt is null && runner.RetiredAt is null))
-        foreach (var credential in runner.Credentials.Where(credential => credential.RevokedAt is null))
+        foreach (var runner in runners)
         {
-            var state = credential.ExpiresAt is not { } expiry ? "ok"
-                : expiry <= now ? "missing"
-                : expiry - now <= ExpiryWarning ? "expiring"
-                : "ok";
-            items.Add(Item($"service-identity:{runner.Id}:{credential.Id}", "service", runner.Id, "service_credential",
-                $"{runner.Name} service credential", state, false,
-                "Service credential of an enrolled identity. This machine keeps only its hash.") with
+            var current = AccessSecurityStore.CurrentRunnerCredential(runner);
+            var renewal = AccessSecurityStore.DescribeRunnerRenewal(runner, renewalEnabled, now);
+            var activeRunner = runner is { RevokedAt: null, RetiredAt: null };
+            foreach (var credential in runner.Credentials)
             {
-                Scopes = credential.Scopes,
-                CreatedAt = credential.CreatedAt,
-                Target = "Studio",
-                ExpiresAt = credential.ExpiresAt,
-                LastUseAt = credential.LastUsedAt,
-            });
+                var active = activeRunner && credential is { RevokedAt: null, SupersededAt: null }
+                    && (credential.PredecessorId is null || credential.RenewalProvenAt is not null);
+                var status = credential.Id == current?.Id ? renewal : null;
+                if (!active && status is null) continue;
+                var state = !active ? "unused"
+                    : credential.ExpiresAt is not { } expiry ? "ok"
+                    : expiry <= now ? "missing"
+                    : status is { Enabled: true, FailingSince: null } ? "ok"
+                    : expiry - now <= ExpiryWarning ? "expiring"
+                    : "ok";
+                items.Add(Item($"service-identity:{runner.Id}:{credential.Id}", "service", runner.Id, "service_credential",
+                    $"{runner.Name} service credential", state, false,
+                    "Service credential of an enrolled identity. This machine keeps only its hash.") with
+                {
+                    Scopes = credential.Scopes,
+                    CreatedAt = credential.CreatedAt,
+                    Target = "Studio",
+                    ExpiresAt = credential.ExpiresAt,
+                    LastUseAt = credential.LastUsedAt,
+                    Active = active,
+                    Renewal = status,
+                });
+            }
         }
     }
 

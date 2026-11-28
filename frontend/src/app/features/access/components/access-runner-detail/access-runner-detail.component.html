@@ -36,14 +36,36 @@
       }
     </app-page-section>
 
-    <app-page-section level="sub" anchor="access-runner-credential" title="Credential" purpose="A new credential expires 30 days after enrollment.">
+    <app-page-section level="sub" anchor="access-runner-credential" title="Credential">
+      @if (item.runner.renewal; as renewal) {
+        @if (renewal.installationEnabled && !item.runner.revokedAt && !item.runner.retiredAt) {
+          <button sectionAction type="button" class="btn" data-testid="access-runner-renewal-toggle"
+            [disabled]="access.busy()" (click)="access.setRunnerRenewal(item.runner.id, !renewal.runnerEnabled)">
+            Turn automatic renewal {{ renewal.runnerEnabled ? 'off' : 'on' }}
+          </button>
+        }
+        <div class="access-facts" data-testid="access-runner-renewal">
+          <app-row variant="default"><span appRowLabel>Automatic renewal</span><span appRowValue>{{ renewal.enabled ? 'On' : renewal.installationEnabled ? 'Off' : 'Off for this installation' }}</span></app-row>
+          <app-row variant="default"><span appRowLabel>Current credential expires</span><span appRowValue class="access-numeric">{{ time(renewal.currentExpiresAt) || 'No expiry' }}</span></app-row>
+          <app-row variant="default"><span appRowLabel>Last renewal</span><span appRowValue class="access-numeric">{{ time(renewal.lastRenewalAt) || 'None yet' }}</span></app-row>
+          <app-row variant="default"><span appRowLabel>Next renewal</span><span appRowValue class="access-numeric">{{ time(renewal.nextRenewalAt) || 'Unscheduled' }}</span></app-row>
+          @if (renewal.failingSince) {
+            <app-row variant="default"><span appRowLabel>Renewal failing since</span><span appRowValue class="access-numeric">{{ time(renewal.failingSince) }} · {{ renewal.failureReason }}</span></app-row>
+          }
+          @if (renewal.lastReplayAt) {
+            <app-row variant="default"><span appRowLabel>Old credential reused</span><span appRowValue class="access-numeric">{{ time(renewal.lastReplayAt) }} · Studio refused a renewal from a retired credential.</span></app-row>
+          }
+        </div>
+      }
       <div class="access-facts">
         <app-row variant="default"><span appRowLabel>Active</span><span appRowValue class="access-numeric">{{ item.credentials }}</span></app-row>
-        <app-row variant="default"><span appRowLabel>Expiry</span><span appRowValue class="access-numeric">
-          @if (item.expiry.tone) { <app-status-indicator [tone]="item.expiry.tone" [label]="item.expiry.label" [compact]="true" /> } @else { {{ item.expiry.label || '–' }} }
-        </span></app-row>
+        @if (!item.runner.renewal) {
+          <app-row variant="default"><span appRowLabel>Expiry</span><span appRowValue class="access-numeric">
+            @if (item.expiry.tone) { <app-status-indicator [tone]="item.expiry.tone" [label]="item.expiry.label" [compact]="true" /> } @else { {{ item.expiry.label || '–' }} }
+          </span></app-row>
+        }
       </div>
-      @if (item.expiry.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
+      @if (!item.runner.renewal?.failingSince && item.expiry.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
     </app-page-section>
 
     @if (!item.runner.revokedAt) {

@@ -234,7 +234,7 @@ public sealed class AccessSecurityMiddleware
                                : context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
         var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
-        var runner = _store.AuthenticateRunner(bearer);
+        var runner = _store.AuthenticateRunner(bearer, IsRunnerRenewal(context.Request.Method, path));
         var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer, recordOperatorUse: false) : null;
         if (HttpMethods.IsGet(context.Request.Method)
             && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
@@ -263,10 +263,16 @@ public sealed class AccessSecurityMiddleware
         {
             context.Items[RunnerPrincipalItem] = runner;
             context.Items["ClientId"] = runner.RunnerId;
-            // SM-9: every answer names the credential's end so the host warns ahead of it.
+            // The authority supplies the schedule and time so host clock drift does not affect renewal.
             if (runner.CredentialExpiresAt is { } credentialExpiresAt)
+            {
                 context.Response.Headers[RunnerCredentialExpiresHeader] =
                     credentialExpiresAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+                context.Response.Headers[AgentStudio.TaskServer.Contracts.RunnerCredentialRenewalProtocol.ServerTimeHeader] =
+                    _clock.GetUtcNow().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            if (runner.CredentialRenewalState is { } renewalState)
+                context.Response.Headers[AgentStudio.TaskServer.Contracts.RunnerCredentialRenewalProtocol.StatusHeader] = renewalState;
         }
         if (serviceAccount is null)
         {
@@ -472,7 +478,8 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        if (runner is not null && IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId))
+        if (runner is not null && (IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId)
+            || IsRunnerRenewal(context.Request.Method, path)))
         {
             await _next(context);
             return;
@@ -1445,6 +1452,10 @@ public sealed class AccessSecurityMiddleware
         => HttpMethods.IsGet(method)
            && (path.Equals("/api/auth/runner", StringComparison.OrdinalIgnoreCase)
                || path.Equals($"/api/clients/{runnerId}", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsRunnerRenewal(string method, string path)
+        => HttpMethods.IsPost(method) && path.Equals(
+            AgentStudio.TaskServer.Contracts.RunnerCredentialRenewalProtocol.Path, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHealth(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)

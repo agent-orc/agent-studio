@@ -140,6 +140,12 @@ export interface RunnerExpiry {
 
 /** The soonest end among the runner's active credentials, and why one has none. */
 export function runnerExpiry(runner: EnrolledRunner, now: number): RunnerExpiry {
+  if (runner.renewal?.enabled && runner.renewal.currentExpiresAt) {
+    const end = runner.renewal.currentExpiresAt;
+    if (Date.parse(end) <= now) return { label: 'Expired', tone: 'danger', notice: null };
+    if (runner.renewal.failingSince) return { label: 'Renewal failing', tone: 'warning', notice: runner.renewal.failureReason };
+    return { label: `Expires ${formatAccessTime(end)}`, tone: null, notice: null };
+  }
   const active = runner.credentials.filter(credential => !credential.revokedAt);
   const unexpiring = active.find(credential => !credential.expiresAt);
   if (unexpiring) return { label: 'No expiry', tone: 'neutral', notice: unexpiring.expiryNotice ?? null };
