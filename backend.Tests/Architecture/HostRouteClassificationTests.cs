@@ -29,6 +29,7 @@ public sealed class HostRouteClassificationTests : IDisposable
     private static readonly string[] Sources =
     [
         "runner/TaskServerClient.cs",
+        "runner/TaskServerAuthorCheckClient.cs",
         "runner/PostMergeHostScheduler.cs",
         "runner/PostMergeRunCommand.cs",
         "runner/SourceFacts/TaskServerClient.SourceFacts.cs",
@@ -90,6 +91,12 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("GET", "/api/tasks/{}/attachments/{}", Monolith.RunnerScope),
         new("GET", "/api/tasks/{}/files/{}", Monolith.RunnerScope),
         new("GET", "/api/v1/artifact-limits", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/profile", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/submit", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/{}/receipt", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/attempts/{}/source", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/attempts/{}/settle", Monolith.TaskServerOnly),
+        new("POST", "/api/v1/author-checks/attempts/{}/contained", Monolith.TaskServerOnly),
         new("GET,POST", "/api/v1/failure-fingerprints", Monolith.TaskServerOnly),
         new("POST", "/api/v1/gates/attempts/{}/containment", Monolith.RunnerScope),
         new("POST", "/api/v1/gates/attempts/{}/phase", Monolith.RunnerScope),

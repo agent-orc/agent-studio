@@ -24,6 +24,7 @@ public sealed class TaskServerOptions
     /// drained cohorts; <c>off</c> refuses subject materialization.
     /// </summary>
     public string PostWorkMode { get; set; } = "shadow";
+    public AuthorCheckPilotOptions AuthorCheck { get; set; } = new();
     /// <summary>
     /// DP-S4 gate admission: <c>slot</c> keeps one fixed gate slot per host
     /// (default); <c>canary</c> reserves a host grant only on

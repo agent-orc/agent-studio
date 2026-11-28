@@ -81,6 +81,7 @@ public sealed class PostWorkDaemon
     private readonly int _leaseSeconds;
     private readonly TimeSpan _poll;
     private readonly Action<string> _log;
+    internal AuthorCheckWorker? AuthorCheckWorker { get; init; }
 
     public PostWorkDaemon(IPostWorkAuthorityPort authority, IPostWorkStepExecutor executor, string executorId,
         Func<string> instanceId, string stateDir, int leaseSeconds, TimeSpan poll, Action<string> log)
@@ -104,13 +105,18 @@ public sealed class PostWorkDaemon
 
     public async Task RunAsync(CancellationToken shutdown)
     {
-        await RecoverPersistedClaimAsync(shutdown);
+        var recovering = true;
         // A monolith does not map the post-work authority.
         var absence = new FeatureRouteAbsence("post-work", _log);
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
+                if (recovering || ReadPersistedClaim(_stateDir)?.SubjectId.StartsWith("ac_", StringComparison.Ordinal) == true)
+                {
+                    await RecoverPersistedClaimAsync(shutdown);
+                    recovering = false;
+                }
                 // A host drain is a claim barrier: no new claim, then acknowledge zero.
                 if (HostRoleDrainControl.ReadRequest(_stateDir, "post") is { } drain)
                 {
@@ -119,11 +125,22 @@ public sealed class PostWorkDaemon
                     continue;
                 }
                 var version = await _authority.AllocationVersionAsync(shutdown);
-                var claim = await _authority.ClaimAsync(
-                    new PostWorkClaimRequest(_executorId, _instanceId(), _leaseSeconds, version), shutdown);
+                var request = new PostWorkClaimRequest(_executorId, _instanceId(), _leaseSeconds, version);
+                if (AuthorCheckWorker is { } worker)
+                    request = await worker.AdvertiseAsync(request, _stateDir, shutdown);
+                var claim = await _authority.ClaimAsync(request, shutdown);
                 absence.RecordAnswered();
                 if (claim is { Status: "claimed", Subject: { } subject, Lease: { } lease })
-                    await ExecuteAsync(subject, lease, shutdown);
+                {
+                    if (claim is { AuthorCheck: { } check, SourceGrant: { } grant } && AuthorCheckWorker is { } executor)
+                    {
+                        Persist(lease);
+                        await executor.RunAsync(check, grant, lease, WorkDirectory(lease), shutdown);
+                        ClearPersisted();
+                    }
+                    else if (subject.CohortPhase != AuthorCheckProtocol.Kind)
+                        await ExecuteAsync(subject, lease, shutdown);
+                }
                 else
                     await Task.Delay(_poll, shutdown);
             }
@@ -148,7 +165,7 @@ public sealed class PostWorkDaemon
     internal async Task<PostWorkReport?> ExecuteAsync(PostWorkSubject subject, PostWorkLease lease, CancellationToken shutdown)
     {
         Persist(lease);
-        var workDirectory = Path.Combine(_stateDir, "post-work", lease.AttemptId + "-" + lease.Fence);
+        var workDirectory = WorkDirectory(lease);
         Directory.CreateDirectory(workDirectory);
         await File.WriteAllTextAsync(Path.Combine(workDirectory, "subject.json"),
             JsonSerializer.Serialize(new { subject.SubjectId, subject.TaskId, subject.Artifacts, subject.PolicyDigest }, Json),
@@ -240,11 +257,21 @@ public sealed class PostWorkDaemon
         // The earlier process cannot prove its steps finished; clean its
         // container or process tree and let the server lease expire. The
         // subject is then reclaimed under a newer fence.
-        var workDirectory = Path.Combine(_stateDir, "post-work", lease.AttemptId + "-" + lease.Fence);
-        await _executor.CleanupAsync(lease, workDirectory, ct);
+        var workDirectory = WorkDirectory(lease);
+        if (lease.SubjectId.StartsWith("ac_", StringComparison.Ordinal) && AuthorCheckWorker is { } worker)
+        {
+            if (!await worker.CleanupAsync(lease, workDirectory, ct))
+                throw new IOException("Author-check recovery could not confirm cleanup.");
+            await worker.ReleaseContainedAsync(lease, ct);
+        }
+        else
+            await _executor.CleanupAsync(lease, workDirectory, ct);
         _log($"post-work recovered attempt={lease.AttemptId} fence={lease.Fence}; cleaned and left to the authority");
         ClearPersisted();
     }
+
+    private string WorkDirectory(PostWorkLease lease)
+        => Path.Combine(_stateDir, "post-work", lease.AttemptId + "-" + lease.Fence);
 
     private void Persist(PostWorkLease lease)
     {

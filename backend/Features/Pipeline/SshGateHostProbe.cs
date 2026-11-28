@@ -84,6 +84,22 @@ public sealed class SshGateHostProbe : IGateHostProbe
         }
     }
 
+    internal async Task<int> CountBridgeWorkersAsync(CancellationToken ct)
+    {
+        var options = RemoteGateOptions.Read(_configuration);
+        var count = new List<string>();
+        // A worker keeps its exclusive lock through its wait and execution.
+        // Use read-only handles so observation never creates a gate resource.
+        var command = "set -eu; n=0; for lock in " + RemoteGateTransport.Quote(options.Root)
+            + "/*/worker.lock; do [ -f \"$lock\" ] || continue; "
+            + "if flock -n -s -E 81 9 9<\"$lock\"; then :; "
+            + "else status=$?; [ \"$status\" -eq 81 ] || exit \"$status\"; n=$((n+1)); fi; done; printf '%s\\n' \"$n\"";
+        await _runProcess("ssh", RemoteGateTransport.SshArguments(options.Host, command),
+            Path.GetTempPath(), ProbeTimeout, ct, line => { lock (count) count.Add(line); });
+        return count.Count == 1 && int.TryParse(count[0], out var value) && value >= 0
+            ? value : throw new IOException("Gate host returned invalid bridge worker demand.");
+    }
+
     public async Task<GateHostProbeResult> ProbeAsync(CancellationToken ct)
     {
         if (Host is not { } host) return new GateHostProbeResult(false, "No gate host is configured.");

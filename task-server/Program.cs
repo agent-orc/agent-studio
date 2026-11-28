@@ -92,6 +92,7 @@ builder.Services.AddSingleton(services =>
         _ = await store.RecordStudioProviderAuthEventAsync(request, actor, ct));
 });
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
+builder.Services.AddHostedService<AuthorCheckSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });

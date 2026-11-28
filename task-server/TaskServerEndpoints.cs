@@ -327,8 +327,8 @@ public static class TaskServerEndpoints
         hosts.MapPut("/{hostId}/placement-advertisement", async (
             HttpContext context, string hostId, UpsertHostPlacementRequest request,
             TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.UpsertHostPlacementAsync(
-                hostId, request, Actor(context), ct)))
+            => RunnerIdentityMismatch(context, request.RunnerId)
+               ?? await InvokeAsync(() => store.UpsertHostPlacementAsync(hostId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         hosts.MapGet("/placement-shadow", async (
             string? taskId, int? limit, TaskServerStore store, CancellationToken ct)
@@ -575,7 +575,9 @@ public static class TaskServerEndpoints
                 permitId,
                 request,
                 Actor(context),
-                ct)))
+                ct,
+                context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner } claimant
+                    && claimant.RunnerId == request.RunnerId ? claimant.PrincipalId : null)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         var runs = api.MapGroup("/runs")
@@ -905,8 +907,11 @@ public static class TaskServerEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
 
+        api.MapAuthorCheckEndpoints();
+
         // DP-S8 post work: the backend materializes subjects and holds backend
         // passes; host agents claim, renew and report through fenced attempts.
+
         var postWork = api.MapGroup("/post-work")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         postWork.MapPost("/subjects", async (
@@ -965,13 +970,16 @@ public static class TaskServerEndpoints
                 && runnerId != request.ExecutorId)
                 return Results.Json(new ApiError("runner-identity-mismatch", "Post-work executor identity differs from its principal."),
                     statusCode: StatusCodes.Status403Forbidden);
-            return await InvokeAsync(() => store.ClaimPostWorkAsync(request, Actor(context), ct));
+            return await InvokeAsync(() => store.ClaimPostWorkAsync(request, Actor(context), ct,
+                principal is { Kind: TaskServerPrincipalKinds.Runner } && principal.RunnerId == request.ExecutorId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         postWork.MapPost("/attempts/{attemptId}/renew", async (
             HttpContext context, string attemptId, PostWorkRenewRequest request, TaskServerStore store, CancellationToken ct)
             => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
-                ? await InvokeAsync(() => store.RenewPostWorkAsync(attemptId, request, ct))
+                ? await InvokeAsync(() => store.RenewPostWorkAsync(attemptId, request, ct,
+                    context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner } principal
+                    && principal.RunnerId == request.Authority.ExecutorId))
                 : GateRunnerPrincipalPolicy.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);

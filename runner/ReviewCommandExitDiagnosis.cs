@@ -119,8 +119,10 @@ internal static class ReviewCommandExitDiagnosis
             .Where(line => line.Length > 0 && !Noise.IsMatch(line));
 
     private static string RedactTail(string output)
+        => RedactOutput(output.Length > RedactionWindow ? output[^RedactionWindow..] : output);
+
+    internal static string RedactOutput(string tail)
     {
-        var tail = output.Length > RedactionWindow ? output[^RedactionWindow..] : output;
         try
         {
             return Secret.Replace(tail, match =>

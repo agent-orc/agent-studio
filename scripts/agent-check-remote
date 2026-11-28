@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Block for the opted-in remote build and print its advisory receipt."""
+
+import argparse
+import json
+import os
+import socket
+import struct
+import uuid
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("check", choices=["build"])
+    parser.add_argument("--remote", required=True, action="store_true")
+    parser.add_argument("--add", action="append", default=[], metavar="PATH")
+    parser.add_argument("--request-id", type=uuid.UUID)
+    parser.add_argument("--reconnect", action="store_true")
+    args = parser.parse_args()
+    if args.reconnect and (args.request_id is None or args.add):
+        parser.error("--reconnect requires --request-id and uses the original file selection")
+    request_id = args.request_id or uuid.uuid4()
+    print(f"agent-check build | request {request_id}", flush=True)
+    address = os.environ.get("STUDIO_AUTHOR_CHECK_SOCKET")
+    if not address:
+        print("unavailable | this coding attempt has no remote author-check command host")
+        return 2
+
+    request = json.dumps({
+        "requestId": str(request_id),
+        "name": args.check,
+        "additions": args.add,
+        "reconnect": args.reconnect,
+    }).encode()
+    try:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(36 * 60)
+            connection.connect(address)
+            connection.sendall(struct.pack(">I", len(request)) + request)
+            with connection.makefile("rb") as response:
+                result = json.load(response)
+    except (OSError, ValueError):
+        print("unavailable | command host disconnected")
+        return 2
+    if error := result.get("error"):
+        print(f"unavailable | {error}")
+        return 2
+    receipt = result["receipt"]
+    print(f"{receipt['status']} | {receipt['checkId']} | tree {receipt['tree']}")
+    print(f"Input {receipt['inputBytes']} bytes | ignored and undeclared untracked files excluded")
+    if receipt.get("hostId"):
+        print(f"Host {receipt['hostId']} | exit {receipt.get('exitCode')} | "
+              f"elapsed {receipt.get('elapsedMs')} ms | queued {receipt.get('queueMs')} ms")
+    if receipt.get("logPath"):
+        print(f"{receipt['logPath']} | {receipt['logBytes']} bytes | "
+              f"{receipt['omittedLogBytes']} omitted | redacted {receipt['logRedacted']}")
+    if receipt.get("reason"):
+        print(receipt["reason"])
+    for line in (receipt.get("diagnostics") or [])[:12]:
+        print("".join(char for char in line if char.isprintable())[:300])
+    return {"passed": 0, "failed": 1, "timed-out": 124}.get(receipt["status"], 2)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -153,7 +153,8 @@ public sealed partial class TaskServerStore
         string permitId,
         WorkPermitAcceptRequest request,
         string actorId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? claimPrincipalId = null)
     {
         RequireAdmission();
         ValidateHostContract(request.SchemaVersion);
@@ -267,8 +268,8 @@ public sealed partial class TaskServerStore
             await ExecuteAsync(connection, """
                 INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, $fence)
                 ON CONFLICT(task_id) DO UPDATE SET last_fence = excluded.last_fence;
-                INSERT INTO runs(id, task_id, status, runner_id, fence, created_at, started_at)
-                VALUES ($run, $task, 'running', $runner, $fence, $now, $now);
+                INSERT INTO runs(id, task_id, status, runner_id, fence, created_at, started_at, coding_host_id, claim_principal_id)
+                VALUES ($run, $task, 'running', $runner, $fence, $now, $now, $host, $principal);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $deadline, 'active');
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now
@@ -287,6 +288,8 @@ public sealed partial class TaskServerStore
                 VALUES ($result_step, $run, $result_step_id, $runner, 'available');
                 """, ct, transaction,
                 ("$task", taskId),
+                ("$host", request.HostId),
+                ("$principal", claimPrincipalId),
                 ("$fence", fence),
                 ("$run", createdRunId),
                 ("$runner", request.RunnerId),

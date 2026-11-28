@@ -137,9 +137,11 @@ public sealed partial class TaskServerStore
         ILogger<TaskServerStore>? logger,
         IWorkspaceQuotaAdmission? workspaceQuota = null,
         TaskServerModelSelectionPoster? selectionPoster = null,
-        IModelRouteAdmission? modelRouteAdmission = null)
+        IModelRouteAdmission? modelRouteAdmission = null,
+        IOptionsMonitor<TaskServerOptions>? authorCheckOptions = null)
     {
         _options = options.Value;
+        _authorCheckOptions = authorCheckOptions;
         _clock = clock;
         _resultSummaries = resultSummaries;
         _operationalEvents = operationalEvents;
@@ -5607,7 +5609,8 @@ public sealed partial class TaskServerStore
         return normalized;
     }
 
-    private static async Task ValidateRunnerAsync(SqliteConnection connection, SqliteTransaction transaction, string runnerId, string instanceId, CancellationToken ct)
+    private static async Task ValidateRunnerAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string runnerId, string instanceId, CancellationToken ct, bool allowPilotPlacement = false)
     {
         await using var command = Command(connection,
             "SELECT instance_id, protocol_version, status, capabilities_json FROM runners WHERE id = $id;", transaction, ("$id", runnerId));
@@ -5620,6 +5623,9 @@ public sealed partial class TaskServerStore
         if (!string.Equals(reader.GetString(2), "active", StringComparison.Ordinal))
             throw new TaskServerConflictException("runner-not-active", "Runner is not active.");
         var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [];
+        if (allowPilotPlacement && capabilities.Contains(PostWorkCapabilities.Executor, StringComparer.Ordinal)
+            && capabilities.Contains(AuthorCheckProtocol.Kind, StringComparer.Ordinal))
+            return;
         if (!capabilities.Contains(ReviewCapabilities.CodingExecutor, StringComparer.Ordinal)
             || capabilities.Contains(ReviewCapabilities.ReviewExecutor, StringComparer.Ordinal))
             throw new TaskServerConflictException(

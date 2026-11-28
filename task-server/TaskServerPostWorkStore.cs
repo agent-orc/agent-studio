@@ -107,6 +107,7 @@ public sealed partial class TaskServerStore
                 updated_at TEXT NOT NULL
             );
             """, ct);
+        await ApplyAuthorCheckMigrationAsync(connection, ct);
     }
 
     private string PostWorkMode => PostWorkModes.Normalize(_options.PostWorkMode);
@@ -138,7 +139,7 @@ public sealed partial class TaskServerStore
             var older = new List<string>();
             await using (var command = Command(connection, """
                 SELECT id FROM post_work_subjects
-                 WHERE project_id = $project AND task_id = $task AND state NOT IN ('applied', 'retired');
+                 WHERE project_id = $project AND task_id = $task AND cohort_phase <> 'author-check' AND state NOT IN ('applied', 'retired');
                 """, transaction, ("$project", request.ProjectId), ("$task", request.TaskId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) older.Add(reader.GetString(0));
@@ -271,10 +272,11 @@ public sealed partial class TaskServerStore
     }
 
     public async Task<PostWorkClaimResponse> ClaimPostWorkAsync(
-        PostWorkClaimRequest request, string actorId, CancellationToken ct)
+        PostWorkClaimRequest request, string actorId, CancellationToken ct, bool boundExecutor = false)
     {
         RequireAdmission();
-        if (PostWorkMode != PostWorkModes.Canary)
+        if (!boundExecutor) request = request with { AcceptAuthorCheck = false };
+        if (PostWorkMode != PostWorkModes.Canary && !request.AcceptAuthorCheck)
             return new PostWorkClaimResponse("empty", Message: "Post-work claims run in shadow mode.",
                 RejectedReasons: ["post-work-shadow"]);
         PostWorkClaimResponse? response = null;
@@ -290,6 +292,8 @@ public sealed partial class TaskServerStore
                 if (reader.GetString(1) != request.InstanceId || reader.GetString(2) != "active")
                     throw new TaskServerConflictException("runner-instance-stale", "Post-work executor instance is not active.");
                 var capabilities = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [];
+                if (!capabilities.Contains(AuthorCheckProtocol.Kind, StringComparer.Ordinal))
+                    request = request with { AcceptAuthorCheck = false };
                 if (!capabilities.Contains(PostWorkCapabilities.Executor, StringComparer.Ordinal))
                     throw new TaskServerConflictException("post-work-capability-required", "Runner is not a post-work executor.");
                 hostId = reader.GetString(0);
@@ -298,7 +302,8 @@ public sealed partial class TaskServerStore
             // Lease loss returns the subject to the claim queue and frees the host grant.
             await ExecuteAsync(connection, """
                 UPDATE post_work_attempts SET state = 'lost', completed_at = $now
-                 WHERE state = 'live' AND kind = 'host' AND expires_at <= $now;
+                 WHERE state = 'live' AND kind = 'host' AND expires_at <= $now
+                   AND subject_id NOT IN (SELECT id FROM author_checks);
                 """, ct, transaction, ("$now", Iso(now)));
             var host = await ReadHostPlacementAsync(connection, transaction, hostId, ct);
             var capacity = await ReadRuntimeCapacitySettingsAsync(connection, transaction, hostId, ct);
@@ -309,10 +314,10 @@ public sealed partial class TaskServerStore
             var candidates = new List<PostWorkSubject>();
             await using (var command = Command(connection, """
                 SELECT id FROM post_work_subjects
-                 WHERE owner = 'host' AND cohort_phase = 'host'
+                 WHERE $canary = 1 AND owner = 'host' AND cohort_phase = 'host'
                    AND state IN ('queued', 'waiting', 'running')
                  ORDER BY created_at LIMIT 64;
-                """, transaction))
+                """, transaction, ("$canary", PostWorkMode == PostWorkModes.Canary ? 1 : 0)))
             {
                 var ids = new List<string>();
                 await using (var reader = await command.ExecuteReaderAsync(ct))
@@ -352,14 +357,16 @@ public sealed partial class TaskServerStore
                     await ReadPostWorkSubjectAsync(connection, transaction, "id", subject.SubjectId, ct), lease);
                 return;
             }
-            response = new PostWorkClaimResponse("empty", Message: "No eligible post-work subject.",
+            if (request.AcceptAuthorCheck)
+                response = await ClaimAuthorCheckAsync(connection, transaction, request, hostId, host, capacity, ct);
+            response ??= new PostWorkClaimResponse("empty", Message: "No eligible post-work subject.",
                 RejectedReasons: rejected.ToArray());
         }, ct);
         return response!;
     }
 
     public async Task<PostWorkLease> RenewPostWorkAsync(
-        string attemptId, PostWorkRenewRequest request, CancellationToken ct)
+        string attemptId, PostWorkRenewRequest request, CancellationToken ct, bool boundExecutor = true)
     {
         RequireWritable();
         PostWorkLease? lease = null;
@@ -371,7 +378,11 @@ public sealed partial class TaskServerStore
                 attempt.AuthorityEpoch, attempt.ExpiresAt, UtcNow);
             if (refusal is not null)
                 throw new TaskServerConflictException(refusal, "Post-work lease is no longer current.");
-            var expiry = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            if (subject.CohortPhase == AuthorCheckProtocol.Kind && !boundExecutor)
+                throw new TaskServerConflictException("author-check-identity", "A bound pilot principal is required.");
+            var expiry = subject.CohortPhase == AuthorCheckProtocol.Kind
+                ? await AuthorCheckRenewalExpiryAsync(connection, transaction, subject.SubjectId, ct)
+                : UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             await ExecuteAsync(connection, "UPDATE post_work_attempts SET expires_at = $expiry WHERE id = $id;",
                 ct, transaction, ("$expiry", Iso(expiry)), ("$id", attemptId));
             lease = ToLease(attempt with { ExpiresAt = expiry }, subject.SubjectId);
@@ -389,6 +400,8 @@ public sealed partial class TaskServerStore
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var (attempt, subject) = await ReadFencedPostWorkAttemptAsync(connection, transaction, attemptId, ct);
+            if (subject.CohortPhase == AuthorCheckProtocol.Kind)
+                throw new TaskServerConflictException("author-check-receipt-required", "Author checks have a dedicated receipt.");
             if (attempt.ReportDigest is not null)
             {
                 if (attempt.ReportDigest != digest)
@@ -505,7 +518,7 @@ public sealed partial class TaskServerStore
                 VALUES ($id, $project, $tasks, 'draining', $now, $now);
                 UPDATE post_work_subjects SET cohort_id = $id, cohort_phase = 'draining', updated_at = $now
                  WHERE project_id = $project AND task_id IN (SELECT value FROM json_each($tasks))
-                   AND state NOT IN ('applied', 'retired');
+                   AND cohort_phase <> 'author-check' AND state NOT IN ('applied', 'retired');
                 """, ct, transaction, ("$id", request.CohortId), ("$project", request.ProjectId),
                 ("$tasks", JsonSerializer.Serialize(taskIds)), ("$now", now));
             await PostWorkEventAsync(connection, transaction, null, null, request.CohortId,
@@ -659,7 +672,7 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         int total = 0, eligible = 0, rejectedCount = 0, decided = 0, deferred = 0, differences = 0;
         await using (var command = Command(connection, """
-            SELECT shadow_status, backend_shadow_outcome FROM post_work_subjects;
+            SELECT shadow_status, backend_shadow_outcome FROM post_work_subjects WHERE cohort_phase <> 'author-check';
             """))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         {
@@ -679,7 +692,7 @@ public sealed partial class TaskServerStore
         var recent = new List<PostWorkSubject>();
         var ids = new List<string>();
         await using (var command = Command(connection,
-            "SELECT id FROM post_work_subjects ORDER BY updated_at DESC LIMIT $limit;", ("$limit", Math.Clamp(limit, 1, 200))))
+            "SELECT id FROM post_work_subjects WHERE cohort_phase <> 'author-check' ORDER BY updated_at DESC LIMIT $limit;", ("$limit", Math.Clamp(limit, 1, 200))))
         await using (var reader = await command.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) ids.Add(reader.GetString(0));
         foreach (var id in ids)
@@ -693,7 +706,7 @@ public sealed partial class TaskServerStore
     {
         var ids = new List<string>();
         await using (var command = Command(connection, $"""
-            SELECT id FROM post_work_subjects WHERE {scopeClause} AND state NOT IN ('applied', 'retired')
+            SELECT id FROM post_work_subjects WHERE {scopeClause} AND cohort_phase <> 'author-check' AND state NOT IN ('applied', 'retired')
              ORDER BY created_at;
             """, transaction, ("$scope", scope)))
         await using (var reader = await command.ExecuteReaderAsync(ct))

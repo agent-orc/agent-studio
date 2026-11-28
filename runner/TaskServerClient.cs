@@ -214,7 +214,9 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             string[] capabilities = options.Role == "integration"
                 ? [Contract.IntegrationCapabilities.Executor]
                 : options.Role == "post"
-                ? [Contract.PostWorkCapabilities.Executor]
+                ? AuthorCheckWorker.Configured
+                    ? [Contract.PostWorkCapabilities.Executor, Contract.AuthorCheckProtocol.Kind]
+                    : [Contract.PostWorkCapabilities.Executor]
                 : options.Role is "review" or "gate"
                 ? [.. options.Role == "gate"
                     ? RunnerCapabilityProbe.GateRegistrationCapabilities(options)

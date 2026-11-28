@@ -639,6 +639,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.PublishedGateEvidenceBackfill
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
+builder.Services.AddHostedService<AgentStudio.Pipeline.AuthorCheckProtectedWorkPublisher>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
     sp.GetRequiredService<IConfiguration>(),
     Path.Combine(AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(

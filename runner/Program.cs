@@ -483,7 +483,11 @@ try
         await new PostWorkDaemon(new TaskServerPostWorkAuthority(client, options.Hostname), postExecutor,
                 options.RunnerId, () => client.RunnerInstanceId, options.StateDir, postOptions.LeaseSeconds,
                 TimeSpan.FromSeconds(Math.Max(1, options.PollSeconds)), Log)
-            .RunAsync(shutdown.Token);
+            {
+                AuthorCheckWorker = AuthorCheckWorker.Configured && postOptions.Image is not null
+                    ? new AuthorCheckWorker(client, postOptions, Environment.GetEnvironmentVariable("RUNNER_AUTHOR_CHECK_BASE")!)
+                    : null,
+            }.RunAsync(shutdown.Token);
         Log("post-work daemon stopped");
         return 0;
     }

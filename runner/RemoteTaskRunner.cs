@@ -1403,6 +1403,16 @@ public sealed class RemoteTaskRunner
             RunSpec = runSpec,
             Phase = "launching",
         });
+        await using var authorCheck = AuthorCheckCommandHost.Start(
+            _client, outbox?.Authority, slot.ProjectId, workspace.RepoPath, stopRun.Token);
+        var launchEnvironment = projectPreparation.Environment;
+        if (authorCheck is not null)
+        {
+            launchEnvironment = new Dictionary<string, string?>(projectPreparation.Environment)
+            {
+                ["STUDIO_AUTHOR_CHECK_SOCKET"] = authorCheck.SocketPath,
+            };
+        }
         DurableAgentProcess process;
         try
         {
@@ -1422,7 +1432,7 @@ public sealed class RemoteTaskRunner
                 // commands. Without the preparation's cache binding its first
                 // `--no-restore` build resolves against a package folder the
                 // prepare restore never wrote to (TE-52).
-                environment: projectPreparation.Environment,
+                environment: launchEnvironment,
                 log: _log);
         }
         catch (Exception ex)

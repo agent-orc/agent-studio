@@ -35,7 +35,9 @@ public sealed partial class TaskServerStore
         HostPlacementAdvertisement? updated = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct);
+            var pilotPlacement = hostId == Pilot.ExecutorHostId && request.RunnerId == Pilot.ExecutorId
+                && request.Roles.All(role => role == "post");
+            await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct, pilotPlacement);
             var registeredHost = Convert.ToString(await ScalarAsync(connection,
                 "SELECT host_id FROM runners WHERE id = $runner;", ct, transaction,
                 ("$runner", request.RunnerId)), CultureInfo.InvariantCulture);

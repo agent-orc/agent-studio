@@ -160,14 +160,19 @@ public sealed record PostWorkClaimRequest(
     string ExecutorId,
     string InstanceId,
     int RequestedTtlSeconds,
-    long RuntimeCapacityAppliedVersion);
+    long RuntimeCapacityAppliedVersion,
+    bool AcceptAuthorCheck = false,
+    string? AuthorCheckImage = null,
+    long? AuthorCheckDiskFreeBytes = null);
 
 public sealed record PostWorkClaimResponse(
     string Status,
     PostWorkSubject? Subject = null,
     PostWorkLease? Lease = null,
     string? Message = null,
-    IReadOnlyList<string>? RejectedReasons = null);
+    IReadOnlyList<string>? RejectedReasons = null,
+    AuthorCheckWork? AuthorCheck = null,
+    string? SourceGrant = null);
 
 public sealed record PostWorkRenewRequest(PostWorkAuthority Authority, int RequestedTtlSeconds);
 
