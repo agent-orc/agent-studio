@@ -66,7 +66,9 @@ public sealed class RunnerModelAcceptanceProbeTests
         probe.Configure((_, _, _) => Task.FromResult(new ProcessResult(0, "OK", "")),
             _ => "login-a", clock.GetUtcNow);
         probe.NoteCatalogueRefresh("codex", "catalogue-1");
-        probe.RecordRejection("codex", "gpt-6-luna");
+        probe.RecordRejection("codex", "gpt-6-luna", accountRestriction: true);
+        probe.NoteCatalogueRefresh("codex", "catalogue-1");
+        Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-6-luna"])).Status);
         probe.RecordCapacity("codex", "gpt-6-sol");
         probe.NoteCatalogueRefresh("codex", "catalogue-2");
 
@@ -74,6 +76,106 @@ public sealed class RunnerModelAcceptanceProbeTests
         Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
     }
 
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Exhausted_window_is_reprobed_after_a_new_usage_reading(bool resetMoved)
+    {
+        var now = DateTimeOffset.UnixEpoch.AddDays(100);
+        var reset = now.AddDays(3).UtcDateTime;
+        var calls = 0;
+        var probe = new RunnerModelAcceptanceProbe();
+        var refused = new ProcessResult(1, "", ProviderRequestRejectionClassifierTests.Refusal);
+        var auth = new ProviderAuthProbe(executableExists: _ => true, clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "Fixture login."));
+        auth.RecordRunStarted("codex");
+        probe.Configure((_, _, _) => Task.FromResult(++calls == 1 ? refused : new ProcessResult(0, "ok", "")),
+            _ => "login", () => now,
+            (provider, result, retry) => auth.RecordProcessResult(provider, result, usageRetry: retry));
+        const string model = "gpt-6.1-sol";
+        probe.ObserveUsage("codex", "subscription", now.UtcDateTime, [new("Weekly", 100, reset, null)]);
+        await probe.RefreshAsync([("codex", model)], default);
+        var held = Assert.Single(probe.Snapshot("codex", [model]));
+        Assert.Equal("unknown", held.Status);
+        Assert.Contains("usage", held.Detail);
+        Assert.Equal(ProviderAuthProbe.Limited, auth.Current("codex").Status);
+        await probe.RefreshAsync([("codex", model)], default);
+        Assert.Equal(1, calls);
+        now = now.AddMinutes(1);
+        Assert.True(probe.ObserveUsage("codex", "subscription", now.UtcDateTime,
+            [new("Weekly", resetMoved ? 100 : 2, resetMoved ? reset.AddDays(7) : reset, null)]));
+        auth.UsageWindowChanged("codex", now.UtcDateTime);
+        Assert.Equal(ProviderAuthProbe.Ready, auth.Current("codex").Status);
+        await probe.RefreshAsync([("codex", model)], default);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", [model])).Status);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Real_launch_rejected_at_weekly_limit_rechecks_a_previously_accepted_model()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1795854300);
+        var end = now.AddHours(2).UtcDateTime;
+        const string provider = "codex", model = "gpt-6.1-sol";
+        var calls = 0;
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) =>
+        {
+            calls++;
+            return Task.FromResult(new ProcessResult(0, "ok", ""));
+        }, _ => "login", () => now);
+        await probe.RefreshAsync([(provider, model)], default);
+        probe.ObserveUsage(provider, "login", now.UtcDateTime, [new("Weekly", 100, end, null)]);
+        const string refusal = "You've hit your usage limit.";
+        var access = ProviderAccessClassifier.ClassifyRun(1, "", refusal, observedAt: now);
+        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, access.Kind);
+        Assert.Equal(new DateTimeOffset(end), probe.RecordQuota(provider, model, access));
+        await probe.RefreshAsync([(provider, model)], default);
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot(provider, [model])).Status);
+        Assert.Equal(1, calls);
+        now = now.AddMinutes(1);
+        probe.ObserveUsage(provider, "login", now.UtcDateTime, [new("Weekly", 0, end.AddDays(7), null)]);
+        await probe.RefreshAsync([(provider, model)], default);
+        Assert.Equal(2, calls);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot(provider, [model])).Status);
+    }
+
+    [Fact]
+    public async Task Launch_refusal_expires_and_successful_work_can_recover_it_early()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) => Task.FromResult(new ProcessResult(0, "OK", "")), _ => "login", () => now);
+        const string model = "gpt-6.1-sol";
+        probe.RecordRejection("codex", model);
+        now += RunnerModelAcceptanceProbe.LaunchRefusalTtl;
+        await probe.RefreshAsync([("codex", model)], default);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", [model])).Status);
+        probe.RecordRejection("codex", model);
+        probe.RecordSuccess("codex", model, "login");
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", [model])).Status);
+    }
+
+    [Fact]
+    public async Task Server_that_missed_a_launch_refusal_receives_acknowledgement_then_fresh_proof()
+    {
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) => Task.FromResult(new ProcessResult(0, "ok", "")), _ => "login");
+        const string model = "gpt-6.1-sol";
+        probe.RecordRejection("codex", model);
+        probe.RecordSuccess("codex", model, "login");
+        var ready = Assert.Single(probe.Snapshot("codex", [model]));
+        probe.AcknowledgeAdvertisement(ready, "unavailable");
+        await probe.RefreshAsync([("codex", model)], default);
+        var acknowledgement = Assert.Single(probe.Snapshot("codex", [model]));
+        Assert.Equal("unknown", acknowledgement.Status);
+        probe.AcknowledgeAdvertisement(acknowledgement, "unavailable");
+        await probe.RefreshAsync([("codex", model)], default);
+        var recovered = Assert.Single(probe.Snapshot("codex", [model]));
+        Assert.Equal("ready", recovered.Status);
+        Assert.True(recovered.ProbeSequence > acknowledgement.ProbeSequence);
+    }
 
     [Fact]
     public async Task Both_gpt61_models_are_probed_once_and_advertised_ready_for_a_login()
@@ -132,19 +234,23 @@ public sealed class RunnerModelAcceptanceProbeTests
         {
             calls++;
             return Task.FromResult(calls == 1
-                ? new ProcessResult(1, "", "HTTP 400 {\"error\":{\"message\":\"The gpt-6-sol model is not supported when using Codex with a ChatGPT account\",\"type\":\"invalid_request_error\"}}")
+                ? new ProcessResult(1, "", "HTTP 400 {\"error\":{\"message\":\"The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.\",\"type\":\"invalid_request_error\"}}")
                 : new ProcessResult(0, "OK", ""));
         }, _ => generation, () => now);
 
-        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
-        Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
-        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
+        await probe.RefreshAsync([("codex", "gpt-5.5")], CancellationToken.None);
+        Assert.Equal("unavailable", Assert.Single(probe.Snapshot("codex", ["gpt-5.5"])).Status);
+        await probe.RefreshAsync([("codex", "gpt-5.5")], CancellationToken.None);
+        now = now.AddDays(7);
+        probe.ObserveUsage("codex", "account", now.UtcDateTime, [new("weekly", 100, null, null)]);
+        probe.ObserveUsage("codex", "account", now.AddSeconds(1).UtcDateTime, [new("weekly", 0, null, null)]);
+        await probe.RefreshAsync([("codex", "gpt-5.5")], default);
         Assert.Equal(1, calls);
 
         generation = "login-b";
-        Assert.Equal("unknown", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
-        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
-        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"])).Status);
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("codex", ["gpt-5.5"])).Status);
+        await probe.RefreshAsync([("codex", "gpt-5.5")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("codex", ["gpt-5.5"])).Status);
         Assert.Equal(2, calls);
     }
 

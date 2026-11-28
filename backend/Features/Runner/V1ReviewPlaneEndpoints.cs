@@ -229,6 +229,7 @@ public static class V1ReviewPlaneEndpoints
             IModelEquivalenceCatalog equivalenceCatalogue,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
+            RemoteDispatchRejectionStore dispatchRejections,
             IConfiguration configuration,
             AgentStudio.Cli.CombinedOneShotJobs oneShotJobs,
             CancellationToken ct) =>
@@ -241,6 +242,8 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
+                var codingTasks = request.Capabilities.Any(capability => capability.Key == Contract.CapabilityProtocol.CodingExecutor)
+                    ? scanner.ScanAllAutomationJobs() : [];
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
                 {
                     ConfiguredModelRoutes = (request.Capabilities.Any(capability =>
@@ -248,11 +251,12 @@ public static class V1ReviewPlaneEndpoints
                         ? ReviewConfiguredModelRoutes(authority.ListPendingReviewAttempts(), configuration,
                             quotaRoutes.GetAll().Values)
                         : CodingConfiguredModelRoutes(quotaRoutes.GetAll().Values,
-                            scanner.ScanAllAutomationJobs()))
+                            codingTasks))
                         .Concat(equivalenceCatalogue.Routes.Select(pair =>
                             new Contract.ConfiguredModelRouteDto(pair.ToCliType, pair.ToModel)))
                         .Distinct().ToArray(),
                 };
+                dispatchRejections.RefreshModelWaits(codingTasks, runnerId, request.InstanceId, registry);
                 // The monolith may already have a provider rejection or a
                 // health drain for this model. Mirror its accepted effective
                 // status, not the runner's unfiltered claim of readiness.
@@ -3872,7 +3876,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             || state.InstanceId != instanceId) return false;
         return state.Capabilities.Any(capability => capability.Key == "provider-auth:" + provider
             && (!healthyOnly || registration.LastSeenAt > now.AddMinutes(-3)
-                && capability.FreshUntil > now && capability.AdvertisedStatus == "ready"
+                && capability.FreshUntil > now && capability.AdvertisedStatus is ("ready" or "limited")
                 && capability.HealthOutcome is not ("credential_invalid" or "provider_incident" or "indeterminate")));
     }
 

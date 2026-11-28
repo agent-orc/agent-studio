@@ -1486,6 +1486,7 @@ public sealed class RemoteTaskRunner
     {
         var process = DurableAgentProcess.Attach(slot);
         var activeInvocation = CliSelection.Resolve(_options, slot.RunSpec);
+        var modelGeneration = RunnerModelAcceptanceProbe.Shared.CredentialGeneration(activeInvocation.CliType);
         ProviderAuthProbe.Shared.RecordRunStarted(activeInvocation.FileName);
         var providerRunRecorded = true;
         var sequence = slot.LastOutputSequence;
@@ -1539,17 +1540,27 @@ public sealed class RemoteTaskRunner
                         processResult.StdOut,
                         processResult.StdErr,
                         completedSuccessfully: classified.Decision.Outcome == ExecutionOutcomeKind.SuccessfulCompletion);
+                    var completedGeneration = processResult.ExitCode == 0
+                        ? SameGenerationForCompletedWork(invocation.FileName, slot.ProcessStartedAtUtc) : null;
+                    if (processResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(invocation.Model)
+                        && classified.Decision.Outcome is ExecutionOutcomeKind.SuccessfulCompletion
+                            or ExecutionOutcomeKind.ExplicitAgentBlocker)
+                        RunnerModelAcceptanceProbe.Shared.RecordSuccess(invocation.CliType, invocation.Model, completedGeneration ?? modelGeneration);
+                    var stopped = operatorStopRequested?.Invoke() == true;
+                    var raw = classified.Decision.RawFacts;
+                    var providerFailure = processResult.ExitCode != 0 && !stopped && !raw.OperatorCancelled
+                        && raw.Signal is null && !raw.HostShutdown && !daemonShutdown.IsCancellationRequested;
+                    var usageRetry = providerFailure && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited
+                        ? RunnerModelAcceptanceProbe.Shared.RecordQuota(invocation.CliType, invocation.Model, providerAccess) : (DateTimeOffset?)null;
                     var providerAuth = RecordProviderProcessResult(
                         ProviderAuthProbe.Shared,
                         invocation.FileName,
                         processResult,
                         classified.Decision.RawFacts,
                         evidenceId: slot.RunId ?? slot.AttemptId,
-                        stopDirectiveRecorded: operatorStopRequested?.Invoke() == true,
+                        stopDirectiveRecorded: stopped,
                         daemonShutdownRecorded: daemonShutdown.IsCancellationRequested,
-                        credentialGeneration: processResult.ExitCode == 0
-                            ? SameGenerationForCompletedWork(invocation.FileName, slot.ProcessStartedAtUtc)
-                            : null);
+                        credentialGeneration: completedGeneration, usageRetry: usageRetry);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -1586,7 +1597,7 @@ public sealed class RemoteTaskRunner
                             "system",
                             $"[runner] provider-auth state=retrying provider={invocation.CliType}; last-good capability retained");
                     }
-                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected)
+                    else if (providerFailure && providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected)
                     {
                         // A model request refusal proves neither logout nor a
                         // transient auth failure. Leave provider-auth capability
@@ -1598,7 +1609,8 @@ public sealed class RemoteTaskRunner
                         if (!string.IsNullOrWhiteSpace(invocation.Model)
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
                         {
-                            RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
+                            RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model,
+                                RunnerModelAcceptanceProbe.IsAccountRestriction(processResult, invocation.Model));
                             var recorded = await _client.PostModelSelectionEventAsync(new
                             {
                                 id = TaskServerClient.NewModelSelectionId(), at = DateTimeOffset.UtcNow,
@@ -1616,7 +1628,7 @@ public sealed class RemoteTaskRunner
                             if (!recorded) _log("model-selection health receipt could not reach Studio after bounded retry");
                         }
                     }
-                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity
+                    else if (providerFailure && providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity
                              && !string.IsNullOrWhiteSpace(invocation.Model))
                     {
                         RunnerModelAcceptanceProbe.Shared.RecordCapacity(
@@ -2899,7 +2911,8 @@ public sealed class RemoteTaskRunner
         string? evidenceId = null,
         bool stopDirectiveRecorded = false,
         bool daemonShutdownRecorded = false,
-        string? credentialGeneration = null)
+        string? credentialGeneration = null,
+        DateTimeOffset? usageRetry = null)
         => providerAuth.RecordProcessResult(
             cliBinary,
             result,
@@ -2907,7 +2920,7 @@ public sealed class RemoteTaskRunner
             operatorStopped: facts.OperatorCancelled || stopDirectiveRecorded,
             signal: facts.Signal,
             hostShutdown: facts.HostShutdown || daemonShutdownRecorded,
-            credentialGeneration: credentialGeneration);
+            credentialGeneration: credentialGeneration, usageRetry: usageRetry);
 
     internal static string ProviderAuthenticationFailureReason(ProviderAccessEvidence evidence)
         => $"Unauthorized provider response: {ProviderAuthProbe.Excerpt(evidence.Detail)}";

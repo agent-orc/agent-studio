@@ -176,9 +176,12 @@ orchestrator should explain when a pin is below the policy floor.
 
 A capacity refusal marks the selected model on its execution host for 15 minutes,
 or until a later provider retry hint. It does not mark the provider account as
-rate limited. A model-unavailable refusal stays scoped to that model and host
-until the next catalogue refresh; an unauthorized provider response holds
-that provider on the affected host until a successful provider probe. After
+rate limited. A temporary model refusal is probed again within the
+15-minute backoff and the regular probe cadence. A new usage window ends
+the backoff early. An explicit account restriction lasts until the login or
+catalogue changes, or successful use proves the model is accepted.
+A usage-window refusal holds the login until reset. An unauthorized provider
+response holds that provider on the affected host until a successful provider probe. After
 bounded same-session capacity retries, a fresh attempt first tries the declared
 same-provider sibling, then a host-accepted cross-provider equivalent that
 clears the card's correctness floor. Sol/xhigh uses the declared Opus 5/xhigh

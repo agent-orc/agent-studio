@@ -82,6 +82,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 && type != OperatorDecisionTypes.EnvironmentIncidentOpen
                 && type != OperatorDecisionTypes.ElevationRateEnded
                 && type != OperatorDecisionTypes.AuditAlert
+                && type != OperatorDecisionTypes.HostModelUnavailable
                 && type != OperatorDecisionTypes.HostDiskPressure
                 && type != OperatorDecisionTypes.ReviewHostDrift
                 && type != OperatorDecisionTypes.PostMergeRunsMissing

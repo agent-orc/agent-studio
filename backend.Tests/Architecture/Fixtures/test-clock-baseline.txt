@@ -389,7 +389,6 @@ fixed-date backend.Tests/RecurringOutputPatternServiceTests.cs
 fixed-date backend.Tests/ReissueOpenItemsPreCheckTests.cs
 fixed-date backend.Tests/RemoteCommitAttributionGuardTests.cs
 fixed-date backend.Tests/RemoteDeliverySettlementStoreTests.cs
-fixed-date backend.Tests/RemoteDispatchRejectionStoreTests.cs
 fixed-date backend.Tests/RemotePipelineExecutionProjectionTests.cs
 fixed-date backend.Tests/RemoteProjectRepositoryResolverTests.cs
 fixed-date backend.Tests/RemoteQueueStarvationPolicyTests.cs

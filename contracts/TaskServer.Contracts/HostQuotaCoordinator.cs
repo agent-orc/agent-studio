@@ -33,7 +33,7 @@ public sealed class HostQuotaCoordinator
         {
             var state = Get(request.Provider, request.SubscriptionKey);
             if (state.Reading is { } reading && IsFreshForAdmission(reading.ObservedAt, reading.Error, nowUtc, _ttl))
-                return new(false, null, reading.ObservedAt + _ttl, "Subscription reading is fresh.");
+                return new(false, null, reading.ObservedAt + _ttl, "Subscription reading is fresh.", reading);
             if (state.FailedHosts.TryGetValue(runnerId, out var failedUntil) && failedUntil > nowUtc)
                 return new(false, null, failedUntil, "This host's last probe failed; another healthy host may take over.");
             if (state.Lease is { } lease && lease.ExpiresAt > nowUtc
