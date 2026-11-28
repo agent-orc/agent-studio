@@ -1318,6 +1318,8 @@ public sealed partial class TaskServerStore
             UPDATE runs
                SET status = 'running'
              WHERE id = $attempt;
+            DELETE FROM runner_reconciliation_actions
+             WHERE run_id = $attempt AND action = 'terminate-process';
             """, ct, transaction,
             ("$expires", Iso(expiresAt)),
             ("$attempt", reported.AttemptId));
