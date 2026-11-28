@@ -69,8 +69,8 @@
 
             @if (approvals.state() !== 'denied') {
               <app-page-section anchor="access-approvals" title="Approval requests"
-                                purpose="High-risk (T2) requests of operator sessions wait here for you. An approval covers one exact request, is used once, and lapses after 15 minutes.">
-                @defer (on immediate) { <app-access-operator-approvals /> }
+                                purpose="Operator sessions ask for your approval here. Typed batches lapse after 30 minutes; single requests after 15 minutes. Each confirmation is used once.">
+                @defer (on immediate) { <app-access-operator-approvals /><app-operator-batch-sheet /> }
               </app-page-section>
             }
 
