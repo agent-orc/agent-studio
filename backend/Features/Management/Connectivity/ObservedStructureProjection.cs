@@ -231,12 +231,16 @@ public static partial class ObservedStructureProjection
 
         if (observing)
         {
-            AddInstallation(nodes, observedLinks, hosts, context!, now);
+            var api = studio is null ? null : nodes.FirstOrDefault(node => node.ParentId == studioId && node.Role == "api");
+            AddInstallation(nodes, observedLinks, hosts, context!, api, now);
             // Declared links that end at a host which only reports resolve now.
             var ids = nodes.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var link in declared.UnresolvedLinks ?? [])
                 if (ids.Contains(link.From) && ids.Contains(link.To) && observedLinks.All(existing => existing.Id != link.Id))
                     observedLinks.Add(ObserveLink(link, hostReports, links, now));
+            if (api is not null)
+                foreach (var (hostId, reports) in hostReports.OrderBy(item => item.Key, StringComparer.Ordinal))
+                    AddHostConnection(observedLinks, $"machine:{hostId}", api.Id, reports, now);
             MarkLinksDown(nodes, observedLinks);
         }
         return new(nodes, observedLinks, History: observing ? context!.Installation?.History : null);

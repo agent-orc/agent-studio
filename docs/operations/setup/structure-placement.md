@@ -146,6 +146,11 @@ When several observers report machine performance, the newest performance
 measurement wins. Its `facts.performance.sample` gives the observer, measurement
 time and 90-second expiry. A later structure collection has its own
 `facts.sample` and does not extend the lifetime of the performance measurement.
+A container's `detectedContainer` reports the result of its own
+`systemd-detect-virt --container` check. Its DMI product and VM detector can
+describe the enclosing machine. When that machine also reports directly, its
+own structure reading supplies its placement fields and their timestamp.
+
 Disk usage from an independent SSH gate probe carries its own `disks[].sample`.
 It fills a missing disk reading or replaces one of the same age or older.
 
@@ -191,6 +196,10 @@ keeps that kind for legacy reports. When a heartbeat includes receiver-observed
 peer information, the same link has kind `runner-to-server` and keeps its
 existing `link:{from}>{to}:control` ID. A peer observation with no existing
 control link creates a `runner-to-server` link with that kind in its ID.
+For several runners on one host, the newest receiver timestamp supplies the
+shared link's health, address class, transport and accompanying round trip.
+The heartbeat expires after 90 seconds. A matching declared connection keeps
+its ID and label when the receiver supplies these measurements.
 Consumers should join snapshots and deltas by the returned `id` and use
 `kind` to classify the connection.
 

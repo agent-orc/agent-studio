@@ -184,6 +184,72 @@ public sealed class ObservedStructureHostsTests
         Assert.Equal(("private", 5d), (observed.Facts!.AddressClass, observed.Facts.LatencyMs));
     }
 
+    [Theory]
+    [InlineData("reachable", false)]
+    [InlineData("reachable", true)]
+    [InlineData("unknown", false)]
+    [InlineData("unknown", true)]
+    public void Shared_host_connection_uses_the_newest_receiver_clock(string connection, bool reverse)
+    {
+        var studio = new StudioSelfObservation("studio", "Studio server", null, null, null, "2.0", Now);
+        var old = Report("coding-runner", "shared", telemetry: Telemetry(connection: connection, roundTripMs: 50) with
+        {
+            Peer = new("private", "http", Now.AddMinutes(-3)),
+        });
+        var recent = Report("review-runner", "shared", "review", Telemetry(connection: connection, roundTripMs: 4) with
+        {
+            ObservedAt = Now.AddMinutes(-1), Peer = new("shared", "https", Now),
+        });
+        var link = Assert.Single(Apply(Undeclared, reverse ? [recent, old] : [old, recent], new(studio)).Links);
+        var idKind = connection == "unknown" ? "runner-to-server" : "control";
+        Assert.Equal(StructureLink.IdFor("machine:shared", "component:studio:api", idKind), link.Id);
+        Assert.Equal("runner-to-server", link.Kind);
+        Assert.Equal(new StructureObservation("matched", "up", Now), link.Observation);
+        Assert.Equal(new StructureLinkFacts("up", 4, Now, "https", "shared",
+            new(Now, "heartbeat receiver", Now.AddSeconds(90))), link.Facts);
+    }
+
+    [Fact]
+    public void Peer_observation_updates_a_declared_runner_link_when_its_host_appears()
+    {
+        var studio = new StudioSelfObservation("studio", "Studio server", null, null, null, "2.0", Now);
+        var declared = new StructureLink("machine:shared", "component:studio:api", "runner-to-server",
+            "Review connection", "placement", Id: "declared-connection");
+        var at = Now.AddSeconds(-91);
+        var report = Report("review-runner", "shared", telemetry: Telemetry() with { Peer = new("private", "https", at) });
+        var link = Assert.Single(Apply(Undeclared with { UnresolvedLinks = [declared] }, [report], new(studio)).Links);
+        Assert.Equal(declared.Id, link.Id);
+        Assert.Equal(declared.Label, link.Label);
+        Assert.Equal(new StructureObservation("stale", "stale", at), link.Observation);
+        Assert.Equal(new StructureStamp(at, "heartbeat receiver", at.AddSeconds(90)), link.Facts!.Sample);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Container_detection_belongs_to_the_reporting_container(bool vmReports)
+    {
+        var vmPlacement = new HostPlacementDto(HostPlacementKinds.Vm, DetectedVm: "microsoft", DetectedContainer: "none");
+        var placement = new HostPlacementDto(HostPlacementKinds.Container, ParentMachineId: "guest",
+            Ancestors: [new("guest", HostPlacementKinds.Vm)], DetectedVm: "microsoft", DetectedContainer: "docker");
+        var reading = new HostStructureReading(Now, "review-runner", Now.AddSeconds(90), "Review runner", "review",
+            "Virtual Machine", [], new(123, 456), [], null, []);
+        var child = Report("review-runner", "review", telemetry: Telemetry(placement) with { Structure = reading });
+        var vmReading = reading with { ObservedBy = "guest-runner", ObservedAt = Now.AddSeconds(-10),
+            FreshUntil = Now.AddSeconds(80) };
+        var vm = Report("guest-runner", "guest", telemetry: Telemetry(vmPlacement) with { Structure = vmReading });
+        var nodes = Apply(Undeclared, vmReports ? [vm, child] : [child]).Nodes;
+        var guest = nodes.Single(n => n.Id == "machine:guest").Facts!;
+        Assert.Equal(vmReports ? "none" : null, guest.DetectedContainer);
+        Assert.Equal("microsoft", guest.DetectedVm);
+        Assert.Equal("Virtual Machine", guest.DmiProduct);
+        Assert.Equal(vmReports ? vmReading.ObservedBy : reading.ObservedBy, guest.Sample!.ObservedBy);
+        var container = nodes.Single(n => n.Id == "machine:review").Facts!;
+        Assert.Equal("docker", container.DetectedContainer);
+        Assert.Equal(reading.Service, container.Resources);
+        Assert.Equal(reading.ObservedBy, container.Sample!.ObservedBy);
+    }
+
     [Fact]
     public void Studio_components_without_a_container_report_say_what_the_api_knows()
     {

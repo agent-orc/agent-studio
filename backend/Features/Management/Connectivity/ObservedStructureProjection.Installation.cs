@@ -5,30 +5,16 @@ namespace AgentStudio.Management;
 public static partial class ObservedStructureProjection
 {
     private static void AddInstallation(List<StructureNode> nodes, List<StructureLink> links,
-        IReadOnlyList<RunnerCapabilitySnapshotDto> hosts, StructureObservedContext context, DateTime now)
+        IReadOnlyList<RunnerCapabilitySnapshotDto> hosts, StructureObservedContext context, StructureNode? api, DateTime now)
     {
         var byId = nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         void Put(StructureNode node) => byId[node.Id] = node;
         var studio = context.Studio is { } self ? $"machine:{self.MachineId}" : null;
-        var api = nodes.FirstOrDefault(n => n.ParentId == studio && n.Role == "api");
+        var directMachineReadings = new HashSet<string>(StringComparer.Ordinal);
         foreach (var host in hosts.OrderBy(h => h.Telemetry?.Structure?.ObservedAt))
         {
             var id = $"machine:{host.HostId}";
             if (!byId.TryGetValue(id, out var reporter)) continue;
-            if (api is not null && host.Telemetry?.Peer is { } peer)
-            {
-                var sample = new StructureStamp(peer.ObservedAt, "heartbeat receiver", peer.ObservedAt + Fresh);
-                var kind = "runner-to-server";
-                // The v2 control link already represents this connection. Keep its identity and measured RTT.
-                var position = links.FindIndex(link => link.From == id && link.To == api.Id && link.Kind == "control");
-                var facts = new StructureLinkFacts(now > sample.FreshUntil ? "stale" : "up", host.Telemetry.TaskServerRoundTripMs,
-                    peer.ObservedAt, peer.Scheme, peer.AddressClass, sample);
-                var observed = new StructureObservation(now > sample.FreshUntil ? "stale" : "matched", facts.State, peer.ObservedAt);
-                if (position >= 0) links[position] = links[position] with { Kind = kind, Facts = facts, Observation = observed };
-                else if (!links.Any(l => l.From == id && l.To == api.Id && l.Kind == kind))
-                    links.Add(new(id, api.Id, kind, "Runner connection", sample.ObservedBy, observed,
-                        StructureLink.IdFor(id, api.Id, kind), facts));
-            }
             var hostPerformance = Performance([host]);
             // A container's /proc counters can describe the enclosing kernel. Its cgroup
             // counters below describe only the container. Preserve the measurement's clock.
@@ -36,29 +22,35 @@ public static partial class ObservedStructureProjection
                 byId.TryGetValue(enclosing, out var guest) && guest.Kind is "vm" or "physical" &&
                 hostPerformance is { } performance && !(guest.Facts?.Performance?.ObservedAt >= performance.ObservedAt))
                 Put(guest with { Facts = (guest.Facts ?? new()) with { Performance = performance,
-                    Sample = performance.Sample } });
+                    Sample = directMachineReadings.Contains(enclosing) ? guest.Facts!.Sample : performance.Sample } });
             if (host.Telemetry?.Structure is not { } reading) continue;
             var stamp = new StructureStamp(reading.ObservedAt, reading.ObservedBy, reading.FreshUntil);
             var obs = new StructureObservation(now > stamp.FreshUntil ? "stale" : "undeclared",
                 now > stamp.FreshUntil ? "stale" : "up", stamp.ObservedAt);
             var component = byId.Values.FirstOrDefault(n => n.UnitId == host.RunnerId && n.Id.StartsWith("component:", StringComparison.Ordinal));
+            var placement = host.Telemetry.Placement;
+            var inside = placement?.Kind == HostPlacementKinds.Container;
             var machine = reporter.Kind == "host" && reporter.ParentId == studio ? studio! : id;
-            if (host.Telemetry.Placement is { Kind: HostPlacementKinds.Container, ParentMachineId: { } parent } &&
-                byId.ContainsKey($"machine:{parent}")) machine = $"machine:{parent}";
+            if (inside && placement?.ParentMachineId is { } parent && byId.ContainsKey($"machine:{parent}"))
+                machine = $"machine:{parent}";
             var housing = byId[machine];
             var machineFacts = housing.Facts ?? new();
-            Put(housing with { Facts = machineFacts with { DmiProduct = reading.DmiProduct, Sample = stamp,
-                DetectedVm = host.Telemetry.Placement?.DetectedVm, DetectedContainer = host.Telemetry.Placement?.DetectedContainer,
-                Performance = NewestPerformance(machineFacts.Performance, hostPerformance) } });
-            if (host.Telemetry.Placement?.Kind == HostPlacementKinds.Container)
+            var reportsFromChild = inside && machine != id;
+            // A direct report owns the machine's placement stamp. A child can supply kernel facts
+            // when there is no direct report, but its container detector describes only the child.
+            if (!reportsFromChild || !directMachineReadings.Contains(machine))
+                machineFacts = machineFacts with { DmiProduct = reading.DmiProduct, Sample = stamp,
+                    DetectedVm = placement?.DetectedVm, DetectedContainer = reportsFromChild ? null : placement?.DetectedContainer };
+            if (!reportsFromChild) directMachineReadings.Add(machine);
+            Put(housing with { Facts = machineFacts with { Performance = NewestPerformance(machineFacts.Performance, hostPerformance) } });
+            if (inside)
                 Put(byId[id] with { Facts = (byId[id].Facts ?? new()) with { Resources = reading.Service,
-                    Sample = stamp, Performance = null } });
+                    DetectedContainer = placement?.DetectedContainer, Sample = stamp, Performance = null } });
             foreach (var disk in reading.Devices)
                 Put(new($"disk:{machine}:{disk.Device}", "disk", disk.Device, machine, null, null, null,
                     "observed", "host block devices", Observation: obs, Facts: new(Sample: stamp, Device: disk)));
             if (component is not null)
             {
-                var inside = host.Telemetry.Placement?.Kind == HostPlacementKinds.Container;
                 var facts = component.Facts ?? new();
                 var capacity = facts.Capacity;
                 if (capacity is not null)

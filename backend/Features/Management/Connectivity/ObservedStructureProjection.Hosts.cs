@@ -140,26 +140,6 @@ public static partial class ObservedStructureProjection
 
         if (studio is not null) AddStudio(nodes, Put, Get, Has, studio, studioId!, hostReports, placements, engineState, now, context);
 
-        // Links the hosts hold themselves: the control connection each one reports, and supervised runner links.
-        var api = studio is null ? null : nodes.FirstOrDefault(node => node.ParentId == studioId && node.Role == "api")?.Id;
-        if (api is not null)
-            foreach (var (hostId, reports) in hostReports.OrderBy(item => item.Key, StringComparer.Ordinal))
-            {
-                var telemetry = reports.Select(report => report.Telemetry)
-                    .Where(value => value is not null && value.TaskServerConnectionStatus != "unknown")
-                    .OrderByDescending(value => value!.ObservedAt).FirstOrDefault();
-                if (telemetry is null) continue;
-                var from = $"machine:{hostId}";
-                var id = StructureLink.IdFor(from, api, "control");
-                if (links.Any(link => link.Id == id)) continue;
-                var stale = now - telemetry.ObservedAt > Fresh;
-                var state = stale ? "stale" : telemetry.TaskServerConnectionStatus is "reachable" or "connected" ? "up" : "down";
-                links.Add(new(from, api, "control", "Task Server connection", ReportRef,
-                    new(stale ? "stale" : "undeclared", state, telemetry.TaskServerConnectionObservedAt ?? telemetry.ObservedAt,
-                        Detail: telemetry.TaskServerConnectionLastError ?? telemetry.TaskServerConnectionStatus),
-                    id, new(state, telemetry.TaskServerRoundTripMs,
-                        telemetry.TaskServerConnectionObservedAt ?? telemetry.ObservedAt, "https")));
-            }
         if (studioId is not null)
             foreach (var runnerLink in runnerLinks)
             {
@@ -178,6 +158,43 @@ public static partial class ObservedStructureProjection
                     new(stale ? "stale" : "undeclared", state, runnerLink.LastHeartbeatAt, Detail: runnerLink.LastError ?? runnerLink.State),
                     id, new(state, null, runnerLink.LastProbe?.At, runnerLink.Transport ?? runnerLink.Kind, Sample: LinkStamp(runnerLink))));
             }
+    }
+
+    private static void AddHostConnection(List<StructureLink> links, string from, string api,
+        IReadOnlyList<RunnerCapabilitySnapshotDto> reports, DateTime now)
+    {
+        var telemetry = reports.Select(r => r.Telemetry).OfType<HostTelemetrySnapshotDto>().ToArray();
+        var control = telemetry.Where(t => t.TaskServerConnectionStatus != "unknown").MaxBy(t => t.ObservedAt);
+        var receiver = reports.Where(r => r.Telemetry?.Peer is not null)
+            .OrderByDescending(r => r.Telemetry!.Peer!.ObservedAt)
+            .ThenBy(r => r.RunnerId, StringComparer.Ordinal).FirstOrDefault()?.Telemetry;
+
+        if (receiver?.Peer is { } peer)
+        {
+            var sample = new StructureStamp(peer.ObservedAt, "heartbeat receiver", peer.ObservedAt + Fresh);
+            var state = now > sample.FreshUntil ? "stale" : "up";
+            var facts = new StructureLinkFacts(state, receiver.TaskServerRoundTripMs, peer.ObservedAt,
+                peer.Scheme, peer.AddressClass, sample);
+            var observation = new StructureObservation(state == "stale" ? "stale" : "matched", state, peer.ObservedAt);
+            var existing = links.FindIndex(l => l.From == from && l.To == api && l.Kind is "control" or "runner-to-server");
+            if (existing >= 0)
+                links[existing] = links[existing] with { Kind = "runner-to-server", Observation = observation, Facts = facts };
+            else
+                links.Add(new(from, api, "runner-to-server", control is null ? "Runner connection" : "Task Server connection",
+                    control is null ? sample.ObservedBy : ReportRef, observation,
+                    StructureLink.IdFor(from, api, control is null ? "runner-to-server" : "control"), facts));
+            return;
+        }
+
+        var id = StructureLink.IdFor(from, api, "control");
+        if (control is null || links.Any(link => link.Id == id)) return;
+        var stale = now - control.ObservedAt > Fresh;
+        var health = stale ? "stale" : control.TaskServerConnectionStatus is "reachable" or "connected" ? "up" : "down";
+        var measured = control.TaskServerConnectionObservedAt ?? control.ObservedAt;
+        links.Add(new(from, api, "control", "Task Server connection", ReportRef,
+            new(stale ? "stale" : "undeclared", health, measured,
+                Detail: control.TaskServerConnectionLastError ?? control.TaskServerConnectionStatus),
+            id, new(health, control.TaskServerRoundTripMs, measured, "https")));
     }
 
     private static void AddStudio(List<StructureNode> nodes, Action<StructureNode> put, Func<string, StructureNode> get,
