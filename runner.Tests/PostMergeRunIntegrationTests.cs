@@ -449,6 +449,74 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["fail", "unknown"], test.Attempts.Select(attempt => attempt.Result));
     }
 
+    [Fact]
+    public async Task NestedSummaryDoesNotConfirmDifferentFailingChildren()
+    {
+        static string Tap(string first, string second) => $"""
+            TAP version 13
+            # Subtest: outer
+                # Subtest: inner
+                    {first} 1 - first
+                    {second} 2 - second
+                    1..2
+                not ok 1 - inner
+                  ---
+                  error: '1 subtest failed'
+                  ...
+                1..1
+            not ok 1 - outer
+            """;
+
+        var receipt = await LintReceiptAsync("lint", Tap("not ok", "ok"), 1, Tap("ok", "not ok"));
+        Assert.Equal("red", receipt.Status);
+        Assert.Equal(["outer > inner > second"], receipt.Failure!.FailingTests);
+        Assert.Equal(["outer > inner > first"], Assert.Single(receipt.Verdicts).FlakyTests);
+        var attempts = receipt.TestVerdicts!.ToDictionary(test => test.Test,
+            test => test.Attempts.Select(attempt => attempt.Result).ToArray());
+        Assert.Equal(2, attempts.Count);
+        Assert.Equal(["fail", "pass"], attempts["outer > inner > first"]);
+        Assert.Equal(["pass", "fail"], attempts["outer > inner > second"]);
+    }
+
+    [Fact]
+    public async Task SummaryOnlyRepeatLeavesMissingChildUnresolved()
+    {
+        const string summary = """
+            not ok 1 - suite
+              ---
+              failureType: 'subtestsFailed'
+              error: '1 subtest failed'
+              ...
+            """;
+        var initial = "# Subtest: suite\n    not ok 1 - child\n    1..1\n" + summary;
+        var receipt = await LintReceiptAsync("lint", initial, 1, summary);
+        Assert.Equal(["suite > child"], receipt.Failure!.FailingTests);
+        var test = Assert.Single(receipt.TestVerdicts!);
+        Assert.Equal(["fail", "unknown"], test.Attempts.Select(attempt => attempt.Result));
+    }
+
+    [Theory]
+    [InlineData("failureType: 'hookFailed'")]
+    [InlineData("duration_ms: 1.2")]
+    public async Task SuiteHookFailureKeepsItsOwnEvidenceAlongsideAFailingChild(string metadata)
+    {
+        var tap = $"""
+            # Subtest: suite
+                not ok 1 - child
+                1..1
+            not ok 1 - suite
+              ---
+              {metadata}
+              error: 'after hook failed'
+              ...
+            """;
+        var receipt = await LintReceiptAsync("lint", tap, 1, tap);
+        Assert.Equal(["suite > child", "suite"], receipt.Failure!.FailingTests);
+        Assert.Equal("after hook failed", Assert.Single(receipt.Verdicts).FailureMessages!["suite"]);
+        Assert.All(receipt.TestVerdicts!, test =>
+            Assert.Equal(["fail", "fail"], test.Attempts.Select(attempt => attempt.Result)));
+    }
+
     private async Task<PostMergeRunRecord> LintReceiptAsync(string lint, string initial, int retryExit, string repeat)
     {
         var fixture = DurableFixture(lint);
