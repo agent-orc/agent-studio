@@ -17,8 +17,9 @@ survives daemon handoff and same-attempt resume. Terminal cleanup releases it on
 success, failure, cancellation and lease loss. On Linux, terminal cleanup and eviction check surviving
 processes for cache bindings, path arguments, working directories, open files,
 executables and file mappings inside the copy. Bindings and arguments can refer
-to a copy through symlinked paths, including cache subdirectories the child has
-yet to create. When a child still uses a copy
+to a copy through symlinked paths, including paths that pass through the copy
+before a symlink leads elsewhere and cache subdirectories the child has yet to
+create. When a child still uses a copy
 selected for release, the runner marks it for the five-minute sweep. This also
 covers copies first discovered at startup or under pressure. The sweep retries
 below the size limit once the last reference clears. A new round receives a fresh copy.

@@ -178,18 +178,21 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
     }
 
     [SkippableTheory]
-    [InlineData("cwd", false)]
-    [InlineData("fd", false)]
-    [InlineData("argument", false)]
-    [InlineData("environment", false)]
-    [InlineData("cwd", true)]
-    [InlineData("fd", true)]
-    [InlineData("argument", true)]
-    [InlineData("environment", true)]
+    [InlineData("cwd", false, false)]
+    [InlineData("fd", false, false)]
+    [InlineData("argument", false, false)]
+    [InlineData("environment", false, false)]
+    [InlineData("cwd", true, false)]
+    [InlineData("fd", true, false)]
+    [InlineData("argument", true, false)]
+    [InlineData("environment", true, false)]
+    [InlineData("argument", true, true)]
+    [InlineData("environment", true, true)]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
-    public async Task Terminal_release_and_sweep_preserve_child_references_through_symlinks(string reference, bool linkRuns)
+    public async Task Terminal_release_and_sweep_preserve_child_references_through_symlinks(
+        string reference, bool linkRuns, bool exitsCopy)
     {
         PlatformGate.LinuxOnly("inspects a live child's procfs links");
         var slot = Claim();
@@ -203,6 +206,14 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
             childPath = RunnerPreparationCopies.RootFor(childWork, slot)!;
         }
         Prepare(slot, 21);
+        if (exitsCopy)
+        {
+            var outside = Directory.CreateDirectory(Path.Combine(_work, "outside")).FullName;
+            File.WriteAllText(Path.Combine(outside, "package"), "outside the copy");
+            var exit = Directory.CreateSymbolicLink(Path.Combine(childPath, "exit"), outside).FullName;
+            childPath = reference == "argument" ? exit
+                : Directory.CreateSymbolicLink(Path.Combine(_work, "child-binding"), exit).FullName;
+        }
         _state.Delete(slot);
         var start = new ProcessStartInfo("/bin/sh")
         {

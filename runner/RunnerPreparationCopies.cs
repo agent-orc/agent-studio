@@ -237,15 +237,41 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
             : directory.FullName;
     }
 
-    private static string? ResolveExistingPrefix(string path)
+    private static IEnumerable<string> TraversedPaths(string path)
     {
-        // A binding or argument can name a cache subdirectory the tool has yet to create.
-        for (string? prefix = path; prefix is not null; prefix = Path.GetDirectoryName(prefix))
+        // A binding can depend on a copy even when a symlink inside it leads back out.
+        // Visit each component, including those expanded from symlink targets.
+        const int linuxSymlinkLimit = 40;
+        var directory = "/";
+        var links = 0;
+        while (path.Length > 0)
         {
-            if (RealPath(prefix, 0) is { } physical)
-                return physical;
+            path = path.TrimStart('/');
+            var separator = path.IndexOf('/');
+            var component = separator < 0 ? path : path[..separator];
+            path = separator < 0 ? "" : path[(separator + 1)..];
+            if (component is "" or ".") continue;
+            if (component == "..")
+            {
+                directory = Path.GetDirectoryName(directory) ?? "/";
+                continue;
+            }
+
+            var entry = Path.Combine(directory, component);
+            yield return entry;
+            if (new FileInfo(entry).LinkTarget is { } target)
+            {
+                if (++links > linuxSymlinkLimit) yield break;
+                if (target.StartsWith('/')) directory = "/";
+                path = path.Length == 0 ? target : target + "/" + path;
+                continue;
+            }
+
+            // A cache subdirectory may not exist yet. Its existing ancestors
+            // have already been checked.
+            if (path.Length > 0 && !Directory.Exists(entry)) yield break;
+            directory = entry;
         }
-        return null;
     }
 
     // A child can exec with a clean environment and keep its cwd, file descriptors
@@ -292,9 +318,8 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
     {
         foreach (var supplied in ProcessSuppliedPaths(process))
         {
-            var path = Path.GetFullPath(supplied);
-            yield return path;
-            if (ResolveExistingPrefix(supplied) is { } physical && physical != path) yield return physical;
+            yield return Path.GetFullPath(supplied);
+            foreach (var path in TraversedPaths(supplied)) yield return path;
         }
 
         if (new DirectoryInfo(Path.Combine(process, "cwd")).LinkTarget is { } cwd) yield return cwd;
