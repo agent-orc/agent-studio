@@ -29,12 +29,18 @@ post-merge receipt for that exact commit. History uses the operations deploy
 journal when available, with running-revision observations and instance deploy
 reports as the fallback. An observed revision has no measured deploy duration.
 
-The matrix includes declared targets and registered project URLs. Each URL
-uses the existing registry readiness probe. A successful response can identify
-its commit with an `X-Build-Commit` header or a `build-commit` or `git-commit`
-HTML meta tag in the first 32 KiB of the page. A declaration takes precedence
-over a URL with the same name. Expand the project count at the bottom to see
-the watched projects that have no target.
+The matrix includes declared targets and registered project URLs. For each URL
+it calls `GET /api/projects/{projectId}/urls/{urlId}/readiness?buildStamp=true`
+to show the deployed commit alongside reachability. On a 2xx response the probe
+first checks the `X-Build-Commit` header. If the header supplies no valid SHA,
+it checks the first 32 KiB of an HTML or XHTML page for a `build-commit` or
+`git-commit` meta tag in the head. The nullable `commit` response field contains
+the header or meta tag's SHA (7 to 40 hexadecimal digits) in lowercase.
+Omitting `buildStamp` skips stamp inspection. In that case, or if the probe
+cannot observe a valid stamp, `commit` is null even when the URL is reachable.
+
+A declaration takes precedence over a URL with the same name. Expand the
+project count at the bottom to see the watched projects that have no target.
 
 Card badges of the source project's cards then read
 `Production · live since <UTC time> · <version>`; badges of declared
