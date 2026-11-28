@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Magazine;
 using AgentStudio.Registry;
 using AgentStudio.Security;
@@ -100,6 +101,134 @@ public sealed class MagazineEndpointTests : IClassFixture<MagazineEndpointTests.
     }
 
     [Fact]
+    public async Task Scoped_reports_keep_editorial_scores_evidence_and_byline_in_each_revision()
+    {
+        var scope = "workspace:" + _host.AlphaWorkspaceId;
+        var securityPath = $"/api/magazine/{scope}/security-report";
+        var qualityPath = $"/api/magazine/{scope}/quality-report";
+        var security = Finding("access-review", 96);
+        var quality = Finding("merge-checks", 94);
+        var zero = Finding("routine-check", 0);
+        var tied = Finding("workspace-review", 96);
+        var otherFindings = Enumerable.Range(1, 5).Select(index => Finding($"sample-{index}", index));
+        Assert.Equal(HttpStatusCode.Created, (await _host.Send("PUT", securityPath,
+            Report("Security", "Security editor", [tied, zero, .. otherFindings, security]), _host.OwnerSession)).Status);
+        Assert.Equal(HttpStatusCode.Created, (await _host.Send("PUT", qualityPath,
+            Report("Quality", "Quality editor", [quality, Finding("review", 77), Finding("checks", 67)]), _host.OwnerSession)).Status);
+        var zeroPath = $"/api/magazine/{scope}/routine-report";
+        Assert.Equal(HttpStatusCode.Created, (await _host.Send("PUT", zeroPath,
+            Report("Routine", "Editor", [zero]), _host.OwnerSession)).Status);
+
+        var detail = await _host.Send("GET", securityPath, null, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.OK, detail.Status);
+        using (var json = JsonDocument.Parse(detail.Body))
+        {
+            var article = json.RootElement;
+            Assert.Equal(96, article.GetProperty("leadImportance").GetInt32());
+            var items = article.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(8, items.Length);
+            Assert.Equal(security.Id, items[0].GetProperty("id").GetString());
+            Assert.Equal(tied.Id, items[1].GetProperty("id").GetString());
+            Assert.Equal(security.Headline, items[0].GetProperty("headline").GetString());
+            Assert.Equal(security.HowDerived, items[0].GetProperty("howDerived").GetString());
+            Assert.Equal(security.Evidence, items[0].GetProperty("evidence").EnumerateArray().Select(entry => entry.GetString()));
+            Assert.Equal(security.Proposal, items[0].GetProperty("proposal").GetString());
+            Assert.True(items[0].GetProperty("needsOwner").GetBoolean());
+            Assert.Equal(0, items[^1].GetProperty("importance").GetInt32());
+            Assert.False(items[^1].GetProperty("needsOwner").GetBoolean());
+        }
+
+        foreach (var (path, score) in new[] { (qualityPath, 94), (zeroPath, 0) })
+        {
+            var reply = await _host.Send("GET", path, null, _host.OwnerSession);
+            Assert.Equal(HttpStatusCode.OK, reply.Status);
+            using var json = JsonDocument.Parse(reply.Body);
+            Assert.Equal(score, json.RootElement.GetProperty("leadImportance").GetInt32());
+        }
+
+        var updated = await _host.Send("PUT", securityPath,
+            Report("Security", "Second editor", [security with { Importance = 80 }]), _host.OwnerSession, ifMatch: detail.Etag);
+        Assert.Equal(HttpStatusCode.OK, updated.Status);
+        Assert.Equal("\"2\"", updated.Etag);
+        var current = await _host.Send("GET", securityPath, null, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.OK, current.Status);
+        using (var json = JsonDocument.Parse(current.Body))
+            Assert.Equal(80, json.RootElement.GetProperty("leadImportance").GetInt32());
+
+        var first = await _host.Send("GET", securityPath + "?revision=1", null, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.OK, first.Status);
+        Assert.Equal("\"2\"", first.Etag);
+        using (var json = JsonDocument.Parse(first.Body))
+        {
+            Assert.Equal(1, json.RootElement.GetProperty("revision").GetInt32());
+            Assert.Equal(2, json.RootElement.GetProperty("currentRevision").GetInt32());
+            Assert.Equal(96, json.RootElement.GetProperty("leadImportance").GetInt32());
+            Assert.Equal(96, json.RootElement.GetProperty("items")[0].GetProperty("importance").GetInt32());
+            Assert.Equal("Security editor", json.RootElement.GetProperty("author").GetProperty("persona").GetString());
+        }
+
+        var list = await _host.Send("GET", "/api/magazine?scope=" + scope, null, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.OK, list.Status);
+        using var listJson = JsonDocument.Parse(list.Body);
+        var rows = listJson.RootElement.GetProperty("articles").EnumerateArray()
+            .ToDictionary(row => row.GetProperty("slug").GetString()!);
+        Assert.Equal(80, rows["security-report"].GetProperty("leadImportance").GetInt32());
+        Assert.Equal(94, rows["quality-report"].GetProperty("leadImportance").GetInt32());
+        Assert.Equal(0, rows["routine-report"].GetProperty("leadImportance").GetInt32());
+        Assert.All(rows.Values, row =>
+        {
+            Assert.False(row.TryGetProperty("body", out _));
+            Assert.False(row.TryGetProperty("items", out _));
+        });
+    }
+
+    [Fact]
+    public async Task Invalid_editorial_items_return_typed_errors_without_appending_a_revision()
+    {
+        var path = $"/api/magazine/workspace:{_host.BetaWorkspaceId}/validation-report";
+        var item = Finding("sample", 100);
+        var report = Report("Sample", "Editor", [item]);
+        var created = await _host.Send("PUT", path, report, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.Created, created.Status);
+
+        var credential = string.Concat("gh", "p_", new string('a', 36));
+        var invalidReports = new (object Body, string Code)[]
+        {
+            (report with { Items = [item with { Importance = -1 }] }, "magazine-item-invalid"),
+            (report with { Items = [item with { Importance = 101 }] }, "magazine-item-invalid"),
+            (report with { Items = [item, item] }, "magazine-item-invalid"),
+            (report with { Items = Enumerable.Repeat(item, 9).ToArray() }, "magazine-items-too-many"),
+            (report with { Items = [item with { HowDerived = new string('x', 2001) }] }, "magazine-item-invalid"),
+            (report with { Items = [item with { Evidence = [new string('x', 1001)] }] }, "magazine-item-invalid"),
+            (report with { Items = [item with { Evidence = [credential] }] }, "magazine-credential-in-content"),
+        };
+        foreach (var (body, code) in invalidReports)
+        {
+            var refused = await _host.Send("PUT", path, body, _host.OwnerSession, ifMatch: created.Etag);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.Status);
+            Assert.Equal(code, Error(refused));
+            Assert.DoesNotContain(credential, refused.Body, StringComparison.Ordinal);
+        }
+        foreach (var score in new[] { "93.5", "93.0", "\"93\"", "null" })
+        {
+            var json = JsonSerializer.SerializeToNode(report, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            json["items"]![0]!["importance"] = JsonNode.Parse(score);
+            var refused = await _host.Send("PUT", path, json, _host.OwnerSession, ifMatch: created.Etag);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.Status);
+            Assert.Equal("magazine-request-invalid", Error(refused));
+        }
+
+        var history = await _host.Send("GET", path + "/history", null, _host.OwnerSession);
+        Assert.Equal(HttpStatusCode.OK, history.Status);
+        using var historyJson = JsonDocument.Parse(history.Body);
+        Assert.Equal(1, historyJson.RootElement.GetProperty("currentRevision").GetInt32());
+        Assert.Single(historyJson.RootElement.GetProperty("revisions").EnumerateArray());
+        var articleFolder = Path.Combine(_host.Workspace, MagazineStorePathPolicy.DirectoryName,
+            "workspace-" + _host.BetaWorkspaceId, "validation-report");
+        Assert.Single(Directory.GetFiles(Path.Combine(articleFolder, MagazineStore.RevisionFolderName), "*.json"));
+    }
+
+    [Fact]
     public async Task The_list_has_no_bodies_and_puts_pinned_articles_first_and_archived_ones_away()
     {
         var scope = "workspace:" + _host.AlphaWorkspaceId;
@@ -119,7 +248,11 @@ public sealed class MagazineEndpointTests : IClassFixture<MagazineEndpointTests.
         {
             var articles = json.RootElement.GetProperty("articles").EnumerateArray().ToList();
             Assert.Equal(["pinned", "newer", "older"], articles.Select(article => article.GetProperty("slug").GetString()));
-            Assert.All(articles, article => Assert.False(article.TryGetProperty("body", out _)));
+            Assert.All(articles, article =>
+            {
+                Assert.False(article.TryGetProperty("body", out _));
+                Assert.Equal(JsonValueKind.Null, article.GetProperty("leadImportance").ValueKind);
+            });
             Assert.Equal(1, articles[0].GetProperty("revision").GetInt32());
         }
         var withArchived = await _host.Send("GET", $"/api/magazine?scope={scope}&includeArchived=true", null, _host.OwnerSession);
@@ -231,6 +364,13 @@ public sealed class MagazineEndpointTests : IClassFixture<MagazineEndpointTests.
         Assert.Equal("if-match-invalid", Error(await _host.Send("PUT", $"/api/magazine/{_host.AlphaScope}/bad-etag",
             Article("T", "S.", "B"), _host.OwnerSession, ifMatch: "\"latest\"")));
     }
+
+    private static MagazineEditorialItem Finding(string id, int importance)
+        => new(id, "Synthetic finding", importance, "The change affects the next review.",
+            ["Two checks are pending.", "references/check-summary.txt"], "Review the pending checks.", importance > 90);
+
+    private static MagazineUpsertRequest Report(string title, string persona, IReadOnlyList<MagazineEditorialItem> items)
+        => new(title, "Synthetic report.", "## Findings\n", "report", persona, [new("card", "AGT-0001")], Items: items);
 
     private static object Article(string title, string summary, string body) => new
     {
