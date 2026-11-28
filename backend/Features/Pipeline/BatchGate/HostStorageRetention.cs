@@ -1,4 +1,5 @@
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
 
 namespace AgentStudio.Pipeline;
@@ -14,13 +15,46 @@ public static class HostStorageRetention
     /// Removes only idle, empty instances, allowing the origin metadata written
     /// by Prepare. Any other file is retained, including unreadable or unknown
     /// formats. Nonrecursive deletion refuses evidence written during the scan.
+    /// Only the resolved local state root can authorize instance cleanup.
     /// </summary>
     public static int SweepInstances(string currentRoot, DateTimeOffset now,
         int retentionDays, Action<string> log)
     {
-        currentRoot = Path.GetFullPath(currentRoot);
-        var instances = Path.GetDirectoryName(currentRoot)!;
-        if (!Directory.Exists(instances)) return 0;
+        currentRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(currentRoot));
+        var stateRoot = Path.TrimEndingDirectorySeparator(LocalStateRoot.Resolve());
+        var instances = Path.Combine(stateRoot, "agentstudio", "instances");
+        // Fail closed on any alternate spelling or location. A matching parent
+        // directory name does not establish ownership of its contents.
+        if (!string.Equals(Path.GetDirectoryName(currentRoot), instances, StringComparison.Ordinal))
+        {
+            log($"instance-retention-skipped path={currentRoot} reason=outside-instance-root");
+            return 0;
+        }
+        try
+        {
+            // Check from the configured root downward, before enumerating any
+            // siblings or accessing a child through a linked ancestor.
+            foreach (var directory in new[]
+                     { stateRoot, Path.Combine(stateRoot, "agentstudio"), instances, currentRoot })
+            {
+                var attributes = File.GetAttributes(directory);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    log($"instance-retention-skipped path={currentRoot} reason=linked-instance-root");
+                    return 0;
+                }
+                if ((attributes & FileAttributes.Directory) == 0)
+                {
+                    log($"instance-retention-skipped path={currentRoot} reason=unavailable-instance-root");
+                    return 0;
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            log($"instance-retention-skipped path={currentRoot} reason=unavailable-instance-root");
+            return 0;
+        }
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var removed = 0;
         var reported = 0;
@@ -153,10 +187,11 @@ public static class HostStorageRetention
             try { File.Delete(rotated); removed++; log($"rotated-log-retention deleted task={task.Key ?? task.Id}"); }
             catch (IOException error) { log($"rotated-log-retention kept task={task.Key ?? task.Id} error={error.Message}"); }
         }
-        // Only an instance-scoped store can authorize sibling cleanup. Legacy
-        // stores and test stores elsewhere do not own their parent directory.
-        var current = Directory.GetParent(Path.GetFullPath(store.StorageRoot));
-        if (current?.Parent?.Name == "instances")
+        // Only the normal store folder can authorize sibling cleanup.
+        // SweepInstances also verifies the resolved state root and its links.
+        var storage = new DirectoryInfo(Path.GetFullPath(store.StorageRoot));
+        if (string.Equals(storage.Name, "batch-gates", StringComparison.Ordinal)
+            && storage.Parent is { } current)
             removed += SweepInstances(current.FullName, now, InstanceRetentionDays, log);
         return removed;
     }

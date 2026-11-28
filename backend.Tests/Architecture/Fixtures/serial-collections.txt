@@ -67,3 +67,6 @@ member ProductStartupFixtureCollection ProductStartupFixtureTests
 # AGT-4236: benchmark the shared suite instance root without concurrent host starts.
 collection InstanceStartupMeasurementCollection measures instance siblings without concurrent host creation or cleanup
 member InstanceStartupMeasurementCollection BatchGateHostStartupCostTests
+
+collection InstanceRetentionCollection sweeps the process-wide suite state and temporarily replaces its ancestors with links; concurrent host fixtures must not access that state
+member InstanceRetentionCollection HostInstanceRetentionTests

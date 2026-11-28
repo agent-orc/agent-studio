@@ -378,7 +378,13 @@ Pending batches, nonterminal members, and isolation evidence references are
 kept.
 
 The same `HostStorageRetention` pass owns abandoned instance directories under
-`<local-state-root>/agentstudio/instances`. `InstanceRetentionDays` is 14 days.
+`<local-state-root>/agentstudio/instances`. Cleanup requires the store to be
+`batch-gates` directly below an identity in the exact instances directory
+resolved by `LocalStateRoot`; a directory named `instances` elsewhere does not
+authorize deletion. Links from the identity through the configured local state root disable
+instance cleanup.
+Rejected roots are logged before any sibling enumeration.
+`InstanceRetentionDays` is 14 days.
 It always keeps the current identity, every instance with a batch manifest,
 pending evidence, a persisted push reservation, or any unknown file. Only
 empty directories and the `batch-state-origin` metadata are eligible, and all

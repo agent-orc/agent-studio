@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using AgentStudio.Tasks;
 using AgentStudio.Review;
@@ -9,15 +10,25 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+[CollectionDefinition("Instance retention", DisableParallelization = true)]
+public sealed class InstanceRetentionCollection { }
+
+[Collection("Instance retention")]
 public sealed class HostInstanceRetentionTests
 {
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 27, 0, 0, 0, TimeSpan.Zero));
+
+    public HostInstanceRetentionTests()
+    {
+        Assert.StartsWith(TestTempRoot.SuiteRoot + Path.DirectorySeparatorChar,
+            LocalStateRoot.Resolve(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Sweep_keeps_current_manifest_pending_evidence_and_reservation_but_removes_old_empty_state()
     {
-        using var temp = new TempWorkspace("instance-retention");
+        using var state = new InstanceState();
         var now = _clock.GetUtcNow();
-        var instances = Path.Combine(temp.Path, "instances");
         var current = Create("current");
         var manifest = Create("manifest", "batch-gates/batch/manifest.json");
         var reservation = Create("reservation", "batch-push-reservations/project/push.pending");
@@ -48,7 +59,7 @@ public sealed class HostInstanceRetentionTests
 
         string Create(string name, string? file = null)
         {
-            var root = Path.Combine(instances, name);
+            var root = state.PathFor(name);
             Directory.CreateDirectory(root);
             if (file is not null)
             {
@@ -64,8 +75,9 @@ public sealed class HostInstanceRetentionTests
     public void Existing_host_retention_pass_also_sweeps_abandoned_instances()
     {
         using var temp = new TempWorkspace("host-retention-owner");
-        var current = Path.Combine(temp.Path, "instances", "current");
-        var abandoned = Path.Combine(temp.Path, "instances", "abandoned");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        var abandoned = state.PathFor("abandoned");
         Directory.CreateDirectory(current);
         Directory.CreateDirectory(abandoned);
         Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
@@ -89,13 +101,14 @@ public sealed class HostInstanceRetentionTests
     {
         if (OperatingSystem.IsWindows()) return;
         using var temp = new TempWorkspace("instance-retention-link");
-        var current = Path.Combine(temp.Path, "instances", "current");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
         Directory.CreateDirectory(current);
         var outside = Path.Combine(temp.Path, "outside");
         Directory.CreateDirectory(outside);
         File.WriteAllText(Path.Combine(outside, "evidence"), "retain");
-        Directory.CreateSymbolicLink(Path.Combine(temp.Path, "instances", "linked"), outside);
-        var old = Path.Combine(temp.Path, "instances", "old");
+        Directory.CreateSymbolicLink(state.PathFor("linked"), outside);
+        var old = state.PathFor("old");
         Directory.CreateDirectory(old);
         Directory.CreateSymbolicLink(Path.Combine(old, "linked"), outside);
         Directory.SetLastWriteTimeUtc(old, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
@@ -106,5 +119,134 @@ public sealed class HostInstanceRetentionTests
         Assert.True(File.Exists(Path.Combine(outside, "evidence")));
         Assert.True(Directory.Exists(old));
         Assert.Contains(messages, message => message.Contains("reason=linked-state", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("instances")]
+    [InlineData("agentstudio/instances")]
+    public void Foreign_store_cannot_authorize_cleanup_even_with_matching_directory_names(string relative)
+    {
+        using var temp = new TempWorkspace("foreign-instance-retention");
+        var instances = Path.Combine(temp.Path, relative);
+        var current = Path.Combine(instances, "current");
+        var abandoned = Path.Combine(instances, "abandoned");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(abandoned);
+        Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        var messages = new List<string>();
+
+        Assert.Equal(0, HostStorageRetention.SweepInstances(current, _clock.GetUtcNow(), 14, messages.Add));
+        Assert.True(Directory.Exists(abandoned));
+        Assert.Equal(0, SweepStore(Path.Combine(current, "batch-gates"), temp.Path, messages));
+        Assert.True(Directory.Exists(abandoned));
+        Assert.Contains(messages, message => message.Contains("reason=outside-instance-root", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_store_in_the_wrong_folder_of_the_current_instance_cannot_authorize_cleanup()
+    {
+        using var temp = new TempWorkspace("wrong-instance-store");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        var abandoned = state.PathFor("abandoned");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(abandoned);
+        Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+
+        Assert.Equal(0, SweepStore(Path.Combine(current, "custom-store"), temp.Path, []));
+        Assert.True(Directory.Exists(abandoned));
+    }
+
+    [Fact]
+    public void Linked_current_identity_cannot_authorize_sibling_cleanup()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var temp = new TempWorkspace("linked-current-retention");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        Directory.CreateSymbolicLink(current, temp.Path);
+        var abandoned = state.PathFor("abandoned");
+        Directory.CreateDirectory(abandoned);
+        Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        var messages = new List<string>();
+
+        Assert.Equal(0, HostStorageRetention.SweepInstances(current, _clock.GetUtcNow(), 14, messages.Add));
+        Assert.True(Directory.Exists(abandoned));
+        Assert.Contains(messages, message => message.Contains("reason=linked-instance-root", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("agentstudio")]
+    [InlineData("agentstudio/instances")]
+    public void Linked_state_ancestors_cannot_redirect_cleanup_outside_the_state_root(string relative)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var temp = new TempWorkspace("linked-instance-ancestor");
+        var linked = LocalStateRoot.Combine(relative);
+        var backup = Path.Combine(temp.Path, "original");
+        var target = Path.Combine(temp.Path, "foreign");
+        var suffix = Path.GetRelativePath(linked, LocalStateRoot.Combine("agentstudio", "instances"));
+        var current = Path.Combine(target, suffix, "current");
+        var abandoned = Path.Combine(target, suffix, "abandoned");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(abandoned);
+        Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        Directory.CreateDirectory(Path.GetDirectoryName(linked)!);
+        var hadOriginal = Directory.Exists(linked);
+        if (hadOriginal) Directory.Move(linked, backup);
+        try
+        {
+            Directory.CreateSymbolicLink(linked, target);
+            var messages = new List<string>();
+            var currentThroughLink = Path.Combine(linked, suffix, "current");
+
+            Assert.Equal(0, HostStorageRetention.SweepInstances(currentThroughLink,
+                _clock.GetUtcNow(), 14, messages.Add));
+            Assert.True(Directory.Exists(abandoned));
+            Assert.Contains(messages, message => message.Contains("reason=linked-instance-root", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (new DirectoryInfo(linked).LinkTarget is not null) Directory.Delete(linked);
+            if (hadOriginal) Directory.Move(backup, linked);
+        }
+    }
+
+    private int SweepStore(string store, string workspace, List<string> messages)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = workspace,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        return HostStorageRetention.Sweep(new BatchGateStore(store), scanner,
+            _clock.GetUtcNow(), 14, messages.Add);
+    }
+
+    // All paths are in the suite-owned state root. Running this collection
+    // alone also keeps retention scans away from concurrent host fixtures.
+    private sealed class InstanceState : IDisposable
+    {
+        private readonly string _prefix = "retention-" + Guid.NewGuid().ToString("N") + "-";
+        private readonly List<string> _paths = [];
+        public string Root { get; } = LocalStateRoot.Combine("agentstudio", "instances");
+
+        public string PathFor(string name)
+        {
+            Directory.CreateDirectory(Root);
+            var path = Path.Combine(Root, _prefix + name);
+            _paths.Add(path);
+            return path;
+        }
+
+        public void Dispose()
+        {
+            foreach (var path in _paths)
+            {
+                if (new DirectoryInfo(path).LinkTarget is not null) Directory.Delete(path);
+                else TestTempRoot.TryDelete(path);
+            }
+        }
     }
 }
