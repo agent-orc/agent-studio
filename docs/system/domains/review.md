@@ -1,34 +1,34 @@
 # Review Domain Map
 
-Acceptance checks the first-parent line after a delivery's verified tree. A
-later card's exact published merge with a verified `gate-not-applicable`
-integration record counts as a covered publication: the integration lane
-already applied the project's gate policy to that merge. The record must name
-the same project, branch, and first-parent SHA. Other uncovered commits still
-refuse acceptance. Their refusal names the source card when known, or the
-commit author, and omits batch diagnostics when the project has no batch gate.
-A passed full-suite gate on a later publication of the same branch also covers
-every earlier publication contained in its tested first-parent tree. Acceptance
-records the covering gate SHA and completion time in the card's completion
-evidence. A failed gate or a tested tree that does not contain the publication
-does not cover it. When a containing later batch gate is still running, the
-refusal says acceptance waits for that run. Otherwise the refusal explains the
-Owner or operator candidate-verification endpoint for the uncovered SHA.
+A code delivery can be accepted once a verified publication on the current
+integration branch's first-parent line contains its current result or its
+proven effective commits. The card's own integration verification can supply
+that proof. A later containing publication with a passing gate, a green
+post-merge run, or an authorized human candidate record can also supply it.
+Acceptance records the SHA of the receipt. Subsequent publications can have
+outstanding checks without reopening an earlier delivery. A branch rewrite
+that removes the evidence requires another containing verified publication.
 
-A server-authored document-key discovery commit is gate-neutral only when its
-first-parent diff changes existing `docs/**/workbench.json` descriptors solely
-by adding `key`. A server-authored Dossier decision-receipt commit
-(`chore(workbench): request revision for|record decision for|archive <id>`)
-is gate-neutral only when it modifies exactly one `docs/**/workbench.json`,
-adds a `decision` receipt object, only appends to `lifecycleHistory` and
-`relatedTaskKeys`, and changes no descriptor value outside the receipt and its
-lifecycle bookkeeping (`lifecycleState`, `status`, `editedBy`, `editedAt`,
-`updatedAt`; AGT-3703). New managed commits carry an operation trailer
-(`Agent-Studio-Operation: workbench-key-discovery` or `workbench-decision`);
-legacy commits require the Agent Studio author and committer identity.
-Acceptance records the inspected commit SHA in the card's completion evidence
-as a gate-neutral Dossier descriptor commit. Every other later commit still
-needs a passed gate.
+A managed commit that assigns Dossier keys or records a Dossier decision can
+inherit the receipt for its parent. Studio checks the operation and the
+first-parent diff, including the descriptor values and append-only history.
+This includes the `chore(dossier): accept concept` lifecycle write. Other
+managed writes can inherit when every changed path is covered by the parent
+commit's `delivery.verificationNeutralPaths` in `.agent-studio/project.yml`.
+Each entry names an exact repository-relative file or a directory prefix ending
+in `/`. Declare only paths outside the build and test inputs. The default is
+empty. A change to the execution definition or another global build input
+requires its own evidence. Each step through a chain of managed writes must
+qualify. The completion evidence identifies the inherited receipt and the
+intervening commits.
+
+An integrated delivery awaiting evidence names the published tip an owner can
+verify. When the post-merge window for that tip reports an admission wait,
+the card and Needs you show when the wait was first observed on that tip,
+the elapsed time and the cause. Subsequent observations preserve the wait start. Recording a candidate
+verification requires an authorized human identity with workspace operation
+scope. The existing post-merge run authority continues to report its own runs.
+
 Batch candidates and direct integration merges assign keys to descriptors
 changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated

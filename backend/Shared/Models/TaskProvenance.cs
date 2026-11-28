@@ -320,6 +320,10 @@ public record TaskIntegrationStatus
     [System.Text.Json.Serialization.JsonIgnore]
     public bool? CurrentResultReleased { get; init; }
 
+    /// <summary>Published equivalents of the current review result proven by mapping or net-change provenance.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal IReadOnlyList<string> PublishedResultShas { get; init; } = [];
+
     /// <summary>Release branch the <see cref="Released"/> rollup was computed against.</summary>
     public string ReleaseBranch { get; init; } = "main";
 
@@ -360,13 +364,11 @@ public sealed record TaskIntegrationVerification
     public string? Reason { get; init; }
 
     /// <summary>
-    /// AGT-3753 - the first later first-parent commit no gate source counts,
-    /// as short SHA and subject, when acceptance turned a verified delivery
-    /// into unverified. <see cref="Reason"/> says why each source did not count it.
+    /// Published tip an owner can verify to clear a receipt refusal.
     /// </summary>
     public string? UncoveredPublication { get; init; }
 
-    /// <summary>Later server document-key commits inspected as gate-neutral at acceptance.</summary>
+    /// <summary>Managed commits between this delivery and the receipt it inherits, newest first.</summary>
     public IReadOnlyList<string> GateNeutralCommits { get; init; } = [];
 }
 

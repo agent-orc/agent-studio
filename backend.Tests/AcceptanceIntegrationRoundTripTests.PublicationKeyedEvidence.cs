@@ -21,14 +21,13 @@ public sealed partial class AcceptanceIntegrationRoundTripTests
         var second = PublishLaterCommit("three-publications-2.txt");
         var third = PublishLaterCommit("three-publications-3.txt");
         // The AGT-3243 shape: the third push recorded the second tree under its own published SHA.
-        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(first, "AGT-THREE")));
         Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
             PassedPublishedGate(second, "AGT-THREE") with { PublishedSha = third }));
-        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(third, "AGT-THREE")));
-        var service = Service(deps, new BatchGateStore(Path.Combine(_tempDir, "three-publications-gates")), deliverySha);
-        Assert.Contains($"names published SHA {third}, not this tree",
-            service.BuildForAcceptance(card).Verification?.Reason);
+        var service = deps.Integration;
+        Assert.Equal(IntegrationVerificationStates.Unverified, service.BuildForAcceptance(card).Verification?.State);
 
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(first, "AGT-THREE")));
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(third, "AGT-THREE")));
         Assert.True(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(second, "AGT-THREE")));
         Assert.False(PublishedGateEvidenceStore.Append(_watchPath, PassedPublishedGate(third, "AGT-THREE")));
 

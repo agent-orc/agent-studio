@@ -8,6 +8,9 @@ using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using AgentStudio.Pipeline;
+using ProjectPreparationPaths = AgentStudio.TaskServer.Contracts.ProjectPreparationPaths;
+using ProjectTestSelectionPolicy = AgentStudio.TaskServer.Contracts.ProjectTestSelectionPolicy;
+using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefinitionReader;
 
 namespace AgentStudio.Git;
 
@@ -5085,6 +5088,53 @@ public partial class GitService
         }
     }
 
+    internal bool IsVerificationNeutralCommit(string root, string sha, string parent)
+    {
+        if (IsManagedDocumentKeyCommit(root, sha, parent) || IsManagedDecisionReceiptCommit(root, sha, parent))
+            return true;
+        var paths = ManagedDescriptorCommitPaths(root, sha, parent,
+            subject => subject.StartsWith("chore(dossier): accept concept ", StringComparison.Ordinal),
+            ManagedRepositoryMutationService.ConceptAcceptanceTrailer);
+        if (paths is [var descriptor] && IsConceptAcceptance(root, sha, parent, descriptor)) return true;
+
+        var yaml = GetFileAtCommit(root, parent, ProjectPreparationPaths.Definition);
+        if (yaml is null || ProjectDefinitionReader.Parse(yaml).Definition is not { VerificationNeutralPaths.Count: > 0 } definition)
+            return false;
+        if (!IsManagedCommit(root, sha, parent, _ => true, null)) return false;
+        var (output, _, code) = RunGitArgs(root, "diff-tree", "-r", "--no-renames", "--name-only", "-z", parent, sha);
+        var changed = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        return code == 0 && changed.Length > 0 && changed.All(path =>
+            !ProjectTestSelectionPolicy.IsGlobalInput(path)
+            && !definition.TestSelection.Concat(definition.IntegrationBuild)
+                .Any(area => area.Paths.Any(input => ProjectTestSelectionPolicy.Matches(path, input)))
+            && definition.VerificationNeutralPaths.Any(prefix =>
+                prefix.EndsWith('/') ? path.StartsWith(prefix, StringComparison.Ordinal) : path == prefix));
+    }
+
+    private bool IsConceptAcceptance(string root, string sha, string parent, string path)
+    {
+        try
+        {
+            if (JsonNode.Parse(GetFileAtCommit(root, parent, path) ?? "null") is not JsonObject before
+                || JsonNode.Parse(GetFileAtCommit(root, sha, path) ?? "null") is not JsonObject after) return false;
+            var modern = (before["schemaVersion"]?.GetValue<int>() ?? 1) >= 2;
+            var state = modern ? "lifecycleState" : "status";
+            if (after[state]?.GetValue<string>() != "decided" || before[state]?.GetValue<string>() == "decided"
+                || !GrowsOnly(before["lifecycleHistory"], after["lifecycleHistory"])) return false;
+            foreach (var member in modern ? new[] { state, "editedBy", "editedAt", "lifecycleHistory" }
+                         : new[] { state, "editedBy", "updatedAt" })
+            {
+                before.Remove(member);
+                after.Remove(member);
+            }
+            return JsonNode.DeepEquals(before, after);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The new array keeps every old element in order and only appends.</summary>
     private static bool GrowsOnly(JsonNode? before, JsonNode? after)
     {
@@ -5096,6 +5146,26 @@ public partial class GitService
         return true;
     }
 
+    private bool IsManagedCommit(string repoRoot, string sha, string parentSha, Func<string, bool> subjectMatches, string? trailer)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)
+            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
+        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
+        if (metadataCode != 0) return false;
+        var fields = metadata.Trim().Split('\x1f');
+        const string serverEmail = "agent-studio@users.noreply.github.com";
+        if (fields.Length != 5 || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
+            || !subjectMatches(fields[1])) return false;
+        if (fields[2] == serverEmail && fields[3] == serverEmail) return true;
+        var lines = fields[4].Split('\n', StringSplitOptions.TrimEntries);
+        return trailer is not null ? lines.Contains(trailer, StringComparer.Ordinal)
+            : lines.Any(line => line is ManagedRepositoryMutationService.ManagedWriteTrailer
+                or ManagedRepositoryMutationService.ConceptAcceptanceTrailer
+                or ManagedRepositoryMutationService.DocumentKeyCommitTrailer
+                or ManagedRepositoryMutationService.DecisionReceiptCommitTrailer);
+    }
+
     /// <summary>
     /// The shared metadata check of the managed descriptor rules: one parent,
     /// the expected subject, the server identity or the operation trailer, and
@@ -5105,19 +5175,7 @@ public partial class GitService
     private IReadOnlyList<string>? ManagedDescriptorCommitPaths(
         string repoRoot, string sha, string parentSha, Func<string, bool> subjectMatches, string trailer)
     {
-        if (!ReviewSubjectStore.IsValidResultSha(sha)
-            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return null;
-        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
-            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
-        if (metadataCode != 0) return null;
-        var fields = metadata.Trim().Split('\x1f');
-        const string serverEmail = "agent-studio@users.noreply.github.com";
-        if (fields.Length != 5
-            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
-            || !subjectMatches(fields[1])
-            || !((fields[2] == serverEmail && fields[3] == serverEmail)
-                || fields[4].Split('\n').Any(line => line.Trim() == trailer))) return null;
-
+        if (!IsManagedCommit(repoRoot, sha, parentSha, subjectMatches, trailer)) return null;
         var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
             "-r", "-z", parentSha, sha);
         if (changeCode != 0) return null;

@@ -294,6 +294,8 @@ public sealed record ProjectExecutionDefinition(
     public IReadOnlyList<ProjectTestSelectionArea> TestSelection { get; init; } = [];
     /// <summary>Optional path-scoped build and preparation commands for integration compile checks only.</summary>
     public IReadOnlyList<ProjectTestSelectionArea> IntegrationBuild { get; init; } = [];
+    /// <summary>Exact paths or directory prefixes outside this project's build and test inputs.</summary>
+    public IReadOnlyList<string> VerificationNeutralPaths { get; init; } = [];
     public string? DeliveryFullSuite { get; init; }
 
     /// <summary>
@@ -405,7 +407,7 @@ public static partial class ProjectDefinitionReader
         var quality = Quality(lines, issues);
         var deliveryLines = Section(lines, "delivery");
         foreach (var line in deliveryLines.Where(line => line.Indent == 2))
-            if (KeyValue(line.Text).Key is not ("fullSuite" or "deployAfterGreenWindow"))
+            if (KeyValue(line.Text).Key is not ("fullSuite" or "deployAfterGreenWindow" or "verificationNeutralPaths"))
                 issues.Add(new("delivery", "unknown-field", "Delivery contains an unsupported field."));
         var fullSuite = NestedScalar(lines, "delivery", "fullSuite");
         if (fullSuite is not null && fullSuite is not ("required" or "optional" or "off"))
@@ -428,6 +430,7 @@ public static partial class ProjectDefinitionReader
             Structure = structure,
             TestSelection = ParseTestSelection(lines, issues),
             IntegrationBuild = ParseTestSelection(lines, issues, "integrationBuild"),
+            VerificationNeutralPaths = NestedStringList(lines, "delivery", "verificationNeutralPaths"),
             DeliveryFullSuite = fullSuite,
             DeliveryDeployAfterGreenWindow = deployAfterGreenWindow == "true",
         };
@@ -1003,6 +1006,10 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"testSuites[{index}].command", "suite-command-required", "A test suite command is required."));
         }
 
+        foreach (var path in definition.VerificationNeutralPaths)
+            if (!SafeRelativePath(path.TrimEnd('/')) || path.Contains('\\') || path.Split('/').Contains("."))
+                issues.Add(new("delivery.verificationNeutralPaths", "neutral-path-invalid",
+                    "Verification-neutral paths must be repository-relative files or directory prefixes."));
         foreach (var path in definition.CachePaths.Where(path => !SafeRelativePath(path)))
             issues.Add(new("cachePaths", "cache-path-invalid", $"Cache path '{path}' must be repository-relative without traversal."));
         foreach (var entry in definition.Environment)

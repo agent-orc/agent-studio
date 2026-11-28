@@ -16,7 +16,9 @@ internal sealed class GitAncestryGraph
     private readonly ConcurrentDictionary<string, HashSet<string>> _treeAncestors =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private GitAncestryGraph(IReadOnlyList<(string Sha, string[] Parents)> rows)
+    private readonly HashSet<string> _publications = new(StringComparer.OrdinalIgnoreCase);
+
+    private GitAncestryGraph(string tip, IReadOnlyList<(string Sha, string[] Parents)> rows)
     {
         _parents = rows.ToDictionary(row => row.Sha, row => row.Parents, StringComparer.OrdinalIgnoreCase);
         // rev-list --topo-order emits children before parents. Reverse that
@@ -27,10 +29,18 @@ internal sealed class GitAncestryGraph
             generations[sha] = ancestors.Length == 0 ? 1
                 : 1 + ancestors.Max(parent => generations.GetValueOrDefault(parent));
         _generation = generations;
+        var commit = tip;
+        while (_parents.TryGetValue(commit, out var parents) && _publications.Add(commit) && parents.Length > 0)
+            commit = parents[0];
     }
 
     internal static GitAncestryGraph Read(string root, string tip)
-        => new(GitFactCommands.RevListParents(root, tip));
+        => new(tip, GitFactCommands.RevListParents(root, tip));
+
+    internal bool IsPublication(string sha) => _publications.Contains(sha);
+
+    internal string? SingleParent(string sha)
+        => _parents.TryGetValue(sha, out var parents) && parents.Length == 1 ? parents[0] : null;
 
     internal bool IsAncestor(string ancestor, string tree)
     {
