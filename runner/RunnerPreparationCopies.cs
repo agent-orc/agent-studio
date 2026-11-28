@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -206,22 +207,41 @@ internal sealed class RunnerPreparationCopies(RunnerOptions options, RunnerState
         return bytes;
     }
 
+    // On Linux realpath(path, NULL) resolves all symlinked ancestors. The string
+    // return marshaller copies and frees the buffer allocated by libc.
+    [DllImport("libc", EntryPoint = "realpath")]
+    [return: MarshalAs(UnmanagedType.LPUTF8Str)]
+    private static extern string? RealPath([MarshalAs(UnmanagedType.LPUTF8Str)] string path, nint buffer);
+
     // A child can exec with a clean environment and keep its cwd, file descriptors
     // or mapped package files. Read procfs once per batch and retain only copy roots.
     private static HashSet<string> ProcessReferences(string[] candidates)
     {
         var referenced = new HashSet<string>(Paths);
         if (!OperatingSystem.IsLinux()) return referenced;
+        // argv and environ can use the configured spelling. Kernel links use the physical path.
+        var spellings = new List<(string Prefix, string Root)>();
+        foreach (var root in candidates)
+        {
+            var physical = RealPath(root, 0);
+            if (physical is null)
+            {
+                referenced.Add(root); // Retry when we can check the physical path.
+                continue;
+            }
+            spellings.Add((root, root));
+            if (physical != root) spellings.Add((physical, root));
+        }
         foreach (var process in Directory.EnumerateDirectories("/proc"))
         {
             if (!int.TryParse(Path.GetFileName(process), out _)) continue;
             foreach (var path in ProcessPaths(process))
             {
                 if (!path.Contains(LinuxRunsSegment, StringComparison.Ordinal)) continue;
-                foreach (var root in candidates)
+                foreach (var (prefix, root) in spellings)
                 {
-                    if (path.StartsWith(root, StringComparison.Ordinal)
-                        && (path.Length == root.Length || path[root.Length] == '/'))
+                    if (path.StartsWith(prefix, StringComparison.Ordinal)
+                        && (path.Length == prefix.Length || path[prefix.Length] == '/'))
                         referenced.Add(root);
                 }
                 if (referenced.Count == candidates.Length) return referenced;

@@ -177,7 +177,9 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
     {
         PlatformGate.LinuxOnly("inspects a live child's procfs links");
         var slot = Claim();
-        var path = Prepare(slot, 21);
+        Prepare(slot, 21);
+        var workAlias = Directory.CreateSymbolicLink(Path.Combine(_work, "alias"), ".").FullName;
+        var path = RunnerPreparationCopies.RootFor(workAlias, slot)!;
         _state.Delete(slot);
         var start = new ProcessStartInfo("/bin/sh")
         {
@@ -201,16 +203,16 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         {
             await child.StandardInput.WriteLineAsync(path);
             Assert.Equal("ready", await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)));
-            RunnerPreparationCopies.Release(_work, slot, _ => { });
+            RunnerPreparationCopies.Release(workAlias, slot, _ => { });
             Assert.True(File.Exists(Path.Combine(path, "package")));
-            Assert.Equal(21, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 0, true, _ => { }));
+            Assert.Equal(21, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 0, true, _ => { }));
         }
         finally
         {
             child.StandardInput.Close();
             await child.WaitForExitAsync();
         }
-        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
+        Assert.Equal(0, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 100, false, _ => { }));
         Assert.False(Directory.Exists(path));
     }
 
