@@ -28,7 +28,7 @@ export interface LiveFact {
   tone?: 'success' | 'warning' | 'danger' | 'muted';
   /** 0 to 1: drawn as a meter between label and value. */
   meter?: number;
-  cells?: { busy: number; total: number };
+  cells?: { busy: number; total: number; held?: number | null };
   /** Drawn as a tinted band across the node (a warning in words). */
   band?: boolean;
   observed: boolean;
@@ -87,18 +87,49 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     if (inside) add(2, 'warnings', 'inside', 'warnings', [`${inside} inside`, String(inside)], { tone: 'warning' });
   }
 
+  const readings = node.source?.facts;
+  const stamp = readings?.sample;
+  if (stamp && now && Date.parse(stamp.freshUntil) < Date.parse(now))
+    add(2, null, 'freshness', 'stale sample', [`${ago(stamp.observedAt, now)} ago`], { tone: 'warning' });
+  const capacity = readings?.capacity;
+  if (capacity?.queueLength != null) add(2, 'perf', 'queue', 'queued', [String(capacity.queueLength)]);
+  else if (capacity) missing(3, 'perf', 'queue', 'queued', 'A runner queue sample is needed.');
+  const api = readings?.api;
+  if (api?.requestsPerSecond != null) add(2, 'perf', 'requests', 'traffic', [`${api.requestsPerSecond.toFixed(1)} req/s`]);
+  else if (api || node.source?.role === 'web') missing(3, 'perf', 'requests', 'requests/s', 'Requires a request counter sampled over time.');
+  if (api?.sample && now && Date.parse(api.sample.freshUntil) < Date.parse(now))
+    add(2, 'perf', 'api-age', 'stale API sample', [ago(api.sample.observedAt, now) + ' ago'], { tone: 'warning' });
+  const resource = readings?.resources ?? readings?.container?.resources;
+  if (resource?.cpuCoresUsed != null) add(2, 'perf', 'core-use', 'CPU use', [`${resource.cpuCoresUsed.toFixed(2)} cores`]);
+  if (resource?.cpuUsageMicroseconds != null) add(3, 'perf', 'cpu-time', 'CPU time', [`${(resource.cpuUsageMicroseconds / 1e6).toFixed(1)} s`]);
+  for (const [index, worker] of (readings?.workers ?? []).entries()) {
+    const usage = worker.resources;
+    add(4, 'perf', `worker:${index}`, worker.cardKey ?? 'Worker', [usage?.memoryBytes != null ? size(usage.memoryBytes) : usage?.cpuUsageMicroseconds != null ? `${(usage.cpuUsageMicroseconds / 1e6).toFixed(1)} CPU s` : 'worker reported']);
+  }
+  if (node.kind === 'external' && ['codex', 'claude'].includes(node.source?.role ?? '') && !readings?.weeklyWindows?.length)
+    missing(3, 'perf', 'weekly-window', 'weekly window', 'Requires a subscription usage sample with its weekly reset.');
+  const device = readings?.device;
+  if (device?.sizeBytes != null) add(2, 'storage', 'device', device.raidLevel ?? 'device size', [gib(device.sizeBytes)]);
+  if (device?.members.length) add(3, 'storage', 'members', 'members', [device.members.join(', ')]);
+  for (const [index, window] of (readings?.weeklyWindows ?? []).entries()) {
+    if (window.usedPercent != null) add(2, 'perf', `window:${index}`, window.label, [`${window.usedPercent}% used`], { meter: window.usedPercent / 100 });
+    if (now && Date.parse(window.sample.freshUntil) < Date.parse(now))
+      add(2, 'perf', 'stale-window:' + index, window.label + ' stale', [ago(window.sample.observedAt, now) + ' ago'], { tone: 'warning' });
+    if (window.resetAt) add(3, 'perf', `reset:${index}`, 'resets', [clock(window.resetAt)]);
+  }
   // Performance: meters and slot cells.
   if (runs) {
     if (perf?.cpu != null) add(2, 'perf', 'cpu', 'cpu', [perf.cores ? `${percent(perf.cpu)} of ${perf.cores} cores` : null, percent(perf.cpu)], { meter: perf.cpu });
     else missing(2, 'perf', 'cpu', 'cpu');
-    if (perf?.memUsed != null) add(2, 'perf', 'memory', 'memory', [perf.memTotal ? `${gib(perf.memUsed)} of ${gib(perf.memTotal)}` : null, gib(perf.memUsed)],
+    if (perf?.memUsed != null) add(2, 'perf', 'memory', 'memory', [perf.memTotal ? `${gib(perf.memUsed)} of ${gib(perf.memTotal)}` : null, size(perf.memUsed)],
       perf.memTotal ? { meter: perf.memUsed / perf.memTotal } : {});
+    else if (perf?.memTotal != null) add(2, 'perf', 'memory', 'installed memory', [gib(perf.memTotal)]);
     else missing(2, 'perf', 'memory', 'memory');
   }
   if (node.slots) {
     const { busy, total } = node.slots;
     add(2, 'perf', 'slots', 'slots', total != null ? [`${busy} of ${total} in use`, `${busy}/${total}`] : [`${busy} in use`, String(busy)],
-      total != null && total <= 24 ? { cells: { busy, total } } : {});
+      total != null && total <= 64 ? { cells: { busy, total, held: node.source?.facts?.capacity?.heldSlots } } : {});
   } else if (reporting) missing(2, 'perf', 'slots', 'slots', 'collect');
   if (perf?.load) add(3, 'perf', 'load', 'load', [perf.load.map(value => value.toFixed(2)).join(' · '), perf.load[0].toFixed(2)]);
   else if (reporting || node.kind === 'machine') missing(3, 'perf', 'load', 'load');
@@ -167,7 +198,7 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
   // What runs here, and the container level: state, image and version, restarts, uptime, current job, last deploy.
   if (isFrame(node)) add(2, null, 'runs', 'runs', [runsHere(node).join(' · '), runsHere(node)[0]]);
   // Every node says how it is, or that nobody looks: from the container level on no node is a bare box.
-  const seenAt = node.source?.facts?.lastSeenAt ?? node.source?.observation?.observedAt ?? null;
+  const seenAt = readings?.lastSeenAt ?? stamp?.observedAt ?? node.source?.observation?.observedAt ?? null;
   const tone = node.health.tone === 'success' || node.health.tone === 'warning' || node.health.tone === 'danger' ? { tone: node.health.tone } : {};
   if (node.kind === 'disk') {
     if (node.disks.length) add(3, null, 'status', 'reported', [`${node.disks.length} ${node.disks.length === 1 ? 'disk' : 'disks'} · ${node.locations.length} data locations`, `${node.disks.length} ${node.disks.length === 1 ? 'disk' : 'disks'}`]);
@@ -187,7 +218,7 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     }) : [{ runner: node.runner, source: node.source, prefix: '', label: '' }];
     if (multiple) add(3, null, 'runners', 'runners', [reports.map(report => report.label.trim()).join(' · ')]);
     for (const { runner, source, prefix, label } of reports) {
-      const image = runner?.release?.imageRef ?? (!multiple && node.version && isDigest(node.version) ? `sha256:${shortDigest(node.version)}` : null);
+      const image = source?.facts?.container?.imageTag ?? runner?.release?.imageRef ?? (!multiple && node.version && isDigest(node.version) ? `sha256:${shortDigest(node.version)}` : null);
       if (image) add(3, null, `${prefix}image`, `${label}image`, [image, image.split('/').at(-1), image.split('@')[0].split('/').at(-1)]);
       else if (multiple || node.kind === 'container') missing(3, null, `${prefix}image`, `${label}image`, 'No image name or tag is reported for this runner or container.');
       const version = multiple ? runner?.release?.version ?? null
@@ -196,12 +227,13 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
       if (version) add(3, null, `${prefix}version`, `${label}version`, [release?.stableVersion && release.stableVersion !== version
         ? `${version} · stable ${release.stableVersion}` : null, version], release?.behind ? { tone: 'warning' } : {});
       else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}version`, `${label}version`, reporting ? 'collect' : 'No version is reported for this node.');
-      const restarts = /restarts:\s*(\d+)/.exec(source?.observation?.detail ?? '')?.[1];
+      const restarts = source?.facts?.container?.restarts?.toString() ?? /restarts:\s*(\d+)/.exec(source?.observation?.detail ?? '')?.[1];
       if (runner?.reviewRestarts) add(3, null, `${prefix}restarts`, `${label}restarts`, [`${runner.reviewRestarts.length} of the review daemon`, String(runner.reviewRestarts.length)]);
       else if (restarts) add(3, null, `${prefix}restarts`, `${label}restarts`, [restarts]);
       else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}restarts`, `${label}restarts`, 'Restart counts are collected for the review daemon of a runner only.');
       const since = runner?.restartedAt ?? runner?.registeredAt ?? null;
-      if (since) add(3, null, `${prefix}uptime`, `${label}uptime`, [`${ago(since, now)} · since ${clock(since)}`, ago(since, now)]);
+      if (source?.facts?.container?.uptimeSeconds != null) add(3, null, `${prefix}uptime`, `${label}uptime`, [`${Math.round(source.facts.container.uptimeSeconds / 60)} min`]);
+      else if (since) add(3, null, `${prefix}uptime`, `${label}uptime`, [`${ago(since, now)} · since ${clock(since)}`, ago(since, now)]);
       else if (multiple || node.kind !== 'machine') missing(3, null, `${prefix}uptime`, `${label}uptime`, 'Start times are known for runner processes only.');
     }
     const cards = node.slots?.cards ?? [];
@@ -210,8 +242,6 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     else if (node.slots && node.slots.busy === 0) add(3, null, 'job', 'current job', ['idle']);
     else if (node.kind !== 'machine') missing(3, null, 'job', 'current job', reporting ? 'collect' : 'Running cards are reported by runner and gate hosts only.');
     if (node.kind !== 'machine') missing(3, null, 'deploy', 'last deploy', 'Deploys are recorded per project environment, not per node.');
-    const seen = node.source?.facts?.lastSeenAt ?? node.source?.observation?.observedAt;
-    if (seen) add(4, null, 'seen', 'last report', [`${ago(seen, now)} ago`]);
     for (const { runner, prefix, label } of reports) {
       const events = runner?.reviewRestarts ?? [];
       events.slice(0, 3).forEach((event, index) => add(4, null, `${prefix}event:${index}`, `${label}${clock(event.restartedAt)}`,
@@ -220,6 +250,8 @@ export function nodeFacts(node: LiveNode, scene: LiveScene): LiveFact[] {
     }
     missing(4, null, 'log', 'log lines', 'Log lines are not collected in the workspace picture.');
   }
+
+  if (seenAt) add(4, null, 'seen', 'last report', [ago(seenAt, now) + ' ago']);
 
   // Card details only: how the Studio knows the node.
   add(5, null, 'technical', 'reported name', [node.technical]);
@@ -239,7 +271,7 @@ function installationFacts(scene: LiveScene): LiveFact[] {
     facts.push({ key, level: 5, layer, label, values: [value], observed: tone !== 'muted', ...(tone ? { tone } : {}) });
   };
   const { totals, backup } = scene;
-  add('perf', 'slots', 'slots in use', totals.totalSlots ? `${totals.busySlots} of ${totals.totalSlots}` : NOT_OBSERVED, totals.totalSlots ? undefined : 'muted');
+  add('perf', 'slots', 'slots in use', totals.totalSlots ? `${totals.busySlots} of ${scene.partialCapacity ? 'at least ' : ''}${totals.totalSlots}` : NOT_OBSERVED, totals.totalSlots ? undefined : 'muted');
   add('perf', 'reporting', 'hosts reporting', String(totals.reporting));
   const links = scene.links.filter(link => link.layer === 'network');
   const down = links.filter(link => link.health.tone === 'danger').length, up = links.filter(link => link.health.tone === 'success').length;

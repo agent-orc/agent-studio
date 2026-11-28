@@ -27,7 +27,8 @@
       <p class="details__kind"><app-live-glyph [name]="subject().kind" />{{ kindLabel[subject().kind] }}</p>
       <h2 class="details__name" data-testid="live-details-name">{{ subject().name }}</h2>
       @if (!isRoot()) { <p class="details__path">{{ path() }} · {{ subject().role }}</p> }
-      <app-status-indicator [tone]="subject().health.tone" [label]="subject().health.word" [detail]="subject().health.detail" testId="live-details-health" />
+      @if (isRoot()) { <p class="details__path" data-testid="installation-summary">{{ summary() }}</p> } @else {
+      <app-status-indicator [tone]="subject().health.tone" [label]="subject().health.word" [detail]="subject().health.detail" testId="live-details-health" /> }
       @if (!isRoot()) { <button type="button" class="details__close" aria-label="Close details" data-testid="live-details-close" (click)="closed.emit()"><app-studio-icon name="close" [size]="14" /></button> }
     </header>
     @if (isRoot()) {
@@ -45,6 +46,35 @@
         }
       </div>
     }
+    @if (isRoot()) {
+      <section class="details__section">
+        <h3 class="details__title">Trends</h3>
+        @for (trend of trends(); track trend.label) {
+          <div class="details__trend"><span>{{ trend.label }}</span>
+            @if (trend.path) { <svg viewBox="0 0 100 24" aria-hidden="true"><path [attr.d]="trend.path" /></svg> }
+            <span>{{ trend.value ?? 'not observed' }}</span>
+          </div>
+        }
+        @if (scene().queued === null) { <small class="details__why">Queue depth needs an API queue sample.</small> }
+      </section>
+      <section class="details__section">
+        <h3 class="details__title">Activity</h3>
+        @for (event of scene().history?.events; track $index) {
+          <p class="details__trend"><span>{{ event.subject }} · {{ event.kind }}</span><small>{{ age(event.observedAt) }} ago</small></p>
+        } @empty { <p class="details__note">Not observed. Requires retained task events.</p> }
+      </section>
+    } @else if (slotCells().length) {
+      <section class="details__section">
+        <h3 class="details__title">{{ subject().slots?.busy }} / {{ subject().slots?.total ?? '?' }} slots</h3>
+        <div class="details__slots">
+          @for (slot of slotCells(); track $index) {
+            @if (slot.card; as card) {
+              <button type="button" class="btn" data-slot="In use" (click)="openCard.emit(card)"><i></i>{{ card }}</button>
+            } @else { <span [attr.data-slot]="slot.state"><i></i>{{ slot.state }}</span> }
+          }
+        </div>
+      </section>
+    }
     @for (section of sections(); track section.layer) {
       <section class="details__section" [attr.data-layer]="section.layer" [attr.data-testid]="'live-details-' + section.layer">
         <h3 class="details__title"><app-live-glyph [name]="section.layer" />{{ section.title }}
@@ -52,7 +82,7 @@
         @for (warning of section.warnings; track warning.id) {
           <div class="details__warning" [attr.data-severity]="warning.tone">
             <button type="button" class="details__warning-title" (click)="choose.emit(warning.node.id)">{{ warning.title }}</button>
-            @if (isRoot()) { <p class="details__warning-where">{{ warning.node.name }}</p> }
+            @if (isRoot()) { <p class="details__warning-where">{{ warning.node.name }} · onset not observed</p> }
             <p class="details__warning-text">{{ warning.detail }}</p>
           </div>
         }
@@ -79,7 +109,7 @@
           <ul class="details__rows">
             @for (link of section.links; track link.id) {
               <li><button type="button" class="details__row" [attr.data-link]="link.id" (click)="chooseLink.emit(link.id)">
-                <span class="details__row-name">{{ link.name }}<small>{{ link.a === subject() ? 'to' : 'from' }} {{ peer(link).name }}</small></span>
+                <span class="details__row-name">{{ link.name }}<small>{{ endpoints(link) }}</small></span>
                 <span class="details__row-value">{{ linkValue(link) }}</span>
                 <app-status-indicator [tone]="link.health.tone" [label]="link.health.word" [compact]="true" />
               </button></li>

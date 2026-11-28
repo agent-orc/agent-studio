@@ -39,6 +39,7 @@ export class LiveStructureDetailsComponent {
   readonly choose = output<string>();
   readonly chooseLink = output<string>();
   readonly zoom = output<string>();
+  readonly openCard = output<string>();
   readonly closed = output<void>();
   readonly kindLabel = LIVE_KIND_LABEL;
   readonly levels = LIVE_LEVELS;
@@ -56,28 +57,66 @@ export class LiveStructureDetailsComponent {
   readonly sections = computed<DetailSection[]>(() => {
     const subject = this.subject(), facts = this.facts(), layers = this.layers();
     const warnings = this.isRoot() ? this.scene().warnings : subject.warnings;
-    return LIVE_LAYERS.map(layer => ({
+    const layersInOrder = this.isRoot() ? [...LIVE_LAYERS].sort((a, b) => Number(b.id === 'warnings') - Number(a.id === 'warnings')) : LIVE_LAYERS;
+    return layersInOrder.map(layer => ({
       layer: layer.id, title: layer.label, on: layers[layer.id], empty: EMPTY[layer.id],
       // Routes and findings have their own rows; the summary lines of the canvas are left to them.
       rows: facts.filter(fact => fact.layer === layer.id && !fact.key.startsWith('link:') && !fact.key.startsWith('warning:')
         && !fact.key.startsWith('detail:') && !(layer.id === 'warnings' && fact.key === 'inside')),
-      links: layer.id === 'network' ? subject.links.filter(link => link.layer === 'network')
+      links: layer.id === 'network' ? (this.isRoot() ? this.scene().links : subject.links).filter(link => link.layer === 'network')
         : layer.id === 'backup' ? subject.links.filter(link => link.layer === 'backup') : [],
       warnings: layer.id === 'warnings' ? warnings : [],
     }));
   });
   readonly inside = computed(() => this.isRoot() ? [] : subtreeWarnings(this.subject()).filter(warning => warning.node !== this.subject()));
   readonly children = computed(() => this.isRoot() ? [] : descendants(this.subject()).map(node => ({ node, depth: pathOf(node).length - pathOf(this.subject()).length - 1 })));
+  readonly slotCells = computed(() => {
+    const node = this.subject(), slots = node.slots;
+    if (!slots) return [];
+    const cap = node.source?.facts?.capacity;
+    return Array.from({ length: slots.total ?? slots.busy }, (_, index) => ({
+      card: index < slots.busy ? slots.cards[index] : undefined,
+      state: index < slots.busy ? 'In use' : index < slots.busy + (cap?.freeSlots ?? 0) ? 'Free'
+        : index >= (slots.total ?? 0) - (cap?.heldSlots ?? 0) ? 'Held back' : 'Unreported',
+    }));
+  });
+  readonly trends = computed(() => {
+    const samples = this.scene().history?.trends ?? [];
+    return (['busySlots', 'queuedTasks'] as const).map(key => {
+      const peak = Math.max(1, ...samples.map(point => point[key] ?? 0));
+      let connected = false;
+      const path = samples.map((point, index) => {
+        const value = point[key];
+        if (value == null) { connected = false; return ''; }
+        const command = connected ? 'L' : 'M';
+        connected = true;
+        const x = 1 + 98 * index / Math.max(1, samples.length - 1);
+        return `${command}${x},${22 - 20 * value / peak}h0.1`;
+      }).join(' ').trim();
+      return { label: key === 'busySlots' ? 'Busy slots' : 'Queued tasks', path, value: samples.at(-1)?.[key] };
+    });
+  });
+  age(time: string): string { return ago(time, this.scene().generatedAt) ?? 'unknown'; }
+  readonly summary = computed(() => {
+    const { warnings, totals, queued, partialCapacity } = this.scene();
+    const slots = partialCapacity ? `${totals.busySlots} slots in use (limit partially observed)`
+      : totals.totalSlots ? `${totals.busySlots} of ${totals.totalSlots} slots` : 'slots not observed';
+    return `${warnings.length} open ${warnings.length === 1 ? 'warning' : 'warnings'}, ${slots}, ${queued == null ? 'queue not observed' : queued + ' queued'}`;
+  });
   readonly kpis = computed(() => {
     const scene = this.scene(), totals = scene.totals;
     return [
-      { label: 'Slots in use', value: totals.totalSlots ? String(totals.busySlots) : 'not observed', unit: totals.totalSlots ? `of ${totals.totalSlots}` : '' },
-      { label: 'Hosts reporting', value: String(totals.reporting), unit: '' },
+      { label: 'Slots in use', value: totals.totalSlots ? String(totals.busySlots) : 'not observed', unit: totals.totalSlots ? `${scene.partialCapacity ? 'of at least' : 'of'} ${totals.totalSlots}` : '' },
+      { label: 'Queued', value: scene.queued?.toString() ?? 'not observed', unit: '' },
       { label: 'Open warnings', value: String(scene.warnings.length), unit: '' },
     ];
   });
 
   peer(link: LiveLink): LiveNode { return link.a === this.subject() ? link.b : link.a; }
+  endpoints(link: LiveLink): string {
+    if (this.isRoot()) return link.a.name + ' to ' + link.b.name;
+    return (link.a === this.subject() ? 'to ' : 'from ') + this.peer(link).name;
+  }
   linkValue(link: LiveLink): string {
     return [link.latencyMs != null ? `${link.latencyMs.toFixed(1)} ms` : null, link.transport].filter(Boolean).join(' · ');
   }

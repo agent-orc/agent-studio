@@ -1,5 +1,5 @@
 import type { StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
-import { observationWord, type StructureData, type StructureDataLocation, type StructureDiskFact, type StructureLink,
+import { observationWord, type StructureData, type StructureDataLocation, type StructureDiskFact, type StructureHistory, type StructureLink,
   type StructureNode, type StructureReleaseFacts } from '../structure.model';
 import type { LiveBackupOverview, LiveGateWorker, LiveRunnerSnapshot, LiveSources } from './live-structure.sources';
 
@@ -67,6 +67,7 @@ export interface LiveBackupSummary {
 export interface LiveScene {
   boundary: LiveNode; outside: LiveNode[]; order: LiveNode[]; byId: Map<string, LiveNode>;
   links: LiveLink[]; warnings: LiveWarning[]; backup: LiveBackupSummary;
+  history: StructureHistory | null; queued: number | null; partialCapacity: boolean;
   generatedAt: string | null; revision: number;
   totals: { machines: number; containers: number; services: number; busySlots: number; totalSlots: number; reporting: number };
 }
@@ -129,6 +130,8 @@ function blank(id: string, kind: LiveKind, name: string, role: string, parent: L
 function liveKind(node: StructureNode, parent: StructureNode | null, hasChildren: boolean, parentIsUnit: boolean): LiveKind {
   if (node.kind === 'boundary') return 'boundary';
   if (node.kind === 'external' || node.kind === 'managed' || node.kind === 'registry') return 'external';
+  if (node.kind === 'disk') return 'disk';
+  if (node.kind === 'container-stack') return 'group';
   if (parentIsUnit) return 'service';
   if (NESTED.has(node.kind)) return 'vm';
   const top = !parent || parent.kind === 'boundary' || parent.kind === 'location' || parent.kind === 'region' || parent.kind === 'environment' || parent.kind === 'system';
@@ -160,6 +163,7 @@ function roleLine(node: StructureNode, kind: LiveKind, roles: readonly string[])
   if (facts?.performance?.cpuCores) parts.push(`${facts.performance.cpuCores} cores`);
   if (facts?.capacity?.totalSlots != null) parts.push(`${facts.capacity.totalSlots} slots`);
   else if (roles.length && !facts?.performance?.cpuCores) parts.push(`${joinRoles(roles)} role`);
+  if ((kind === 'machine' || kind === 'vm') && facts?.performance?.memoryTotalBytes) parts.push(gib(facts.performance.memoryTotalBytes));
   return parts.join(' · ');
 }
 
@@ -233,16 +237,20 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
     const kids = childrenOf.get(source.id) ?? [];
     const parentSource = source.parentId ? sourceById.get(source.parentId) ?? null : null;
     const parentIsUnit = !!parent && (parent.kind === 'container' || parent.kind === 'service');
-    const kind = liveKind(source, parentSource, kids.length > 0, parentIsUnit);
+    const kind = (data.schemaVersion ?? 0) >= 3 && source.kind === 'host' && kids.length ? 'group' : liveKind(source, parentSource, kids.length > 0, parentIsUnit);
     const roles = source.facts?.roles ?? [];
-    const node = blank(source.id, kind, displayName(source, kind, roles, rolesBelow(source)), roleLine(source, kind, roles), parent);
+    const hasDisplayName = (data.schemaVersion ?? 0) >= 3 && kind !== 'boundary'
+      && source.label !== source.facts?.hostId && source.label !== source.facts?.containerName;
+    const name = hasDisplayName ? source.label : displayName(source, kind, roles, rolesBelow(source));
+    const node = blank(source.id, kind, name, roleLine(source, kind, roles), parent);
     node.source = source;
     node.technical = source.facts?.hostId ?? source.facts?.containerName ?? source.detail ?? (node.name !== sentence(source.label) && source.kind !== 'boundary' ? source.label : null);
     node.health = healthOf(source);
     node.undeclared = source.provenance === 'observed' || source.observation?.difference === 'undeclared';
     const performance = source.facts?.performance, observation = source.observation;
     const cpu = performance?.cpuPercent ?? observation?.cpuPercent ?? null;
-    const memUsed = performance?.memoryUsedBytes ?? observation?.memoryUsedBytes ?? null;
+    const resources = source.facts?.resources ?? source.facts?.container?.resources;
+    const memUsed = resources?.memoryBytes ?? performance?.memoryUsedBytes ?? observation?.memoryUsedBytes ?? null;
     if (performance || cpu != null || memUsed != null) node.perf = {
       cpu: cpu != null ? cpu / 100 : null, cores: performance?.cpuCores ?? null,
       load: performance?.load1 != null ? [performance.load1, performance.load5, performance.load15].filter((v): v is number => v != null) : null,
@@ -265,9 +273,12 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
     order.push(node);
     const frame = kind === 'machine' || kind === 'vm' || kind === 'group' || kind === 'boundary';
     const disks = performance?.disks ?? [], locations = source.facts?.dataLocations ?? [];
-    if (!frame) { node.disks = disks; node.locations = locations; }
+    if (!frame) { node.disks = source.facts?.device?.filesystems.map(fs => ({
+      mount: fs.path, purpose: fs.purpose, usedBytes: fs.totalBytes - fs.freeBytes, freeBytes: fs.freeBytes, totalBytes: fs.totalBytes,
+    })) ?? disks; node.locations = locations; }
     for (const child of kids) if (child.kind !== 'external') node.children.push(add(child, node));
-    if (frame && kind !== 'boundary' && (disks.length || locations.length)) {
+    if (frame && !locations.length && (data.schemaVersion ?? 0) >= 3) node.disks = disks;
+    else if (frame && kind !== 'boundary' && (disks.length || locations.length)) {
       const disk = blank(`${source.id}#storage`, 'disk', 'Storage', `${disks.length} ${disks.length === 1 ? 'disk' : 'disks'}${locations.length ? ` · ${locations.length} data locations` : ''}`, node);
       disk.short = 'Storage';
       disk.disks = disks; disk.locations = locations;
@@ -325,7 +336,7 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
     if (!a || !b || a === b) continue;
     const style = linkStyle(source);
     links.push({ id: source.id ?? `link:${source.from}>${source.to}:${source.kind}`, a, b, kind: source.kind, style, name: source.label,
-      short: style === 'tunnel' ? 'tunnel' : source.kind, health: source.facts?.state ? linkHealth(source.facts.state) : healthOf(source),
+      short: source.kind === 'overlay' ? 'overlay' : source.facts?.transport?.toUpperCase() ?? (style === 'tunnel' ? 'tunnel' : source.label), health: source.facts?.state ? linkHealth(source.facts.state) : healthOf(source),
       latencyMs: source.facts?.latencyMs ?? null, transport: source.facts?.transport ?? null, probedAt: source.facts?.probedAt ?? null,
       arrow: source.kind === 'call' || source.kind === 'artifact' || source.kind === 'publish' || source.kind === 'control', broken: false, layer: 'network', source });
   }
@@ -349,6 +360,8 @@ export function buildLiveScene(data: StructureData, sources: LiveSources): LiveS
   const reportingHosts = new Set(order.filter(node => node.source?.facts?.hostId && node.health.word === 'Up')
     .map(node => node.source!.facts!.hostId!));
   const scene: LiveScene = { boundary, outside, order, byId, links, warnings: order.flatMap(node => node.warnings), backup,
+    history: data.history ?? null, queued: data.nodes.find(node => node.facts?.api)?.facts?.api?.queues.queuedTasks ?? null,
+    partialCapacity: data.nodes.some(node => node.facts?.capacity && node.facts.capacity.totalSlots == null),
     generatedAt: now, revision: data.revision ?? 0,
     totals: { machines: order.filter(node => node.kind === 'machine' || node.kind === 'vm').length,
       containers: order.filter(node => node.kind === 'container').length, services: order.filter(node => node.kind === 'service').length,
