@@ -1032,7 +1032,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
         }
     }
 
-    public RunnerPrincipal? AuthenticateRunner(string? bearer)
+    public RunnerPrincipal? AuthenticateRunner(string? bearer, bool renewalRequest = false)
     {
         if (!TryTokenParts(bearer, "rnr", out var credentialId)) return null;
         string secretHash;
@@ -1041,8 +1041,9 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var state = StateLocked();
             var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
             var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
-            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
-                || credential.RevokedAt is not null || credential.ExpiresAt <= Now) return null;
+            if (runner is null || credential is null
+                || (!IsRunnerCredentialLive(runner, credential, Now)
+                    && !(renewalRequest && credential is { SupersededAt: not null, RenewalReplayAt: null }))) return null;
             secretHash = credential.SecretHash;
         }
         // PBKDF2 is deliberately outside the store gate: concurrent requests
@@ -1054,10 +1055,19 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
             var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
             var now = Now;
-            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
-                || credential.RevokedAt is not null || credential.ExpiresAt <= now
-                || credential.SecretHash != secretHash) return null;
-            if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
+            if (runner is null || credential is null || credential.SecretHash != secretHash) return null;
+            if (renewalRequest && credential.SupersededAt is not null)
+                RecordRunnerRenewalReplayLocked(state, runner, credential, now);
+            if (!IsRunnerCredentialLive(runner, credential, now)) return null;
+            if (IsPending(credential))
+            {
+                credential = credential with
+                {
+                    CreatedAt = now, ExpiresAt = now + RunnerCredentialLifetime, RenewalProvenAt = now, LastUsedAt = now,
+                };
+                runner = ProveRunnerSuccessorLocked(state, runner, credential, now);
+            }
+            else if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
                 var updatedCredential = credential with { LastUsedAt = now };
                 state.Runners[state.Runners.IndexOf(runner)] = runner with
@@ -1071,6 +1081,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             {
                 Projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
                 CredentialExpiresAt = credential.ExpiresAt,
+                CredentialRenewalState = RunnerRenewalState(runner, credential, now),
             };
         }
     }
@@ -1213,7 +1224,9 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
 
     /// <summary>SM-9, D7 A: a new runner credential lives 30 days unless configured otherwise.</summary>
     public TimeSpan RunnerCredentialLifetime
-        => TimeSpan.FromDays(Math.Clamp(_configuration.GetValue("Security:RunnerCredentialLifetimeDays", 30), 1, 365));
+        => _configuration.GetValue<int?>("Security:RunnerCredentialLifetimeMinutes") is { } minutes
+            ? TimeSpan.FromMinutes(Math.Clamp(minutes, 1, 365 * 24 * 60))
+            : TimeSpan.FromDays(Math.Clamp(_configuration.GetValue("Security:RunnerCredentialLifetimeDays", 30), 1, 365));
 
     private DateTime DefaultRunnerCredentialExpiry() => Now + RunnerCredentialLifetime;
 
@@ -1224,10 +1237,15 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var state = StateLocked();
             var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId)
                 ?? throw new SecurityOperationException(404, "runner-not-found", "Runner not found.");
-            if (!runner.Credentials.Any(x => x.Id == credentialId)) throw new SecurityOperationException(404, "credential-not-found", "Credential not found.");
-            var updated = runner with { Credentials = runner.Credentials.Select(x => x.Id == credentialId ? x with { RevokedAt = Now } : x).ToList() };
-            state.Runners[state.Runners.IndexOf(runner)] = updated;
-            SaveLocked(state);
+            var credential = runner.Credentials.Find(item => item.Id == credentialId)
+                ?? throw new SecurityOperationException(404, "credential-not-found", "Credential not found.");
+            var rootId = RunnerChainRoot(runner, credential);
+            var now = Now;
+            SaveRunnerLocked(state, runner with
+            {
+                Credentials = runner.Credentials.Select(item => item.RevokedAt is null && RunnerChainRoot(runner, item) == rootId
+                    ? item with { RevokedAt = now } : item).ToList(),
+            });
         }
     }
 
@@ -1238,8 +1256,7 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
             var state = StateLocked();
             var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId)
                 ?? throw new SecurityOperationException(404, "runner-not-found", "Runner not found.");
-            state.Runners[state.Runners.IndexOf(runner)] = runner with { RevokedAt = Now };
-            SaveLocked(state);
+            SaveRunnerLocked(state, runner with { RevokedAt = runner.RevokedAt ?? Now });
         }
     }
 

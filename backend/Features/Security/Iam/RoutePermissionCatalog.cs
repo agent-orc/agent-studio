@@ -200,6 +200,7 @@ public static class RoutePermissionCatalog
         Add("W", IamPermissions.SelfSession, "/api/auth/passkeys/register-options", "/api/auth/passkeys/register",
             "/api/auth/passkeys/step-up-options");
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
+        Add("POST", IamPermissions.RunnerService, AgentStudio.TaskServer.Contracts.RunnerCredentialRenewalProtocol.Path);
         Add("R", IamPermissions.AccessRead,
             "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",
             "/api/auth/iam/**", "/api/auth/audit/**");

@@ -719,6 +719,7 @@ builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // folds the per-task chip signal onto accepted cards (O(projects), no per-card git).
 builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
+builder.Services.AddSingleton<GitHubPublishClient>();
 builder.Services.AddSingleton<PublishActionService>();
 builder.Services.AddHttpClient("structure-registry", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();

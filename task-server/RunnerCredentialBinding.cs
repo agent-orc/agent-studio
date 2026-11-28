@@ -33,8 +33,9 @@ public static class RunnerCredentialRoles
 {
     public const string Coding = HostRoles.Coding;
     public const string Review = HostRoles.Review;
+    public const string Gate = "gate";
 
-    public static bool IsValid(string? role) => role is null or Coding or Review;
+    public static bool IsValid(string? role) => role is Coding or Review or Gate;
 }
 
 public enum RunnerHostRegistration
@@ -56,8 +57,8 @@ public static class RunnerCredentialBindingPolicy
     /// </summary>
     public static string? Role(string? enrolledRole, string? recordedRole, IReadOnlySet<string> scopes)
     {
-        if (enrolledRole is RunnerCredentialRoles.Coding or RunnerCredentialRoles.Review) return enrolledRole;
-        if (recordedRole is RunnerCredentialRoles.Coding or RunnerCredentialRoles.Review) return recordedRole;
+        if (RunnerCredentialRoles.IsValid(enrolledRole)) return enrolledRole;
+        if (RunnerCredentialRoles.IsValid(recordedRole)) return recordedRole;
         var coding = scopes.Contains(TaskServerScopes.RunsClaim);
         var review = scopes.Contains(TaskServerScopes.ReviewsClaim);
         return coding == review ? null : coding ? RunnerCredentialRoles.Coding : RunnerCredentialRoles.Review;

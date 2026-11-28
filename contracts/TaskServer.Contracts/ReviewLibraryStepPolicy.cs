@@ -37,13 +37,15 @@ public static class ReviewLibraryStepPolicy
     }
 
     public static bool Supports(ReviewPlanDto plan, IReadOnlySet<string> capabilities, bool routePending = false)
-        => plan.LibraryVersion == 0
+        => (plan.LibraryVersion == 0
             ? plan.Commands.All(command => command.LibraryStep is null)
               && (plan.Preparation ?? []).All(command => command.LibraryStep is null)
             : plan.LibraryVersion == Version
               && plan.Commands.All(command => command.LibraryStep is not null)
               && (plan.Preparation ?? []).All(command => command.LibraryStep is not null)
-              && ExecutionCapabilities(plan, routePending).All(capabilities.Contains);
+              && ExecutionCapabilities(plan, routePending).All(capabilities.Contains))
+            && (routePending || plan.Commands.All(command =>
+                ReviewCheckoutReadPolicy.Allows(command, command.CliType ?? command.FileName, capabilities)));
 
     /// <summary>
     /// Every toolchain key a sealed step can require, with the invocation tokens
@@ -87,6 +89,9 @@ public static class ReviewLibraryStepPolicy
                     || command.ModelSelection is null && !routePending
                     || !key.StartsWith("cli-execution:", StringComparison.Ordinal)
                        && !key.StartsWith("provider-auth:", StringComparison.Ordinal)) keys.Add(key);
+            if ((!routePending || command.ModelSelection is not null)
+                && ReviewCheckoutReadPolicy.NeedsSandbox(command, command.CliType ?? command.FileName))
+                keys.Add(ReviewCapabilities.CodexCheckoutRead);
             if (ReviewCommandKinds.IsAgent(command.ExecutionKind) && command.ModelSelection is { ShouldLaunch: true } selected)
             {
                 keys.Add(CapabilityProtocol.CliExecution(selected.Route.CliType));

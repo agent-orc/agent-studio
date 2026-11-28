@@ -2114,6 +2114,27 @@ changes no access grants. Federation, the issuer and automatic target rotation
 remain later slices. See the [host setup guide](../setup/linux-runner-host.md#credential-inventory-and-rotation-plans-wi-1)
 and [secret provider](secret-provider.md#credential-inventory-metadata-wi-1).
 
+### Studio-enrolled runner credential renewal (AGT-4431)
+
+In the networked Studio deployment, the Studio access store serves runner,
+review and gate roles enrolled through Settings > Access. It opens automatic
+renewal in the final third of each expiring credential's lifetime. The host
+stages a private successor before sending its verifier with the current
+bearer. The previous credential ends when the successor first authenticates,
+or at its original expiry if the successor never proves. A repeated renewal
+using a superseded credential is refused and audited as
+`runner.credential-renewal-replay`. Revoking either generation ends its
+chain. Revoking the runner ends all credentials for that identity.
+
+Healthy automatic renewal suppresses expiry reminders. Access and the
+credential inventory report current expiry, last renewal, the next window,
+failures and refused reuse. Standalone Task Server principals use their
+management rotation workflow. Studio Owners can change the per-runner policy
+in Access or through the
+[per-runner renewal API](../setup/networked-task-server.md#per-runner-renewal-api).
+See the [host enrollment guide](../setup/networked-task-server.md#automatic-credential-renewal)
+for the installation switch, rollout and recovery after missed expiry.
+
 <!-- append-only:security-overview:end -->
 
 ## Operator batch confirmation (ES-8)

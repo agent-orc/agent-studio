@@ -26,8 +26,9 @@ public sealed class ReviewLibraryStepPolicyTests
         var execution = ReviewLibraryStepPolicy.ExecutionCapabilities(switched).ToHashSet();
         Assert.DoesNotContain(CapabilityProtocol.ProviderAuthentication("claude"), execution);
         Assert.Contains(CapabilityProtocol.ProviderAuthentication("codex"), execution);
+        Assert.Contains(ReviewCapabilities.CodexCheckoutRead, execution);
         Assert.True(ReviewLibraryStepPolicy.Supports(switched, execution));
-        execution.Remove(CapabilityProtocol.ProviderAuthentication("codex"));
+        execution.Remove(ReviewCapabilities.CodexCheckoutRead);
         Assert.False(ReviewLibraryStepPolicy.Supports(switched, execution));
     }
 

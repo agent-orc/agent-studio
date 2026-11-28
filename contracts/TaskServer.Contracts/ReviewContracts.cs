@@ -10,6 +10,7 @@ public static class ReviewCapabilities
     public const string VisionReview = "review:vision";
     public const string BaselineComparison = "review:baseline-comparison";
     public const string DependencyPreparation = "review:dependency-preparation";
+    public const string CodexCheckoutRead = "review:codex-checkout-read";
     public const string LibraryStepV1 = "review:library-step:v1";
 }
 
@@ -104,7 +105,9 @@ public sealed record ReviewCommandDto(
     string WorkingSubdir = "",
     ReviewLibraryStepDto? LibraryStep = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    SelectionResult? ModelSelection = null);
+    SelectionResult? ModelSelection = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    bool? RequiresCheckoutReads = null);
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,
@@ -266,6 +269,7 @@ public static class ReviewClaimEmptyReasons
     public const string HostModelUnavailable = "host-model-unavailable";
     public const string CapabilityAdmission = "capability-admission";
     public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
+    public const string CheckoutRetryDifferentHostRequired = "checkout-retry-different-host-required";
     public const string DifferentHostRequired = "different-review-host-required";
     public const string DifferentHostPreferred = "different-review-host-preferred";
     /// <summary>SM-11: every queued subject was coded by the claiming principal.</summary>
@@ -718,7 +722,7 @@ public static class ReviewVerdictCitationPolicy
                 && string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
                     ? "Pass"
                     : request.Outcome,
-            FailureClassification = downgraded && !stillBlocked
+            FailureClassification = downgraded && !stillBlocked && !ReviewCheckoutReadPolicy.IsFailure(request)
                 ? BlockWithoutCitation
                 : request.FailureClassification,
         };

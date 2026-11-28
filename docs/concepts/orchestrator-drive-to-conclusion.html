@@ -387,6 +387,27 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-agt-4429-review-command-output">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-command-output</span></td>
+          <td>A failed review command that printed a bubblewrap diagnostic could stop a healthy Codex review.</td>
+          <td>The executor attributed command output to its sandbox without confirming the denial.</td>
+          <td>The regression fixtures let the healthy executor reach Pass and preserve ReviewInfra when the read-only probe confirms the namespace denial.</td>
+        </tr>
+        <tr id="case-agt-4429-review-report-validation">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-report-validation</span></td>
+          <td>A review report could lose the Codex checkout-read failure while settling an attempt that had stopped without complete review evidence.</td>
+          <td>General toolchain, measurement and evidence checks could overwrite the classification that excludes the failed host from retry placement.</td>
+          <td>The regression fixture settles as <code>ReviewInfra / ReviewerCheckoutReadUnavailable</code>, retries on a different host and reaches Escalated after the bounded attempts are exhausted.</td>
+        </tr>
+        <tr id="case-agt-4392-codex-review-checkout-sandbox">
+          <td>2026-11-28</td>
+          <td><code>AGT-4392</code><br><span class="small">codex-review-checkout-sandbox</span></td>
+          <td>Codex's read-only bubblewrap sandbox failed before it could read the complete Concept Dossier. The second review encountered the same namespace permission error.</td>
+          <td>Both reviews settled as <code>ReviewInfra / ReviewMaterialUnavailable</code>. The card parked at 12:33 UTC and the unchanged-delivery retry returned <code>card-changed-since-park</code> after the park refreshed its result scaffold.</td>
+          <td>At 13:00 UTC the operator routed concept-fit to Claude and returned the card for unchanged redelivery. AGT-4429 adds startup proof, a host-attributed checkout-read failure, and retry placement away from the failed host. Operator retry recognizes the engine's fenced park and the watchdog's post-park card state.</td>
+        </tr>
         <tr id="case-post-merge-lint-signer-socket">
           <td>2026-11-28</td>
           <td><code>AGT-4336</code><br><span class="small">post-merge-lint-signer-socket</span></td>
@@ -3601,6 +3622,20 @@
           <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
           <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
         </tr>
+        <tr id="case-runner-clean-context-retention">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">runner-clean-context-retention</span></td>
+          <td>Clean-context homes accumulated until disk pressure held new claims. No CLI crashed in the observation.</td>
+          <td>The coding runner retained task-stable session homes without a lifecycle sweep.</td>
+          <td>The runner sweeps terminal and idle homes, protects live bindings and starts expired continuations with a fresh CLI session. The fixture round reaches <code>[[TASK_DONE]]</code>.</td>
+        </tr>
+        <tr id="case-runner-clean-context-eviction-before-launch">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">clean-context-eviction-before-launch</span></td>
+          <td>Review found a window between resume approval and worker acquisition. No production CLI crash or terminal was observed for this window.</td>
+          <td>The worker cleared the stale session ID after eviction while retaining the prompt meant for that session.</td>
+          <td>The worker now checks the session under its lease. The regression fixture launches a fresh session with the full prompt and reaches <code>[[TASK_DONE]]</code>.</td>
+        </tr>
         <tr id="case-integration-fresh-empty-checkout">
           <td>2026-11-28</td>
           <td><code>AGT-4353 / AGT-4018</code><br><span class="small">integration-fresh-empty-checkout</span></td>
@@ -3654,6 +3689,20 @@
           <td>After a simulated restart, a linked worktree could reuse a completed command after a ref changed.</td>
           <td>The digest covered the <code>.git</code> pointer file but did not check that its per-worktree and common Git directories were also covered.</td>
           <td>Recovery resumes when the referenced metadata is covered and unchanged. A ref change or an uncovered directory settles as inconclusive and retains finished command evidence.</td>
+        </tr>
+        <tr id="case-clean-context-integration-recovery">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">clean-context-integration-recovery</span></td>
+          <td>Delivery <code>4140a1a87839</code> stopped at <code>merge-into-develop</code> after all three strategies conflicted. No CLI crash was reported.</td>
+          <td>The platform handed off an active merge with five conflicts against <code>6ae6b4acbf69</code>.</td>
+          <td>The resolution keeps the case log, unattended Codex launch settings, CPU-stall accounting, and host telemetry from both sides. A legacy worker that loses its session requests a fresh claim with a required prepared checkout.</td>
+        </tr>
+        <tr id="case-post-merge-linked-config-target">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-linked-config-target</span></td>
+          <td>Review found that a linked worktree could read configuration through a symlink into checkout bookkeeping.</td>
+          <td>The digest recorded the link text while skipping the target's contents. Resolving only the final target could also miss a link in a skipped directory.</td>
+          <td>The checkpoint validates each link's immediate target. Links into skipped directories settle as inconclusive after a simulated restart, retaining finished command evidence.</td>
         </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
@@ -3770,6 +3819,13 @@
           <td>Usage-window replay reaches <code>QuotaExceeded</code> and
             <code>WaitForCapabilityRecovery</code>. A new subscription window reopens model probing.
             The next ready advertisement clears the recorded dispatch wait.</td>
+        </tr>
+        <tr id="case-result-summary-format-and-quota">
+          <td>2026-11-27 to 2026-11-28</td>
+          <td><code>AGT-4447</code><br><span class="small">result-summary-format-and-quota</span></td>
+          <td>No core CLI crashed. AGT-4395 found six paid format repetitions on 27 November and 160 route refusals before provider start on 28 November.</td>
+          <td>Malformed replies repeated the same prompt. Route admission happened after rendering, and quota refusals could enter the summary retry budget.</td>
+          <td>A format rejection leaves the prior Result intact. Quota waits retain one recoverable pending summary for the current evidence. On capacity recovery, successful finalization reaches <code>Ready</code> with a fingerprint-bound Result and assessment.</td>
         </tr>
       </tbody>
     </table>

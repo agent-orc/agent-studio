@@ -29,6 +29,14 @@ and the standalone `TaskServerReviewStore.ClaimReviewAsync`) match a plan
 against the executor's **registration** capability set, not against the
 minutely advertisement.
 
+For checkout-reading Codex aspects, both servers additionally require a fresh
+ready advertisement of `review:codex-checkout-read` for the current executor
+instance. The [Linux review host setup](setup/linux-runner-host.md#codex-read-only-sandbox-on-review-hosts)
+describes the startup probe and container profile. A runtime namespace denial
+settles as `ReviewInfra / ReviewerCheckoutReadUnavailable`, with the host and
+command diagnostic. The linked infrastructure retry waits for a different host
+and still requires that host's proof if it uses Codex to read the checkout.
+
 ### Decision (AGT-2987): registration carries what plans require
 
 The card offered two options: register every key the library can require, or
@@ -80,6 +88,7 @@ carries a typed `reason`:
 | `queue-empty` | No pending attempt exists that any executor could take. | None. |
 | `no-available-slot` | The request declared zero free slots. | None. |
 | `executor-paused` | A drained capability paused this executor until its cooldown ends. | See the capability failure in Execution Hosts. |
+| `checkout-retry-different-host-required` | This host already failed to open the sandbox for the review chain. | Check checkout-read readiness on another review host. |
 | `quota-deferred` | Quota admission deferred a legacy plan. | Wait for the quota window. |
 | `capability-admission` | Standalone Task Server only: an advertised capability is stale, missing, or not ready. | Read `message`. |
 | `unclaimable-plan-requirements` | Pending attempts exist, but their sealed plans require capabilities this executor did not register. | Add the named keys (see above). |

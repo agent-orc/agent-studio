@@ -70,7 +70,10 @@ public static class TransitionDecisionPolicy
                 ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(facts.Review.FailureClassification),
                 facts.Review.FailureClassification)
                 ? TransitionAction.ReviewInfrastructureRetry : TransitionAction.Escalate;
-            reason = "Review infrastructure requires a bounded retry or operator intervention.";
+            reason = facts.Review.FailureClassification == ReviewCheckoutReadPolicy.FailureClassification
+                && !string.IsNullOrWhiteSpace(facts.Review.Summary)
+                ? facts.Review.Summary
+                : "Review infrastructure requires a bounded retry or operator intervention.";
         }
         else if (string.Equals(facts.Review.Outcome,
                      ReviewOutcomeKinds.DeliveryPredatesReviewPlan, StringComparison.OrdinalIgnoreCase))

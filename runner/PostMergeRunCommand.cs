@@ -569,39 +569,45 @@ public sealed class PostMergeRunCommand
         var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
         bool IsCheckoutBookkeeping(string name) => name.Equals(".git", pathComparison)
-            || name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work";
+            || name.StartsWith(".post-merge-", pathComparison) && !name.Equals(".post-merge-work", pathComparison);
 
-        string CoveredGitDirectory(string parent, string pointer)
+        string CoveredPath(string parent, string pointer)
         {
             if (pointer.Length == 0 || pointer != pointer.Trim() || pointer.IndexOfAny(['\0', '\r', '\n']) >= 0
                 || Path.IsPathRooted(pointer) && !Path.IsPathFullyQualified(pointer))
-                throw new IOException("Invalid Git metadata path prevents post-merge checkpoint reuse.");
+                throw new IOException("Invalid target path prevents post-merge checkpoint reuse.");
 
-            // Leading parent segments are normal in gitfiles and commondir. A later
+            // Leading parent segments are relative to a walked directory. A later
             // parent segment could hide an intermediate symlink during normalization.
             var segments = pointer.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
             if (segments.SkipWhile(segment => segment is "" or "." or "..").Contains(".."))
-                throw new IOException("Ambiguous Git metadata path prevents post-merge checkpoint reuse.");
+                throw new IOException("Ambiguous target path prevents post-merge checkpoint reuse.");
 
             string target;
             try { target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pointer, parent)); }
             catch (ArgumentException exception)
             {
-                throw new IOException("Invalid Git metadata path prevents post-merge checkpoint reuse.", exception);
+                throw new IOException("Invalid target path prevents post-merge checkpoint reuse.", exception);
             }
             var root = target.StartsWith(checkoutPrefix, pathComparison) ? checkout
                 : shortTemp is not null && target.StartsWith(shortTemp + Path.DirectorySeparatorChar, pathComparison) ? shortTemp
-                : throw new IOException("External Git metadata prevents post-merge checkpoint reuse.");
-            for (var directory = target; !directory.Equals(root, pathComparison); directory = Path.GetDirectoryName(directory)!)
+                : throw new IOException("An external target prevents post-merge checkpoint reuse.");
+            for (var path = target; !path.Equals(root, pathComparison); path = Path.GetDirectoryName(path)!)
             {
-                var containingDirectory = Path.GetDirectoryName(directory)!;
-                if (containingDirectory.Equals(checkout, pathComparison) && IsCheckoutBookkeeping(Path.GetFileName(directory)))
-                    throw new IOException("Git metadata in checkout bookkeeping prevents post-merge checkpoint reuse.");
-                var attributes = File.GetAttributes(directory);
-                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
-                    throw new IOException("Git metadata must be in a checkpointed directory without symlinks.");
+                var containingDirectory = Path.GetDirectoryName(path)!;
+                if (containingDirectory.Equals(checkout, pathComparison) && IsCheckoutBookkeeping(Path.GetFileName(path)))
+                    throw new IOException("A target in checkout bookkeeping prevents post-merge checkpoint reuse.");
+                if (!path.Equals(target, pathComparison))
+                    RequireRealDirectory(path);
             }
             return target;
+        }
+
+        static void RequireRealDirectory(string directory)
+        {
+            var attributes = File.GetAttributes(directory);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                throw new IOException("Checkpoint targets must have real directories as ancestors.");
         }
 
         void ValidateCommonDirectory(string gitDir, bool checkoutGitDir = false)
@@ -612,7 +618,7 @@ public sealed class PostMergeRunCommand
             catch (FileNotFoundException) { return; }
             if (checkoutGitDir || (attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
                 throw new IOException("Git common directory cannot be validated for post-merge checkpoint reuse.");
-            CoveredGitDirectory(gitDir, File.ReadAllText(common).TrimEnd('\r', '\n'));
+            RequireRealDirectory(CoveredPath(gitDir, File.ReadAllText(common).TrimEnd('\r', '\n')));
         }
 
         void Walk(string root, string directory)
@@ -639,18 +645,22 @@ public sealed class PostMergeRunCommand
                         var gitFile = File.ReadAllText(path).TrimEnd('\r', '\n');
                         if (!gitFile.StartsWith(prefix, StringComparison.Ordinal))
                             throw new IOException("Invalid .git file prevents post-merge checkpoint reuse.");
-                        ValidateCommonDirectory(CoveredGitDirectory(directory, gitFile[prefix.Length..]));
+                        var gitDir = CoveredPath(directory, gitFile[prefix.Length..]);
+                        RequireRealDirectory(gitDir);
+                        ValidateCommonDirectory(gitDir);
                     }
                 }
                 Add(Path.GetRelativePath(root, path));
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 {
                     var link = new FileInfo(path);
-                    Add(link.LinkTarget ?? "");
-                    var target = link.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-                    if (target is null || !target.StartsWith(checkoutPrefix, StringComparison.Ordinal)
-                        && (shortTemp is null || !target.StartsWith(shortTemp + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-                        throw new IOException("An external symlink prevents post-merge checkpoint reuse.");
+                    var pointer = link.LinkTarget ?? "";
+                    // Check every link's immediate target. A final target alone can
+                    // hide an intermediate link in a directory the walk skips.
+                    CoveredPath(directory, pointer);
+                    if (link.ResolveLinkTarget(returnFinalTarget: true) is null)
+                        throw new IOException("An unresolved symlink prevents post-merge checkpoint reuse.");
+                    Add(pointer);
                     continue;
                 }
                 if (!OperatingSystem.IsWindows()) Add(File.GetUnixFileMode(path).ToString());

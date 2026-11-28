@@ -353,7 +353,8 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
                  new(Contract.CapabilityProtocol.CliExecution("claude"), "cli-execution", "ready"),
                  new(Contract.CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready"),
                  new(Contract.CapabilityProtocol.CliExecution("codex"), "cli-execution", "ready"),
-                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready")]));
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready"),
+                 new(Contract.ReviewCapabilities.CodexCheckoutRead, "review", "ready")]));
         reviewCapabilities.EnsureSuccessStatusCode();
 
         var unverified = await client.ClaimReviewAsync(
@@ -380,7 +381,8 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
                  new(Contract.CapabilityProtocol.CliExecution("claude"), "cli-execution", "ready"),
                  new(Contract.CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready"),
                  new(Contract.CapabilityProtocol.CliExecution("codex"), "cli-execution", "ready"),
-                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready")]));
+                 new(Contract.CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready"),
+                 new(Contract.ReviewCapabilities.CodexCheckoutRead, "review", "ready")]));
         reviewCapabilities.EnsureSuccessStatusCode();
 
         var claim = await client.ClaimReviewAsync(

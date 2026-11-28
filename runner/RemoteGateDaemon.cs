@@ -40,7 +40,7 @@ public sealed class RemoteGateDaemon
         long generation = 0;
         var nextAdvertisement = DateTime.MinValue;
         GateFlight?[] flights = new GateFlight?[2];
-        var paths = new[] { ClaimFile, PostMergeClaimFile };
+        var paths = ClaimPaths(_options.StateDir);
         try
         {
             while (!shutdown.IsCancellationRequested)
@@ -57,6 +57,16 @@ public sealed class RemoteGateDaemon
                         }
                         if (flights[slot] is null && File.Exists(paths[slot]))
                             await RecoverClaimFileAsync(paths[slot], shutdown);
+                    }
+                    if (_options.HostAdapter && HostRoleDrainControl.ReadRequest(_options.StateDir, "gate") is { } drain)
+                    {
+                        // This poll owns the claim request. It can acknowledge zero only after
+                        // any in-flight request, execution and durable cleanup have finished.
+                        var occupied = flights.Count(flight => flight is not null);
+                        HostRoleDrainControl.Acknowledge(_options.StateDir, "gate", drain, occupied);
+                        if (occupied == 0) return;
+                        await DelayPollAsync(shutdown);
+                        continue;
                     }
                     if (DateTime.UtcNow >= nextAdvertisement)
                     {
@@ -168,8 +178,9 @@ public sealed class RemoteGateDaemon
         finally { _claimFiles.Release(); }
     }
 
-    private string PostMergeClaimFile => Path.Combine(_options.StateDir, "gate-post-merge-claim.json");
-    private string ClaimFile => Path.Combine(_options.StateDir, "gate-claim.json");
+    private static string OrdinaryClaimPath(string stateDir) => Path.Combine(stateDir, "gate-claim.json");
+    internal static string[] ClaimPaths(string stateDir)
+        => [OrdinaryClaimPath(stateDir), Path.Combine(stateDir, "gate-post-merge-claim.json")];
 
     internal Func<GateClaimResponse, CancellationToken, Task<bool>>? OrdinaryExecutor { get; init; }
     internal Func<GateClaimResponse, CancellationToken, Task<bool>>? PostMergeExecutor { get; init; }
@@ -185,14 +196,27 @@ public sealed class RemoteGateDaemon
 
     private void SaveClaim(GateClaimResponse claim, string? path = null)
     {
-        path ??= ClaimFile;
+        path ??= OrdinaryClaimPath(_options.StateDir);
         Directory.CreateDirectory(_options.StateDir);
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(claim));
         File.Move(temporary, path, overwrite: true);
     }
 
-    internal Task RecoverPreviousClaimAsync(CancellationToken ct) => RecoverClaimFileAsync(ClaimFile, ct);
+    internal Task RecoverPreviousClaimAsync(CancellationToken ct) => RecoverClaimFileAsync(OrdinaryClaimPath(_options.StateDir), ct);
+
+    internal static GateClaimResponse? ReadPersistedClaim(string path)
+    {
+        try
+        {
+            var claim = JsonSerializer.Deserialize<GateClaimResponse>(File.ReadAllText(path));
+            if (claim?.Subject is null || claim.Attempt is null || claim.Lease is null)
+                throw new InvalidDataException("Persisted gate claim is incomplete.");
+            return claim;
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
 
     private async Task RecoverClaimFileAsync(string path, CancellationToken ct, string? expectedLeaseId = null)
     {
@@ -203,35 +227,35 @@ public sealed class RemoteGateDaemon
 
     private async Task RecoverClaimFileCoreAsync(string path, CancellationToken ct, string? expectedLeaseId)
     {
-        if (!File.Exists(path)) return;
-        var claim = JsonSerializer.Deserialize<GateClaimResponse>(await File.ReadAllTextAsync(path, ct));
-        if (claim?.Subject is null || claim.Attempt is null || claim.Lease is null)
-            throw new InvalidDataException("Persisted gate claim is incomplete.");
+        var claim = ReadPersistedClaim(path);
+        if (claim is null) return;
         // A freed slot may already contain its next claim. A predecessor only
         // recovers its own lease, never the new flight that reused the path.
-        if (expectedLeaseId is not null && claim.Lease.LeaseId != expectedLeaseId) return;
-        var status = await _client.GetGateStatusAsync(claim.Subject.SubjectId, ct);
-        var previous = status?.Attempts.FirstOrDefault(item => item.AttemptId == claim.Attempt.AttemptId);
+        var lease = claim.Lease!;
+        var subject = claim.Subject!;
+        var attempt = claim.Attempt!;
+        if (expectedLeaseId is not null && lease.LeaseId != expectedLeaseId) return;
+        var status = await _client.GetGateStatusAsync(subject.SubjectId, ct);
+        var previous = status?.Attempts.FirstOrDefault(item => item.AttemptId == attempt.AttemptId);
         if (previous is null || (GateStates.IsTerminal(previous.State)
             && previous.CleanedAt is not null))
         {
             File.Delete(path);
             return;
         }
-        var syntheticSubject = new ReviewSubjectDto(claim.Subject.SubjectId,
-            claim.Subject.TaskId, claim.Subject.SourceRunId, claim.Subject.RepositoryId,
-            claim.Subject.RepositoryUrl, claim.Subject.ExpectedSha, claim.Subject.ResultRef,
-            claim.Subject.SourceBundleArtifactId, claim.Subject.SourceBundleSha256, null,
-            claim.Subject.PolicyHash, new ReviewPlanDto([], []), claim.Subject.CreatedAt);
-        var lease = claim.Lease;
+        var syntheticSubject = new ReviewSubjectDto(subject.SubjectId,
+            subject.TaskId, subject.SourceRunId, subject.RepositoryId,
+            subject.RepositoryUrl, subject.ExpectedSha, subject.ResultRef,
+            subject.SourceBundleArtifactId, subject.SourceBundleSha256, null,
+            subject.PolicyHash, new ReviewPlanDto([], []), subject.CreatedAt);
         var syntheticLease = new ReviewLeaseDto(lease.LeaseId, lease.AttemptId,
-            claim.Subject.SubjectId, lease.ExecutorId, lease.InstanceId, lease.HostId,
+            subject.SubjectId, lease.ExecutorId, lease.InstanceId, lease.HostId,
             lease.Fence, lease.AcquiredAt, lease.ExpiresAt, "active",
             lease.ResourceNamespace, lease.PortBase, lease.AuthorityEpoch);
         var workspace = new RemoteReviewWorkspace(_options, syntheticSubject, syntheticLease, _log);
         await CliProcessReaper.ReapWorkspaceAsync(workspace.AttemptRoot,
-            claim.Attempt.AttemptId, _log, ct);
-        if (!await workspace.CleanupAsync(claim.Attempt.AttemptId))
+            attempt.AttemptId, _log, ct);
+        if (!await workspace.CleanupAsync(attempt.AttemptId))
             throw new IOException("Previous gate namespace could not be removed.");
         if (GateStates.IsTerminal(previous.State)
             || status!.Attempts.Any(item => item.AttemptNumber > previous.AttemptNumber))
@@ -239,7 +263,7 @@ public sealed class RemoteGateDaemon
             File.Delete(path);
             return;
         }
-        await _client.ConfirmGateContainmentAsync(claim.Attempt.AttemptId,
+        await _client.ConfirmGateContainmentAsync(attempt.AttemptId,
             new GateContainmentRequest(_options.RunnerId, _client.RunnerInstanceId,
                 lease.HostId, lease.Fence, lease.ResourceNamespace,
                 NoProcesses: true, WorkspaceRemoved: true), ct);

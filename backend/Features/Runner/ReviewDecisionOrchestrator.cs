@@ -2604,7 +2604,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var failedSummary = pipelineRecord?.Steps.FirstOrDefault(step =>
             step.StepId == PipelineCatalogue.SummaryAssessmentStepId
             && step.Status == PipelineStepStatus.Failed);
-        if (failedSummary is not null)
+        if (failedSummary is not null && !SummaryGenerationService.HasValidResult(current.FolderPath))
         {
             if (SummaryGenerationService.TryRestoreAgentReportStatus(current, out var source))
             {

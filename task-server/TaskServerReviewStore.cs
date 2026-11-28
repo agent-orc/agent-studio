@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
+using TaskStates = AgentStudio.Shared.TaskStates;
 
 namespace AgentStudio.TaskServer;
 
@@ -286,7 +287,7 @@ public sealed partial class TaskServerStore
         if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Review, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            var executor = await WithProvenRepositoryReadAsync(
+            var executor = await WithProvenReviewReadCapabilitiesAsync(
                 connection,
                 transaction,
                 await ReadReviewExecutorAsync(connection, transaction, request.ExecutorId, request.InstanceId, ct),
@@ -443,7 +444,14 @@ public sealed partial class TaskServerStore
                         capabilityBlockReason = "workspace-quota";
                         continue;
                     }
-                    var routing = await RouteReviewAsync(connection, transaction, candidate.Subject, request.ExecutorId, ct);
+                    if (await CheckoutRetryFailedOnHostAsync(connection, transaction, candidate.Attempt, executor.HostId, ct))
+                    {
+                        hostWaitReason = ReviewClaimEmptyReasons.CheckoutRetryDifferentHostRequired;
+                        hostWaitMessage = $"Review retry needs a different host after a checkout read failure on '{executor.HostId}'.";
+                        continue;
+                    }
+                    var routing = await RouteReviewAsync(connection, transaction, candidate.Subject,
+                        request.ExecutorId, executor.Capabilities, ct);
                     if (routing.Subject is null)
                     {
                         capabilityBlock = routing.Reason;
@@ -470,7 +478,7 @@ public sealed partial class TaskServerStore
                     {
                         var otherIdle = !candidate.Subject.Plan.RequireDifferentHostFailureDomain
                             && await HasIdleEligibleDifferentReviewHostAsync(
-                                connection, transaction, request, candidate.Subject, executor.HostId, ct);
+                                connection, transaction, request, candidate.Attempt, candidate.Subject, executor.HostId, ct);
                         var placement = ReviewHostPlacementPolicy.Decide(
                             candidate.Subject.CodingHostId, executor.HostId,
                             candidate.Subject.Plan.RequireDifferentHostFailureDomain, otherIdle);
@@ -605,10 +613,27 @@ public sealed partial class TaskServerStore
         return response!;
     }
 
+    private static async Task<bool> CheckoutRetryFailedOnHostAsync(
+        SqliteConnection connection, SqliteTransaction transaction, ReviewAttemptDto attempt,
+        string hostId, CancellationToken ct)
+    {
+        if (attempt.AttemptNumber <= 1) return false;
+        await using var command = Command(connection, """
+            SELECT failure_classification, host_id FROM review_attempts
+             WHERE subject_id = $subject AND attempt_number < $number AND host_id = $host;
+            """, transaction, ("$subject", attempt.SubjectId), ("$number", attempt.AttemptNumber), ("$host", hostId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            if (!reader.IsDBNull(0) && TaskServerTransitionAdapter.ReviewCheckoutFailedOnHost(reader.GetString(0), reader.GetString(1), hostId))
+                return true;
+        return false;
+    }
+
     private async Task<bool> HasIdleEligibleDifferentReviewHostAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         ReviewClaimRequest request,
+        ReviewAttemptDto attempt,
         ReviewSubjectDto subject,
         string codingHostId,
         CancellationToken ct)
@@ -643,10 +668,14 @@ public sealed partial class TaskServerStore
         {
             // AGT-3077: judge the alternative by its proven read keys, like its
             // own claim would; yielding to a host that skips the review strands it.
-            var otherExecutor = await WithProvenRepositoryReadAsync(
+            var otherExecutor = await WithProvenReviewReadCapabilitiesAsync(
                 connection, transaction, new ReviewExecutorRow(other.HostId, other.Capabilities),
                 other.RunnerId, other.InstanceId, ct);
-            if (MissingSubjectCapabilities(otherExecutor, subject).Count > 0)
+            if (MissingSubjectCapabilities(otherExecutor, subject).Count > 0
+                || await CheckoutRetryFailedOnHostAsync(connection, transaction, attempt, other.HostId, ct))
+                continue;
+            if (subject.Plan.Commands.Any(command =>
+                    !ReviewCheckoutReadPolicy.Allows(command, command.CliType ?? command.FileName, otherExecutor.Capabilities)))
                 continue;
             var requirements = RequiredReviewCapabilities(request.RequiredCapabilities, subject);
             var admission = await EvaluateCapabilityAdmissionAsync(
@@ -1072,8 +1101,9 @@ public sealed partial class TaskServerStore
             await RecordUnprovenFlakeFailuresAsync(
                 connection, transaction, request, attemptId, subject.TaskId, received, ct);
             var reportId = $"rrpt_{Guid.NewGuid():N}";
-            var retry = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal);
-            const string taskState = "4-auto-review";
+            var checkoutRetryExhausted = TaskServerTransitionAdapter.ReviewCheckoutRetryExhausted(classified.Classification, attempt.AttemptNumber);
+            var retry = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal) && !checkoutRetryExhausted;
+            var taskState = checkoutRetryExhausted ? TaskStates.Escalated : TaskStates.AutoReview;
             await ExecuteAsync(connection, """
                 UPDATE review_attempts
                    SET status = 'reported', report_id = $report, report_json = $json,
@@ -1162,7 +1192,8 @@ public sealed partial class TaskServerStore
             {
                 result = new ReviewCleanupResponse(
                     "duplicate", attemptId, attempt.CleanedAt ?? UtcNow,
-                    string.Equals(attempt.Outcome, "ReviewInfra", StringComparison.Ordinal));
+                    string.Equals(attempt.Outcome, "ReviewInfra", StringComparison.Ordinal)
+                    && !TaskServerTransitionAdapter.ReviewCheckoutRetryExhausted(attempt.FailureClassification, attempt.AttemptNumber));
                 return;
             }
             ValidateReviewAuthority(attempt, request.ExecutorId, request.InstanceId, request.LeaseId, request.Fence, requireLeased: false);
@@ -1170,6 +1201,8 @@ public sealed partial class TaskServerStore
             {
                 var failedAt = UtcNow;
                 var classification = request.FailureClassification ?? "WorkspaceCleanupFailed";
+                var preserveReadFailure = attempt.FailureClassification == ReviewCheckoutReadPolicy.FailureClassification;
+                var checkoutExhausted = TaskServerTransitionAdapter.ReviewCheckoutRetryExhausted(attempt.FailureClassification, attempt.AttemptNumber);
                 await ExecuteAsync(connection, """
                     UPDATE review_attempts
                        SET status = 'cleanup-failed', outcome = 'ReviewInfra',
@@ -1178,15 +1211,17 @@ public sealed partial class TaskServerStore
                      WHERE id = $attempt;
                     UPDATE tasks
                        SET state = '4-auto-review', version = version + 1, updated_at = $now
-                     WHERE id = $task;
+                     WHERE id = $task AND $preserveReadFailure = 0;
                     """, ct, transaction,
-                    ("$classification", classification), ("$key", request.IdempotencyKey),
+                    ("$classification", preserveReadFailure ? attempt.FailureClassification : classification),
+                    ("$preserveReadFailure", preserveReadFailure ? 1 : 0), ("$key", request.IdempotencyKey),
                     ("$now", Iso(failedAt)), ("$attempt", attemptId), ("$task", attempt.TaskId));
-                await InsertReviewRetryAsync(connection, transaction, attempt, failedAt, ct);
+                if (!checkoutExhausted)
+                    await InsertReviewRetryAsync(connection, transaction, attempt, failedAt, ct);
                 await RecordDeliveryAsync(connection, transaction, attemptId, "cleanup", request.IdempotencyKey, payloadHash, ct);
                 await AuditAsync(connection, transaction, actorId, "review.cleanup-failed", "review-attempt", attemptId,
                     JsonSerializer.Serialize(new { classification, request.WorkspaceRemoved }), ct);
-                result = new ReviewCleanupResponse("cleanup-failed", attemptId, failedAt, true);
+                result = new ReviewCleanupResponse("cleanup-failed", attemptId, failedAt, !checkoutExhausted);
                 return;
             }
 
@@ -1406,6 +1441,20 @@ public sealed partial class TaskServerStore
                                     || !string.Equals(other.TreeBefore, command.TreeBefore, StringComparison.OrdinalIgnoreCase)))
                           : !string.Equals(command.TreeBefore, request.Workspace.TreeHash, StringComparison.OrdinalIgnoreCase)))))
             return ("ReviewInfra", "CommandSubjectMismatch");
+        // The lease and immutable checkout already match. A Codex attempt
+        // stopped during checkout access cannot supply a complete review.
+        if (ReviewCheckoutReadPolicy.IsFailure(request))
+        {
+            var attemptedCodexAspect = request.Commands.Any(command =>
+                command is { Phase: "verification", WorkspaceRole: "candidate" }
+                && ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && string.Equals(command.CliType ?? command.FileName, "codex", StringComparison.OrdinalIgnoreCase)
+                && subject.Plan.Commands.Any(planned => planned.StepId == command.StepId
+                    && planned.Aspect == command.Aspect && ReviewCommandKinds.IsAgent(planned.ExecutionKind)));
+            return ("ReviewInfra", attemptedCodexAspect
+                ? ReviewCheckoutReadPolicy.FailureClassification
+                : "IncompleteCommandEvidence");
+        }
         if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
             return ("ReviewInfra", "ToolUnavailable");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
@@ -1965,11 +2014,11 @@ public sealed partial class TaskServerStore
     }
 
     /// <summary>
-    /// AGT-3077: a registered <c>review:repository-read</c> key names a
-    /// configured credential, not a working one. Keep it only while this
-    /// instance's current advertisement reports a fresh, ready read proof.
+    /// Repository credentials require registration and a fresh read proof.
+    /// The Codex checkout capability comes from the current instance's sandbox
+    /// probe and is held if execution subsequently disproves it.
     /// </summary>
-    private async Task<ReviewExecutorRow> WithProvenRepositoryReadAsync(
+    private async Task<ReviewExecutorRow> WithProvenReviewReadCapabilitiesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         ReviewExecutorRow executor,
@@ -1977,30 +2026,35 @@ public sealed partial class TaskServerStore
         string instanceId,
         CancellationToken ct)
     {
-        if (!executor.Capabilities.Any(IsRepositoryReadKey)) return executor;
         var proven = new HashSet<string>(StringComparer.Ordinal);
         var now = UtcNow;
         await using (var command = Command(connection, """
-            SELECT capability_key, fresh_until FROM runner_capabilities
+            SELECT capability_key, fresh_until, health_state FROM runner_capabilities
              WHERE runner_id = $id AND advertised_instance_id = $instance
-               AND advertised_status = 'ready';
-            """, transaction, ("$id", executorId), ("$instance", instanceId)))
+               AND advertised_status = 'ready'
+               AND (capability_key = $checkout OR capability_key LIKE $repositoryPrefix);
+            """, transaction, ("$id", executorId), ("$instance", instanceId),
+            ("$checkout", ReviewCapabilities.CodexCheckoutRead),
+            ("$repositoryPrefix", ReviewRepositoryAccessPolicy.ReadCapabilityPrefix + "%")))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
-                if (IsRepositoryReadKey(reader.GetString(0)) && Parse(reader.GetString(1)) > now)
+                if (NeedsReadProof(reader.GetString(0)) && Parse(reader.GetString(1)) > now
+                    && (reader.GetString(0) != ReviewCapabilities.CodexCheckoutRead
+                        || reader.GetString(2) == CapabilityHealthStates.Healthy))
                     proven.Add(reader.GetString(0));
         }
         return executor with
         {
             Capabilities = executor.Capabilities
-                .Where(key => !IsRepositoryReadKey(key) || proven.Contains(key))
+                .Where(key => !NeedsReadProof(key) || proven.Contains(key))
+                .Concat(proven.Where(key => key == ReviewCapabilities.CodexCheckoutRead))
                 .ToHashSet(StringComparer.Ordinal),
         };
     }
 
-    private static bool IsRepositoryReadKey(string key)
-        => key.StartsWith(ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
+    private static bool NeedsReadProof(string key)
+        => key == ReviewCapabilities.CodexCheckoutRead || key.StartsWith(ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
 
     private static async Task<ReviewAuthorityRow> ReadReviewAuthorityAsync(
         SqliteConnection connection,
@@ -2084,11 +2138,14 @@ public sealed partial class TaskServerStore
             row.FailureClassification);
 
     private static ReviewReportDto ToReviewReport(ReviewAuthorityRow row)
-        => new(
+    {
+        var checkoutExhausted = TaskServerTransitionAdapter.ReviewCheckoutRetryExhausted(row.FailureClassification, row.AttemptNumber);
+        return new(
             row.ReportId!, row.AttemptId, row.SubjectId, row.Outcome!,
             row.FailureClassification, row.Summary, row.ReportSha256!, row.ReportedAt!.Value,
-            string.Equals(row.Outcome, "ReviewInfra", StringComparison.Ordinal),
-            "4-auto-review");
+            string.Equals(row.Outcome, "ReviewInfra", StringComparison.Ordinal) && !checkoutExhausted,
+            checkoutExhausted ? TaskStates.Escalated : TaskStates.AutoReview);
+    }
 
     private async Task QueueReviewOrchestrationAsync(
         SqliteConnection connection,

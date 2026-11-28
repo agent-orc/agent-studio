@@ -193,15 +193,17 @@ public static class ArtifactIngestionEndpoints
             // acknowledgement: it runs behind a bounded budget and, when it is
             // refused or still running, leaves a queued retry instead of a lost
             // run (AGT-2850).
-            var resultDocument = req.FinalizeResult
-                ? await finalization.FinalizeForAcknowledgementAsync(
-                    task, resultSha: req.AttemptId is null
-                        ? null : authority.GetRun(req.AttemptId)?.ResultSha)
-                : ResultAcknowledgementPlan.NotRequested;
+            var resultDocument = ResultAcknowledgementPlan.NotRequested;
+            if (req.FinalizeResult)
+            {
+                var run = req.AttemptId is null ? null : authority.GetRun(req.AttemptId);
+                var resultSha = run?.ResultSha ?? run?.ResultEnvelope?.ResultSha ?? req.ResultSha;
+                resultDocument = await finalization.FinalizeForAcknowledgementAsync(task, resultSha: resultSha);
+            }
 
             var committedFiles = written.Files.ToList();
             if (resultDocument.CommitStatusDocument)
-                committedFiles.Add("status.md");
+                committedFiles.AddRange(["status.md", SummaryAssessmentStore.FileName]);
             var commit = artifactCommits.TryCommitArtifactUpload(
                 null,
                 task.Id,

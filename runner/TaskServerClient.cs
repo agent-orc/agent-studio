@@ -103,9 +103,13 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                         StringComparison.OrdinalIgnoreCase),
             };
         }
+        var origin = new Uri(options.ServerUrl);
+        var renews = !string.IsNullOrWhiteSpace(options.AuthTokenFile) && origin.Scheme == Uri.UriSchemeHttps;
+        if (renews)
+            handler = new RunnerCredentialRenewalHandler(options.AuthTokenFile!, origin, handler, TimeProvider.System);
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System);
+        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System, renews);
     }
 
     /// <summary>
@@ -1191,6 +1195,10 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             new Contract.ReportRunnerGitProofRequest(fetchVerified, pushVerified), ct);
         response.EnsureSuccessStatusCode();
     }
+
+    internal async Task<string[]> GetTerminalCleanContextHashesAsync(string[] hashes, CancellationToken ct)
+        => await PostJsonAsync<string[], string[]>(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/clean-context/terminal", hashes, ct) ?? [];
 
     /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
     public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)

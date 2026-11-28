@@ -48,7 +48,9 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             }
             else job = await combinedJobs!.CreateAsync(jobRequest, ct);
             if (job is null) return Failed("Task Server returned no one-shot job.");
-            if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
+            if (job.Status == "waiting")
+                return Finish(CliOneShotResult.SpawnFailure(job.Error ?? $"waiting for a host with {job.Capability}",
+                    start, DateTime.UtcNow) with { HostWaiting = true });
             // The Task Server owns queue expiry and extends job expiry at claim.
             // Start the caller's run budget only after a poll observes that claim.
             using var runBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan,

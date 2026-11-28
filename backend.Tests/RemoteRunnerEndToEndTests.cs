@@ -1089,7 +1089,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             AuthorityEpoch: lease.Lease.AuthorityEpoch,
             IdempotencyKey: "remote-done-logs"), ct);
 
-        var artifactUpload = await client.UploadArtifactsAsync(new RArtifactIngest(TaskKey,
+        var upload = new RArtifactIngest(TaskKey,
         [
             new RArtifact(
                 "deliverables.md",
@@ -1105,7 +1105,9 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             Fence: lease.Lease.FencingToken,
             AuthorityEpoch: lease.Lease.AuthorityEpoch,
             IdempotencyKey: "remote-done-artifacts",
-            FinalizeResult: true), ct);
+            FinalizeResult: true,
+            ResultSha: resultSha);
+        var artifactUpload = await client.UploadArtifactsAsync(upload, ct);
         Assert.NotNull(artifactUpload);
         Assert.Equal(2, artifactUpload!.Uploaded);
         Assert.True(artifactUpload.ResultDocumentGenerated, artifactUpload.ResultDocumentStatus);
@@ -1119,6 +1121,11 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         var progressStatus = File.ReadAllText(Path.Combine(activeFolder, "status.md"));
         Assert.Contains("Done and verified by the remote result fixture.", progressStatus);
         Assert.DoesNotContain(TaskTransitionService.ResultScaffoldMarker, progressStatus);
+        Assert.Equal(resultSha, SummaryAssessmentStore.ReadFor(activeFolder, progressStatus)?.EvidenceVersion?.ResultSha);
+
+        var acknowledgement = await client.UploadArtifactsAsync(upload, ct);
+        Assert.True(acknowledgement!.ResultDocumentGenerated, acknowledgement.ResultDocumentStatus);
+        Assert.Equal(2, summaryOneShot.Calls);
 
         var completionRequest = new RRemoteComplete(
             TaskKey,
@@ -1614,7 +1621,8 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             Fence: lease.Lease.FencingToken,
             AuthorityEpoch: lease.Lease.AuthorityEpoch,
             IdempotencyKey: "remote-cancelled-summary-artifacts",
-            FinalizeResult: true), ct);
+            FinalizeResult: true,
+            ResultSha: resultSha), ct);
         Assert.NotNull(artifactUpload);
         Assert.Equal(1, artifactUpload!.Uploaded);
         Assert.Equal(["results/proof.txt"], artifactUpload.Files);
@@ -1671,6 +1679,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         var published = File.ReadAllText(Path.Combine(reviewFolder, "status.md"));
         Assert.DoesNotContain(TaskTransitionService.ResultScaffoldMarker, published);
         Assert.Contains("Done and verified by the remote result fixture.", published);
+        Assert.Equal(resultSha, SummaryAssessmentStore.ReadFor(reviewFolder, published)?.EvidenceVersion?.ResultSha);
     }
 
     [Fact]
@@ -4172,6 +4181,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 
                 - Result: Success
                 - Case: bugfix
+                - Duration: Unknown
 
                 ## Overview
 
@@ -4248,6 +4258,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 
                 - Result: Success
                 - Case: bugfix
+                - Duration: Unknown
 
                 ## Overview
 
@@ -4373,6 +4384,12 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                 Contract.TaskServerProtocol.Current,
                 ReviewExecutorCapabilities));
         registration.EnsureSuccessStatusCode();
+        var registered = (await registration.Content.ReadFromJsonAsync<Contract.RunnerDto>())!;
+        var capability = await http.PutAsJsonAsync($"/api/v1/runners/{runnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(runnerId, instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion, registered.LastSeenAt, 300, 1,
+                [new Contract.AdvertisedCapabilityDto(Contract.ReviewCapabilities.CodexCheckoutRead, "review", "ready")]));
+        capability.EnsureSuccessStatusCode();
     }
 
     /// <summary>

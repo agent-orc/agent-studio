@@ -202,28 +202,26 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // (AGT-2823). Each provider gets its own stable, linked-credential clean-context
 // home - identical isolation to a task's clean home, just keyed by a fixed
 // identity instead of a task id - so the OAuth refresh still writes through
-// but no project transcript or history ever lands in it. A credential
-// generation change re-acquires the home so a later login is linked (AGT-3216).
+// but no project transcript or history ever lands in it. Each invocation holds
+// the sweep lock until the probe finishes and links credentials from a later
+// first login (AGT-3216).
 var authProbeContexts = new ProviderAuthProbeContexts(
-    provider => TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity),
-    provider => ProviderCredentialMonitor.Inspect(provider).CredentialGeneration,
+    provider => TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity, runnerManaged: true),
     Log);
 using var client = new TaskServerClient(options);
 
-TaskCleanContextLease? AuthProbeContext(string provider) => authProbeContexts.Get(provider);
-
 ProviderAuthProbe.Shared.UseLauncher(
-    (fileName, arguments, ct) =>
+    async (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
         var provider = RunnerCapabilityProbe.Provider(fileName);
-        var context = AuthProbeContext(provider);
+        using var context = authProbeContexts.Acquire(provider);
         var environment = context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value)
             ?? new Dictionary<string, string?>();
         // A device sign-in probes its unverified Claude token in this child only (AGT-3225).
         if (ProviderAuthEnvironment.TryGetForCli(provider, out var authName, out var authValue))
             environment[authName] = authValue;
-        return ProcessRunner.RunAsync(
+        return await ProcessRunner.RunAsync(
             invocation.FileName,
             invocation.Arguments,
             workingDirectory: context?.HomePath,
@@ -240,7 +238,7 @@ ProviderAuthProbe.Shared.UseRealRequest(
     async (fileName, statusArguments, ct) =>
     {
         var provider = RunnerCapabilityProbe.Provider(fileName);
-        var context = AuthProbeContext(provider);
+        using var context = authProbeContexts.Acquire(provider);
         if (context is null)
             return new ProcessResult(1, "", "probe isolation unavailable");
         var selection = CliSelection.Resolve(options, new RunSpecDto(CliType: provider));
@@ -305,7 +303,7 @@ string? ModelProbeCredentialGeneration(string provider)
 RunnerModelAcceptanceProbe.Shared.Configure(
     async (provider, model, ct) =>
     {
-        var context = AuthProbeContext(provider);
+        using var context = authProbeContexts.Acquire(provider);
         if (context is null) return new ProcessResult(1, "", "probe isolation unavailable");
         var selection = CliSelection.Resolve(options, new RunSpecDto(CliType: provider, Model: model));
         var root = Path.Combine(context.HomePath, ".model-acceptance-probe");
@@ -413,7 +411,7 @@ try
     // A host supervisor can restart after a crash while its prior child is
     // still alive. The role-local lock keeps the replacement from registering
     // or reattaching until that exact executor process has exited.
-    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review" or "post"
+    using var hostAdapterLock = options.HostAdapter && daemonMode && options.Role is "coding" or "review" or "post" or "gate"
         ? AcquireHostAdapterLock(options)
         : null;
     // IP-1: a run target talks to Studio's deploy routes only, never to Task

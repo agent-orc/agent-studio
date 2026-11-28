@@ -100,6 +100,98 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
     }
 
     [Fact]
+    public async Task Retry_claim_excludes_the_host_that_reported_the_checkout_failure()
+    {
+        SeedTask(TaskStates.AutoReview, _time.GetUtcNow().UtcDateTime);
+        using var factory = BuildFactory();
+        var failed = await ReportExecutorRestartedAsync(factory, Contract.ReviewCheckoutReadPolicy.FailureClassification);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(1, factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>().RunOnce());
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var successor = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.Equal(failed, successor.SourceReviewAttemptId);
+
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        const string sibling = "review-sibling";
+        const string alternate = "review-alternate";
+        async Task<Contract.ReviewClaimResponse> Claim(string runner, string host)
+        {
+            await RegisterReviewerAsync(http, runner, runner, host);
+            var response = await http.PostAsJsonAsync($"/api/v1/runners/{runner}/review-claims",
+                new Contract.ReviewClaimRequest(runner, runner));
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        }
+
+        var sameHost = await Claim(sibling, "review-host");
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.CheckoutRetryDifferentHostRequired, sameHost.Reason);
+        var retry = await Claim(alternate, "alternate-host");
+        Assert.Equal(successor.AttemptId, retry.Attempt!.AttemptId);
+        Assert.Equal("alternate-host", retry.Lease!.HostId);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Operator_can_retry_after_a_platform_scaffold_replacement(bool enginePark, bool edited)
+    {
+        SeedTask(TaskStates.AutoReview, _time.GetUtcNow().UtcDateTime.AddHours(-2));
+        using var factory = BuildFactory();
+        var failed = await ReportExecutorRestartedAsync(factory);
+        var path = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
+        const string original = TaskTransitionService.ResultScaffoldMarker + "\n# Status\n\n- Result: Delivery awaiting review.\n";
+        File.WriteAllText(Path.Combine(path, "status.md"), original);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        if (enginePark)
+        {
+            var review = authority.GetReview(failed)!;
+            var parked = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
+                TaskKey, TaskStates.Escalated, _watchPath, cause: "engine-decision",
+                reason: "Review infrastructure requires a bounded retry or operator intervention.",
+                authorityWrite: new AttemptWriteReference(failed, review.LastFence, review.AuthorityEpoch, "engine-review-park"),
+                expectedSourceState: TaskStates.AutoReview, suppressProductExecution: true,
+                transitionDetail: nameof(TransitionAction.Escalate));
+            Assert.Equal(MoveJobStatus.Success, parked.Status);
+            factory.Services.GetRequiredService<ResultVersionStore>().Replace(
+                parked.NewFolderPath!, TaskTransitionService.ResultScaffoldMarker + "\n# Status\n\n- Result: Parked.\n",
+                ResultProducer.Scaffold(), TaskStates.Escalated, actor: TimelineActors.System);
+        }
+        else
+        {
+            _time.Advance(TimeSpan.FromMinutes(7));
+            Assert.Equal(1, await factory.Services.GetRequiredService<AutoReviewStrandingWatchdog>().RunOnceAsync());
+        }
+        Assert.Contains(ReadTimeline(TaskStates.Escalated), entry =>
+            entry.GetProperty("kind").GetString() == TimelineEventKinds.ResultReplaced
+            && entry.GetProperty("summary").GetString()!.StartsWith("Result replaced by scaffold", StringComparison.Ordinal));
+
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        if (edited)
+        {
+            var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+            var parkedFolder = Path.Combine(_watchPath, TaskStates.Escalated, TaskKey);
+            Assert.True(TaskJsonFile.UpdateField(parkedFolder, "title", "Edited after the park",
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
+            scanner.PublishCoreFromKnownFolder(parkedFolder);
+        }
+        var response = await http.PostAsync($"/api/tasks/{TaskKey}/review/retry", null);
+        if (edited)
+        {
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains("card-changed-since-park", await response.Content.ReadAsStringAsync());
+            return;
+        }
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var retried = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.NotEqual(failed, retried.AttemptId);
+        Assert.Equal(ResultSha, retried.Subject.ExpectedResultSha);
+    }
+
+    [Fact]
     public async Task Retry_that_no_tick_fires_within_the_threshold_no_longer_owns_the_card()
     {
         SeedTask(TaskStates.AutoReview, _time.GetUtcNow().UtcDateTime.AddHours(-2));
@@ -243,28 +335,53 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
     }
 
     /// <summary>Claims the seeded review and reports the review host's restart loss.</summary>
-    private async Task<string> ReportExecutorRestartedAsync(WebApplicationFactory<Program> factory)
+    private async Task<string> ReportExecutorRestartedAsync(WebApplicationFactory<Program> factory,
+        string classification = "ExecutorRestarted")
     {
         SeedReviewAttempt(factory.Services);
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        (await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}",
-            new Contract.RegisterRunnerRequest(RunnerId, "review-host", Instance, "1.0.0",
-                Contract.TaskServerProtocol.Current, ReviewExecutorCapabilities))).EnsureSuccessStatusCode();
+        await RegisterReviewerAsync(http, RunnerId, Instance, "review-host");
         var claimed = await http.PostAsJsonAsync($"/api/v1/runners/{RunnerId}/review-claims",
             new Contract.ReviewClaimRequest(RunnerId, Instance, 120));
         claimed.EnsureSuccessStatusCode();
         var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
-        Assert.Equal("claimed", claim.Status);
+        Assert.True(claim.Status == "claimed", claim.Message ?? claim.Reason);
 
+        var request = ExecutorRestartedReport(claim) with { FailureClassification = classification };
+        if (classification == Contract.ReviewCheckoutReadPolicy.FailureClassification)
+        {
+            request = request with
+            {
+                Summary = "The reviewer could not read the checkout on host 'review-host': bwrap: Operation not permitted",
+                Commands = [new Contract.ReviewCommandEvidenceDto(
+                    "code-quality", "code-quality", "codex", [],
+                    claim.Subject!.ExpectedResultSha, request.Workspace.ActualHead, request.Workspace.TreeHash,
+                    _time.GetUtcNow().UtcDateTime, _time.GetUtcNow().UtcDateTime, 127, null,
+                    new string('a', 64), new string('b', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect)],
+            };
+        }
         var reported = await http.PostAsJsonAsync(
-            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report",
-            ExecutorRestartedReport(claim));
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", request);
         reported.EnsureSuccessStatusCode();
         var report = (await reported.Content.ReadFromJsonAsync<Contract.ReviewReportDto>())!;
+        Assert.Equal(classification, report.FailureClassification);
         Assert.True(report.RetryScheduled);
         Assert.Equal(TaskStates.AutoReview, report.TaskState);
         return claim.Attempt.AttemptId;
+    }
+
+    private async Task RegisterReviewerAsync(HttpClient http, string runner, string instance, string host)
+    {
+        (await http.PutAsJsonAsync($"/api/v1/runners/{runner}",
+            new Contract.RegisterRunnerRequest(runner, host, instance, "1.0.0",
+                Contract.TaskServerProtocol.Current, ReviewExecutorCapabilities))).EnsureSuccessStatusCode();
+        (await http.PutAsJsonAsync($"/api/v1/runners/{runner}/capabilities", new Contract.CapabilityAdvertisementRequest(
+            runner, instance, Contract.CapabilityProtocol.CurrentSchemaVersion,
+            _time.GetUtcNow().UtcDateTime, 300, 1,
+            [new Contract.AdvertisedCapabilityDto(Contract.ReviewCapabilities.CodexCheckoutRead, "review", "ready")])))
+            .EnsureSuccessStatusCode();
     }
 
     private static Contract.ReviewReportRequest ExecutorRestartedReport(Contract.ReviewClaimResponse claim)

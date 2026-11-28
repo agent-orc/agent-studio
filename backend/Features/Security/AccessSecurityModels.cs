@@ -145,6 +145,12 @@ public sealed record RunnerCredential
     public DateTime? ExpiresAt { get; init; }
     public DateTime? LastUsedAt { get; init; }
     public DateTime? RevokedAt { get; init; }
+    public string? PredecessorId { get; init; }
+    public DateTime? RenewalProvenAt { get; init; }
+    public DateTime? SupersededAt { get; init; }
+    public DateTime? RenewalReplayAt { get; init; }
+    public DateTime? RenewalFailingSince { get; init; }
+    public string? RenewalFailure { get; init; }
 }
 
 public sealed record RunnerServiceIdentity
@@ -168,6 +174,7 @@ public sealed record RunnerServiceIdentity
     public DateTime? LastReportAt { get; init; }
     public int ActiveSlots { get; init; }
     public int AvailableSlots { get; init; }
+    public bool RenewalDisabled { get; init; }
     public List<RunnerCredential> Credentials { get; init; } = [];
 }
 
@@ -321,6 +328,7 @@ public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string 
     /// <summary>Bound projects; <c>*</c> grants every project. The default keeps hand-built principals unbound.</summary>
     public IReadOnlyList<string> Projects { get; init; } = [];
     public DateTime? CredentialExpiresAt { get; init; }
+    public string? CredentialRenewalState { get; init; }
 }
 
 public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false, int? RecoveryCodesRemaining = null, bool RecoveryEnrollmentAllowed = false, RestoreNotice? RestoreNotice = null);
@@ -346,6 +354,7 @@ public sealed record PasswordResetRequest(string? TemporaryPassword);
 public sealed record RunnerEnrollmentRequest(string Name, IReadOnlyList<string>? Scopes, DateTime? ExpiresAt, DateTime? CredentialExpiresAt,
     IReadOnlyList<string>? Projects = null);
 public sealed record RunnerProjectsRequest(IReadOnlyList<string>? Projects);
+public sealed record RunnerRenewalPolicyRequest(bool? Enabled);
 public sealed record RunnerEnrollRequest(string Code);
 public sealed record RunnerRotateRequest(IReadOnlyList<string>? Scopes, DateTime? ExpiresAt);
 public sealed record OneTimeSecretResponse(string RunnerId, string RunnerName, string CredentialId, string Secret, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);

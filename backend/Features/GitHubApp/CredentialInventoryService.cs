@@ -27,7 +27,8 @@ public sealed class CredentialInventoryService(IServiceProvider services, IConfi
                 ?? throw new InvalidOperationException("Task Server returned no inventory.");
             var app = await client.GetFromJsonAsync<GitHubAppStatus>("/api/v1/management/github-app", deadline.Token)
                 ?? throw new InvalidOperationException("Task Server returned no App metadata.");
-            var appItems = LocalCredentialInventory.Project(new(app, [], new SecretListing([], []), [], [], []), now).Items;
+            var appItems = LocalCredentialInventory.Project(new(app, [], new SecretListing([], []),
+                security.ListRunners(), [], [], security.RunnerRenewalEnabled), now).Items;
             var supplemental = LocalCredentialInventory.Supplemental(await secrets.ListAsync(null, ct),
                 security.ReadIamSnapshot(), backends.All(), now);
             inventory = new(now, [.. inventory.Items, .. appItems, .. supplemental]);

@@ -28,7 +28,8 @@ public sealed record CredentialInventoryItemDto(
     DateTime? RotationBasisAt = null,
     bool Refreshable = false,
     bool Active = true,
-    string RotationPlanSource = "inventory-default")
+    string RotationPlanSource = "inventory-default",
+    RunnerCredentialRenewalStatus? Renewal = null)
 {
     public string LifetimeClass => CredentialLifecyclePolicy.Classify(this);
     public string Expiry => ExpiresAt?.ToString("O", System.Globalization.CultureInfo.InvariantCulture) ?? "none";

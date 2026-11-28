@@ -299,6 +299,9 @@ public sealed class HumanReviewEscalation
             if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
                 NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
             TryCommitArtifacts(project, jobId, beforeFolder, outcome.NewFolderPath);
+            // Recovery receipts use the landed card after the owned park writes.
+            if (outcome.NewFolderPath is { } parkedFolder)
+                _scanner?.PublishCoreFromKnownFolder(parkedFolder);
         }
         else
             _logger.LogWarning(

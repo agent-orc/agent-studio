@@ -3,6 +3,7 @@ import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angu
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer } from 'rxjs';
 import { AuthSessionState } from '../../services/auth.service';
+import type { RunnerCredentialRenewal } from '../../models/runner-credential-renewal';
 
 export interface CredentialInventoryItem {
   id: string;
@@ -31,7 +32,7 @@ export interface CredentialInventoryItem {
   rotationIntervalDays?: number | null;
   rotationDueAt?: string | null;
   rotationPlanSource?: string;
-
+  renewal?: RunnerCredentialRenewal | null;
 }
 
 export interface CredentialInventory {

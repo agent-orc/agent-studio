@@ -61,7 +61,7 @@ public sealed record PrincipalRotationAcknowledgement(string ConsumerId);
 
 /// <summary>
 /// <paramref name="Role"/> and <paramref name="BoundHostId"/> are the SM-9
-/// binding of a runner credential: its coding or review role and the host its
+/// binding of a runner credential: its coding, review or gate role and the host its
 /// first registration (or the host enrolment) pinned.
 /// </summary>
 public sealed record PrincipalDto(

@@ -11,13 +11,16 @@ public sealed class HostTelemetrySampler
     private readonly IHostFilesystemProbe _probe;
     private readonly string _proc;
     private readonly Func<long?>? _preparationCopyBytes;
+    private readonly Func<CleanContextUsage?>? _cleanContextUsage;
 
     public HostTelemetrySampler(RunnerOptions? options = null, IHostFilesystemProbe? probe = null,
-        Func<long?>? preparationCopyBytes = null, string proc = "/proc")
+        Func<long?>? preparationCopyBytes = null, string proc = "/proc",
+        Func<CleanContextUsage?>? cleanContextUsage = null)
     {
         _options = options;
         _proc = proc;
         _preparationCopyBytes = preparationCopyBytes;
+        _cleanContextUsage = cleanContextUsage;
         _probe = probe ?? HostFilesystemProbes.Default;
     }
     private CpuCounters? _previousCpu;
@@ -60,6 +63,8 @@ public sealed class HostTelemetrySampler
             paths.Add(("salvage", _options.SalvageDir));
         foreach (var containerPath in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
             paths.Add(("container storage", containerPath));
+        var context = _cleanContextUsage?.Invoke();
+        if (context is { Count: > 0 }) paths.Add(("clean-context", context.Path));
         var filesystems = _probe.Measure(paths);
         if (HostDiskPressurePolicy.Decide(filesystems, new HostDiskPressureThresholds()).Level != HostDiskPressureLevel.Healthy)
             filesystems = _probe.Measure(paths,
@@ -71,6 +76,24 @@ public sealed class HostTelemetrySampler
                 ? disk with { OwnedBytes = new Dictionary<string, long>(disk.OwnedBytes ?? new Dictionary<string, long>())
                     { [HostDiskPressurePolicy.PreparationCopies] = bytes } }
                 : disk).ToArray();
+        if (context is not null)
+        {
+            var disk = filesystems.Where(disk =>
+                {
+                    var relative = Path.GetRelativePath(disk.Path, context.Path);
+                    return !Path.IsPathRooted(relative) && relative != ".."
+                        && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+                })
+                .OrderByDescending(disk => disk.Path.Length).FirstOrDefault();
+            if (disk is not null)
+            {
+                var label = $"clean-context ({context.Count} {(context.Count == 1 ? "home" : "homes")})";
+                filesystems = filesystems.Select(item => item == disk
+                    ? item with { OwnedBytes = new Dictionary<string, long>(item.OwnedBytes ?? new Dictionary<string, long>())
+                        { [label] = context.Bytes } }
+                    : item).ToArray();
+            }
+        }
         var network = OperatingSystem.IsLinux() ? NetworkRate(now) : null;
         return WithConnectivity(sample with
         {

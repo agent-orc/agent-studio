@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Security;
 
@@ -338,7 +339,7 @@ public static class AccessSecurityEndpoints
             Execute(() =>
             {
                 RequireOwner(context, store);
-                return Results.Ok(store.ListRunners().Select(ToRunnerResponse));
+                return Results.Ok(store.ListRunners().Select(runner => ToRunnerResponse(runner, store)));
             }));
 
         // Provisioning can prove the authenticated service identity without
@@ -356,6 +357,26 @@ public static class AccessSecurityEndpoints
             });
         });
 
+        app.MapPost(RunnerCredentialRenewalProtocol.Path, (RunnerCredentialRenewalRequest request,
+            HttpContext context, AccessSecurityStore store) => Execute(() =>
+        {
+            if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal runner)
+                return Results.Json(new { error = "runner-authentication-required" }, statusCode: StatusCodes.Status401Unauthorized);
+            store.RenewRunnerCredential(runner, request);
+            if (request.SuccessorId is { } id)
+                context.Response.Headers[RunnerCredentialRenewalProtocol.StagedHeader] = id;
+            return Results.NoContent();
+        })).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(1024));
+
+        auth.MapPut("/runners/{id}/renewal", (string id, RunnerRenewalPolicyRequest request,
+            HttpContext context, AccessSecurityStore store) => Execute(() =>
+        {
+            RequireOwner(context, store);
+            var enabled = request.Enabled
+                ?? throw new SecurityOperationException(400, "renewal-policy-required", "Set automatic renewal to on or off.");
+            return Results.Ok(ToRunnerResponse(store.SetRunnerRenewal(id, enabled), store));
+        }));
+
         auth.MapPost("/runners/{id}/credentials", (string id, RunnerRotateRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
@@ -371,7 +392,7 @@ public static class AccessSecurityEndpoints
             {
                 RequireOwner(context, store);
                 RequireKnownProjects(request.Projects, projects);
-                return Results.Ok(ToRunnerResponse(store.UpdateRunnerProjects(id, request.Projects)));
+                return Results.Ok(ToRunnerResponse(store.UpdateRunnerProjects(id, request.Projects), store));
             }));
 
         auth.MapDelete("/runners/{id}/credentials/{credentialId}", (string id, string credentialId, HttpContext context, AccessSecurityStore store) =>
@@ -500,16 +521,18 @@ public static class AccessSecurityEndpoints
     internal const string RunnerProjectsNotice = "Enrolled before project binding: holds all projects until you choose its projects.";
     internal const string RunnerExpiryNotice = "No expiry: issued before the 30-day default. Rotate it to adopt the default.";
 
-    private static object ToRunnerResponse(RunnerServiceIdentity runner) => new
+    private static object ToRunnerResponse(RunnerServiceIdentity runner, AccessSecurityStore store) => new
     {
         runner.Id, runner.Name, runner.CreatedAt, runner.RevokedAt,
         runner.DrainRequestedAt, runner.RetireRequestedAt, runner.RetiredAt,
         runner.LastSeenAt, runner.LastClaimAt, runner.LastReportAt, runner.ActiveSlots, runner.AvailableSlots,
         projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
         projectsNotice = runner.Projects is null ? RunnerProjectsNotice : null,
-        credentials = runner.Credentials.Select(x => new
+        renewal = store.DescribeRunnerRenewal(runner),
+        credentials = runner.Credentials.Where(x => x.PredecessorId is null || x.RenewalProvenAt is not null).Select(x => new
         {
-            x.Id, x.Scopes, x.CreatedAt, x.ExpiresAt, x.LastUsedAt, x.RevokedAt,
+            x.Id, x.Scopes, x.CreatedAt, x.ExpiresAt, x.LastUsedAt,
+            revokedAt = x.RevokedAt ?? x.SupersededAt,
             expiryNotice = x.ExpiresAt is null && x.RevokedAt is null ? RunnerExpiryNotice : null,
         })
     };

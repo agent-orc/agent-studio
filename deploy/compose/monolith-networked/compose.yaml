@@ -60,6 +60,7 @@ services:
       TaskRepository: /data/workspace
       HOME: /data/home
       Security__Profile: networked
+      Security__RunnerCredentialRenewalEnabled: ${STUDIO_RUNNER_CREDENTIAL_RENEWAL_ENABLED:-true}
       Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:?Set true for public or false for private installs}
       Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2

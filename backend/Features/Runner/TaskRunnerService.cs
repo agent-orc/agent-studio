@@ -29,6 +29,7 @@ public class TaskRunnerService : BackgroundService
     private readonly CliRouter _router;
     private readonly ContextUsageParser _contextUsageParser;
     private readonly SummaryGenerationService _summaryService;
+    private readonly RemoteResultFinalizationService? _resultFinalization;
     private readonly RuntimePromptService _prompts;
     private readonly TaskTransitionService _transitions;
     private readonly ProjectSettingsService _projectSettings;
@@ -189,7 +190,8 @@ public class TaskRunnerService : BackgroundService
         ModelSelectionLedger? selectionLedger = null,
         TaskIntegrationStatusService? dependencyIntegration = null,
         TaskListGitProjectionCache? dependencyGitProjection = null,
-        OverlapDispatchGuard? overlapGuard = null)
+        OverlapDispatchGuard? overlapGuard = null,
+        RemoteResultFinalizationService? resultFinalization = null)
     {
         _config = config;
         _logger = logger;
@@ -203,6 +205,7 @@ public class TaskRunnerService : BackgroundService
         _router = router;
         _contextUsageParser = contextUsageParser;
         _summaryService = summaryService;
+        _resultFinalization = resultFinalization;
         _prompts = prompts;
         _transitions = transitions;
         _projectSettings = projectSettings;
@@ -463,6 +466,7 @@ public class TaskRunnerService : BackgroundService
                 dependencyIntegration: _dependencyIntegration,
                 dependencyGitProjection: _dependencyGitProjection,
                 overlapGuard: _overlapGuard,
+                resultFinalization: _resultFinalization,
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
@@ -1956,6 +1960,7 @@ public class TaskRunnerService : BackgroundService
             dependencyIntegration: _dependencyIntegration,
             dependencyGitProjection: _dependencyGitProjection,
             overlapGuard: _overlapGuard,
+            resultFinalization: _resultFinalization,
             loadThrottle: _loadThrottle,
             modelMigrationCatalog: _modelMigrationCatalog,
             promptEnrichment: _promptEnrichment,

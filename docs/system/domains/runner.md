@@ -30,6 +30,31 @@ absolute ceiling. Live copies can exceed the target. Host filesystem telemetry
 reports the measured total as `ownedBytes["preparation copies"]`. A disk hold
 names free space and the preparation footprint in the card and Operations.
 
+## Clean context storage
+
+The coding daemon's startup and five-minute storage sweep inventories task
+homes under the host's clean-context root. The Task Server returns only matching
+hashes for completed or archived cards the runner has run through the
+[runner clean-context lifecycle lookup](../../concepts/platform-architecture/task-server-topology.md#runner-clean-context-lifecycle-lookup).
+Idle homes expire
+after two days, allowing an overnight continuation and a working-day delay.
+The sweep preserves reserved slots and checks Linux process bindings and worker
+launch locks before moving a home out of circulation. The detached worker
+checks the session under its clean-home lease before applying the compact
+resume prompt and resume limits. If eviction wins before that check, it starts
+a fresh session from the durable worktree with the full card prompt and normal
+run limits, and the runner records the fresh session in the continuation ledger.
+The host storage report
+shows the number of homes and their logical file size even on healthy disks.
+Provider auth and model probes reuse their provider's dedicated home. Each
+invocation releases its lease when it finishes, allowing later sweeps to reclaim
+expired task homes that share its lock stripe.
+
+The same sweep checks the M1 pilot preparation cache in the user data directory.
+It reclaims unbound per-run copies after the existing 24-hour orphan window and
+includes their bytes in the preparation-copy footprint. Published entries and
+preparation locks remain available to the cache.
+
 ## Dispatch overlap admission, DS-0 and AGT-4037
 
 Both the local pickup in `ProjectRunner` and the remote claim in
@@ -154,8 +179,8 @@ Selected working decision: dynamic placement D2 option A, one supervised host
 agent per physical machine with coding and review adapters. The AGT-3019 D5
 option A allocation remains the single host budget; this slice consumes the
 DP-S1 shadow admission contract and does not activate a new placement policy.
-The host agent starts with both roles disabled. A role is enabled only after
-its old daemon has acknowledged a claim barrier, every persisted attempt has
+The host agent starts with its roles disabled. Coding and review are enabled
+after their old daemon has acknowledged a claim barrier, every persisted attempt has
 reached a fenced terminal or cleanup state, and that daemon process has exited.
 The role adapter runs the existing `RemoteRunnerDaemon` or
 `RemoteReviewDaemon` in a child process with its original runner identity,
@@ -169,6 +194,31 @@ or protocol mismatch holds that adapter until a host-agent restart. See the
 for the canary, drain, and rollback sequence. Linux per-attempt containers are
 the subsequent DP-S3 executor slice; DP-S2 retains the current process and
 cgroup executor.
+
+### Gate adapter
+
+The optional `gate` block starts the existing `RemoteGateDaemon` in its own
+child process after `host-agent enable-role <config> gate`. It uses a separate
+gate runner ID and state directory on the same physical host and Task Server
+as the coding and review adapters. The installation owner issues a one-time
+gate join token. The credential is bound to the gate role and its host's
+project policy. The gate daemon uses the same capability registry as the other
+roles and publishes `gate-executor`, `gate:post-merge`, `gate:git`, and
+`gate:source-bundle`.
+
+On Linux the supervisor compares the device and inode of state directories to
+detect bind mount aliases. For a path that does not exist yet, it compares the
+nearest existing directory and the remaining path.
+
+The host inventory projects both durable gate claims, including the post-merge
+lane. A role drain closes new admission after any request already in flight,
+lets leased work and cleanup finish, then disables the role after the child
+exits with a matching zero-attempt acknowledgement. Use the
+[gate enrollment and canary runbook](../../operations/remote-hosts.md#enrol-a-gate-adapter-and-run-a-merge-canary)
+to try one project's merge gate under `RemoteGate:Transport=canary` and return
+to the bridge. The bridge remains the default. Existing claimed workers with
+a coding or review credential must follow the
+[credential upgrade steps](../../operations/remote-hosts.md#upgrade-an-existing-claimed-gate-worker).
 
 ## Dynamic placement work container executor, DP-S3
 

@@ -7,6 +7,38 @@ namespace AgentRunner.Tests;
 [Collection(ProcessEnvironmentCollection.Name)]
 public sealed class RunnerCapabilityProbeTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Codex_read_only_sandbox_proof_is_advertised_with_the_command_result(bool ready)
+    {
+        var options = new RunnerOptions
+        {
+            Role = "review", CodexCliBin = "configured-codex", ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "review-a", RunnerName = "review-a", Hostname = "host-a", BackendName = "test",
+            WorkDir = Path.GetTempPath(), BaseBranch = "main",
+        };
+        var calls = 0;
+        const string failure = "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted";
+        var proof = await CodexReviewSandboxProbe.RunAsync(options, default, (binary, args, cwd, _) =>
+        {
+            calls++;
+            Assert.Equal(options.CodexCliBin, binary);
+            Assert.Equal(new[] { "-c", "sandbox_mode=\"read-only\"", "sandbox" }, args.Take(3));
+            Assert.Equal("probe.txt", args[^1]);
+            return Task.FromResult(ready
+                ? new ProcessResult(0, File.ReadAllText(Path.Combine(cwd, "probe.txt")), "")
+                : new ProcessResult(1, "", failure));
+        });
+
+        var capability = Assert.Single(RunnerCapabilityProbe.Advertise(options, gitPushReady: false,
+            codexReviewSandbox: proof), item => item.Key == ReviewCapabilities.CodexCheckoutRead);
+        Assert.Equal(1, calls);
+        Assert.Equal(ready ? "ready" : "unavailable", capability.Status);
+        Assert.Equal(ready ? null : failure, proof.NamespaceFailure);
+        if (!ready) Assert.Contains(failure, capability.Detail);
+    }
+
     [Fact]
     public void Allowed_warning_event_is_authenticated_provider_evidence()
     {

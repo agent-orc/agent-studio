@@ -132,7 +132,9 @@ Name the projects the runner may work on in `projects` (project ids or names;
 `*` for all). A runner enrolled without a project claims, reads and reviews
 nothing and receives no repository token. The enrolled credential expires 30
 days after enrollment unless `credentialExpiresAt` names another end
-(`Security:RunnerCredentialLifetimeDays` changes the default). Change a
+(`Security:RunnerCredentialLifetimeDays` changes the default). A test
+installation can set `Security:RunnerCredentialLifetimeMinutes` to override the
+days setting. Change a
 runner's projects later with `PUT /api/auth/runners/{id}/projects` or
 **Edit projects** in Settings > Access. A runner enrolled before project
 binding keeps all projects, and its credentials keep no expiry, until you
@@ -159,8 +161,84 @@ Set `RUNNER_ENROLLMENT_CONFIG_DIR` to an absolute path before enrollment when
 the service uses a different private configuration directory; both files are
 written there.
 
-For an existing host, stop only its daemon, have the owner issue a code for its
-existing display name and required scopes, enroll on that host, switch
+### Automatic credential renewal
+
+The networked Studio deployment uses the Studio access store for roles enrolled
+through Settings > Access and `/api/auth/runner-enroll`. A standalone Task Server
+uses its own principal store and management rotation workflow.
+
+Automatic renewal is on by default for expiring Studio runner credentials.
+Keep `RUNNER_AUTH_TOKEN_FILE` in a private directory where the role's service
+user can create and atomically replace files. Give each role its own file.
+For a container, mount that directory read-write so the replacement survives a
+restart. Keep the HTTPS origin and enrolled runner ID already in the role's
+environment.
+
+Studio opens renewal for the final third of the credential's lifetime, so a
+30-day credential becomes eligible after 20 days. The host stages a private
+successor in the credential directory and sends its verifier to Studio using
+the current credential. After Studio registers it, the host atomically replaces
+the live file. Its next request proves the successor and ends the predecessor.
+The successor keeps the same runner ID, scopes and project binding and starts a
+new lifetime at proof. The overlap ends at proof or at the predecessor's
+original expiry, whichever comes first. A restart before proof resumes the
+same staged successor. A role that misses the expiry needs another enrollment
+code.
+
+In Settings > Access, open an enrolled role and use **Turn automatic renewal
+off** to keep manual rotation for that role. The same setting is available
+through the [per-runner renewal API](#per-runner-renewal-api). To disable new
+renewals for the installation, set
+`Security__RunnerCredentialRenewalEnabled=false` on the Studio API. With the
+networked Compose deployment, set
+`STUDIO_RUNNER_CREDENTIAL_RENEWAL_ENABLED=false` in the deployment environment
+and apply it with the usual server rollout. A successor already registered can
+finish proving. Revoke the role to end it and every credential in its chain
+immediately.
+
+The runner detail and Settings > Credentials show the current expiry, the
+last proved renewal and the next renewal window. They also show when a renewal
+started failing and why. Studio records a refusal if it receives a renewal
+request from a superseded credential, and shows the latest refusal on both
+surfaces. Healthy automatic renewal suppresses expiry reminders. For an
+unreachable host, Studio reports a missing proof after a grace period of one
+tenth of the renewal window, capped at 15 minutes.
+
+For roles already enrolled, deploy Studio first and update the host agents
+before their current credentials expire. A live, expiring credential in a
+writable file adopts renewal without a new code or token exchange by the
+owner. A pre-expiry-policy credential with no end date still needs a one-time
+manual rotation to adopt the finite lifetime.
+
+#### Per-runner renewal API
+
+Send `PUT /api/auth/runners/{id}/renewal` from an authenticated same-origin
+client using the Studio Owner session cookie and its matching `X-CSRF-Token`
+header. Use the runner identity `id` from `GET /api/auth/runners`.
+
+```http
+PUT /api/auth/runners/{id}/renewal
+Content-Type: application/json
+
+{"enabled": false}
+```
+
+Use `false` to turn automatic renewal off for the role and `true` to turn it
+back on. The API returns `200 OK` with the updated runner record in the same
+shape as an entry in `GET /api/auth/runners`. `renewal.runnerEnabled` is the
+saved per-runner setting, `renewal.installationEnabled` is the installation
+setting, and `renewal.enabled` is the effective setting for the current
+credential. If the installation switch is off, saving `true` for a role
+leaves its effective setting off.
+
+A missing or null `enabled` returns `400` with `renewal-policy-required`.
+Unknown, revoked, retired, or non-runner IDs return `404` with
+`runner-not-found`.
+
+### Migrate a host from the local profile
+
+To migrate a host from the local profile, stop only its daemon, have the owner
+issue a code for its existing display name and required scopes, enroll on that host, switch
 `RUNNER_SERVER_URL` to the installation's HTTPS origin, and restart. Verify
 `GET /api/auth/runner` and a claim or idle claim response with the new bearer,
 then remove the reverse SSH tunnel and its keeper. Repeat separately for every

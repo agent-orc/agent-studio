@@ -577,9 +577,10 @@ public sealed class RemoteTaskRunner
             outputLines = execution.OutputLines;
             var resumedMechanical = _state.LoadAll().FirstOrDefault(candidate =>
                 string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal))?.InputSessionId is not null;
-            var mechanicalFallbackReason = MechanicalRoundFallbackPolicy.Reason(
-                resumedMechanical, outcome.Kind, outcomeDecision.Outcome,
-                outcomeDecision.RawFacts.StdErr);
+            var mechanicalFallbackReason = outcome.Kind == RunOutcomeKind.MechanicalFallback
+                ? outcomeDecision.Detail
+                : MechanicalRoundFallbackPolicy.Reason(
+                    resumedMechanical, outcome.Kind, outcomeDecision.Outcome, outcomeDecision.RawFacts.StdErr);
             if (mechanicalFallbackReason is not null)
             {
                 outcome = new RunOutcome(RunOutcomeKind.MechanicalFallback,
@@ -708,7 +709,7 @@ public sealed class RemoteTaskRunner
             // must finish while this attempt is leased: settling first turns a
             // later upload into a fenced 409 and loses otherwise eligible
             // evidence. Transfer faults remain non-fatal for the code handoff.
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, teardown.ResultSha);
 
             if (outbox is not null)
             {
@@ -982,7 +983,7 @@ public sealed class RemoteTaskRunner
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, stopTeardown.ResultSha);
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -1124,7 +1125,7 @@ public sealed class RemoteTaskRunner
                         && artifactManifest is not null)
                     {
                         outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
-                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox, teardown.ResultSha);
                         await CompleteOrReconcileAsync(
                             taskKey,
                             lease,
@@ -1303,6 +1304,7 @@ public sealed class RemoteTaskRunner
 
         var runSpec = slot.RunSpec;
         string prompt;
+        string? mechanicalPrompt = null;
         FollowUpDeliveryDto? acknowledgedFollowUp = null;
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
@@ -1330,6 +1332,7 @@ public sealed class RemoteTaskRunner
         {
             slot = _state.Save(slot with
             {
+                InputSessionId = null,
                 ResumeDecision = "fresh-run",
                 ResumeRejectionReason = slot.FreshRunReason,
             });
@@ -1343,7 +1346,7 @@ public sealed class RemoteTaskRunner
                 _options.Hostname, shutdown);
             if (continuation.SessionId is not null)
             {
-                prompt = continuation.DeltaPrompt!;
+                mechanicalPrompt = continuation.DeltaPrompt!;
                 slot = _state.Save(slot with
                 {
                     InputSessionId = continuation.SessionId,
@@ -1355,6 +1358,7 @@ public sealed class RemoteTaskRunner
             {
                 slot = _state.Save(slot with
                 {
+                    InputSessionId = null,
                     ResumeDecision = "fresh-run",
                     ResumeRejectionReason = continuation.Reason ?? "resume-precondition-failed",
                 });
@@ -1365,7 +1369,7 @@ public sealed class RemoteTaskRunner
         }
         if (workspace.PushProtectionRecovery is { } pushProtection)
         {
-            prompt += "\n\n## Retained worktree recovery required\n" +
+            var recoveryPrompt = "\n\n## Retained worktree recovery required\n" +
                       $"GitHub push protection rejected {pushProtection.SecretType} at " +
                       $"{pushProtection.Path}:{pushProtection.Line}" +
                       (pushProtection.Commit is null ? "" : $" in commit {pushProtection.Commit}") + ". " +
@@ -1373,6 +1377,8 @@ public sealed class RemoteTaskRunner
                       "unpushed commit history, build fake test credentials at runtime, and rewrite the " +
                       "unpushed commit(s). Verify the offending value is absent from the commits before finishing. " +
                       "Do not discard unrelated task work.\n";
+            prompt += recoveryPrompt;
+            if (mechanicalPrompt is not null) mechanicalPrompt += recoveryPrompt;
             shipper.Add("system", $"[runner] retained worktree recovery: {pushProtection.Summary}");
         }
         var specLine =
@@ -1426,8 +1432,10 @@ public sealed class RemoteTaskRunner
                 resumeSessionId: slot.InputSessionId,
                 cleanContextKey: taskKey,
                 tokenCeiling: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.TokenCeiling,
-                timeoutSeconds: EffectiveRunTimeoutSeconds(runSpec, slot.InputSessionId is not null),
+                timeoutSeconds: EffectiveRunTimeoutSeconds(runSpec, mechanicalResume: false),
                 tokenBaseline: slot.InputSessionId is null ? null : slot.PreviousSession?.TotalTokens,
+                mechanicalResume: mechanicalPrompt is null ? null : new DetachedMechanicalResume(
+                    mechanicalPrompt, EffectiveRunTimeoutSeconds(runSpec, mechanicalResume: true)!.Value),
                 // The agent runs this repository's own build, test and lint
                 // commands. Without the preparation's cache binding its first
                 // `--no-restore` build resolves against a package folder the
@@ -1526,6 +1534,15 @@ public sealed class RemoteTaskRunner
                 var observation = DurableAgentProcess.InspectForReattach(slot);
                 if (observation.Result is { } result)
                 {
+                    if (result.ContextFallback == MechanicalContextFallback.FreshSession)
+                    {
+                        slot = slot with
+                        {
+                            InputSessionId = null,
+                            ResumeDecision = "fresh-run",
+                            ResumeRejectionReason = MechanicalSessionContinuation.SessionLostBeforeLaunch,
+                        };
+                    }
                     slot = _state.Save(slot with
                     {
                         Phase = FinalizationRetryPolicy.Phase,
@@ -1547,6 +1564,16 @@ public sealed class RemoteTaskRunner
                             sameSessionResumeAttempts,
                             invocation,
                             slot.ModelCapacityRetryAttempts);
+                    if (result.ContextFallback == MechanicalContextFallback.RequiresFreshClaim)
+                    {
+                        classified = classified with
+                        {
+                            Outcome = new RunOutcome(RunOutcomeKind.MechanicalFallback,
+                                "The planned mechanical session is unavailable. Request a fresh attempt."),
+                            Decision = MechanicalRoundFallbackPolicy.AsTypedDecision(classified.Decision,
+                                MechanicalSessionContinuation.SessionLostBeforeLaunch),
+                        };
+                    }
                     var providerAccess = ProviderAccessClassifier.ClassifyRun(
                         processResult.ExitCode,
                         processResult.StdOut,
@@ -1999,7 +2026,8 @@ public sealed class RemoteTaskRunner
         RunLeaseInfoDto lease,
         ArtifactTransferPlan? plan,
         LogShipper shipper,
-        DurableRunOutbox? outbox)
+        DurableRunOutbox? outbox,
+        string? resultSha)
     {
         if (plan is null) return;
         var issues = plan.Skipped.ToList();
@@ -2089,7 +2117,8 @@ public sealed class RemoteTaskRunner
                 Fence: lease.FencingToken,
                 AuthorityEpoch: lease.AuthorityEpoch,
                 IdempotencyKey: $"artifact-finalize:{lease.AttemptId}:{plan.Manifest.Digest}",
-                FinalizeResult: true), CancellationToken.None);
+                FinalizeResult: true,
+                ResultSha: resultSha), CancellationToken.None);
             _log($"artifact result-document finalization task={taskKey} ResultDocumentStatus={finalization?.ResultDocumentStatus ?? "missing"}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

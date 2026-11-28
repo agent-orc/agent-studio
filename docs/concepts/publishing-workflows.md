@@ -133,15 +133,70 @@ dispatching the existing workflow.
   `PublishWorkflowParser`, `PublishManifestLocator`, `PublishTargetService`,
   `TaskPublishableService`, and `PublishEndpoints`.
 - Repository releases: `ProjectReleaseExecution` previews the declared branch subject, verifies it, runs the repository command, and atomically pushes its branch and tag. Contained pending cards receive package release timeline receipts.
-- Backend actions: `PublishActionService` performs guarded manifest/tag pushes,
-  GitHub workflow dispatch, and `gh api` run tracking. Authorization comes from
-  the operator-managed `gh` CLI session; the product never persists a token.
+- Backend actions: `PublishActionService` performs guarded manifest/tag pushes.
+  `GitHubPublishClient` uses the server's publishing App installation for workflow
+  dispatch, run tracking, and deployment reconciliation. See
+  [Publishing authorization](#publishing-authorization) for setup and cutover.
 - Git primitives: `GitService.GetLatestVersionTag`,
   `GetMainlineCommitsForScope`, and `GetTipCommitDateUtc`.
 - Snapshot fold: `publishTargets` on the project snapshot.
 - Board fold: `TaskInfo.PublishSignal` on task lists and detail.
 - Frontend: `project-publish-panel` provides the guided release/deploy flow; the
   accepted-task chip remains the per-task signal.
+
+### Publishing authorization
+
+Use a dedicated GitHub App installed on the selected publishing repositories.
+Give it Actions read/write for workflow dispatch and run status and Deployments
+read for GitHub Pages reconciliation. The server requests a short-lived token for
+one repository and one operation's permissions, plus Metadata read. Deposit the
+App's private key in the Studio workspace secret provider under the platform-only
+name `AGENT_STUDIO_GITHUB_PUBLISH_APP_PRIVATE_KEY`. Configure the public App ID
+and the approved GitHub URL per registered Studio project ID in server settings.
+
+```json
+{
+  "Publishing": {
+    "GitHubApp": {
+      "AppId": 12345,
+      "Projects": {
+        "PROJ-001": "https://github.com/example/publish-canary.git"
+      }
+    }
+  }
+}
+```
+
+The registered project's checkout `origin` must match that binding for dispatch.
+Run polling uses the repository recorded at dispatch or tag push, subject to
+the current binding. Studio asks GitHub for the dispatch run ID and saves it for
+polling. An unsettled dispatch that owns a quota slot also stores its run ID with
+the slot, so the background reconciler can resume after a restart. Older dispatch
+records and accepted dispatches without a run receipt use workflow discovery.
+
+Tag-triggered package releases need one matching HTTPS `origin` push URL and
+coverage through the existing project Git authorization. [GitHub App Git routing](../operations/setup/github-app.md#how-git-finds-the-token)
+The Git boundary atomically pushes the branch and version tag. The publishing App
+tracks the tag workflow. Registry authentication belongs to that workflow, such as
+Trusted Publishing through GitHub OIDC. A declared project release command keeps
+its repository-owned credential requirements.
+
+The website workflow and any called workflows or deployment jobs own their
+credentials. For GitHub Pages, use the job's GitHub token with declared permissions
+for checkout and Pages, and OIDC for the deploy job. If a downstream operation needs
+a different credential, deposit it in that workflow's repository or protected
+environment and reference it explicitly. The publishing App key and installation
+tokens stay on the server.
+
+For cutover, run website and package canaries from a Studio service instance with
+no GitHub CLI sign-in or inherited GitHub token variables. Record the website run
+ID, head SHA, build artifact ID or digest, successful downstream deployment and
+served revision. Verify the slot stays reserved for a live deployment and is
+released when GitHub reports that deployment inactive. Record the package tag,
+branch and tag SHA, release run and resulting test package version. Confirm a
+project outside the binding cannot dispatch. After the rollback window, remove
+only the superseded Studio publish caller binding and have its owner revoke the
+associated GitHub grant once all of that grant's other consumers are cleared.
 
 ## 6. Honest limitations
 
