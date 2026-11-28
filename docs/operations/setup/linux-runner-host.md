@@ -1791,12 +1791,13 @@ stale once the checkout's HEAD moves past it.
 
 ### Post-merge develop checks
 
-The coding Runner automatically polls registered projects whose `testing.mode`
-is `post-merge`. No project environment file or timer is needed. The project
-registry supplies the repository URL, and its integration branch setting supplies
-the branch. `pre-merge` projects (the strict strategy) are excluded. The current
-settings default remains `pre-merge`; this host feature does not migrate project
-policy or change model review placement.
+The coding Runner automatically polls registered projects using the `fast` or
+`balanced` testing strategy (`testing.mode` = `post-merge`). No project environment
+file or timer is needed. The project registry supplies the repository URL, and
+its integration branch setting supplies the branch. The default strategy is
+`fast`; `strict` (`pre-merge`) projects are excluded. Model review aspects still
+run before integration in every strategy. See the
+[testing strategy overview](../../system/domains/pipeline.md#testing-strategy-agt-3965).
 
 The host uses its existing Runner service credential, registered client identity,
 and TLS settings. When
@@ -1817,8 +1818,12 @@ its pinned `FETCH_HEAD` changes. Its one sequential post-merge executor also cou
 as occupied admission for other queued projects. The host discovers local sibling
 state roots and reuses `COVERAGE_RUN_STATE_DIRS` when already configured, so coding,
 review and gate claims keep their existing admission effect. Window sizing comes from the project's look-ahead minutes and maximum batch
-size. Admission retains the occupied-slot and load-per-core limits; observation
-and fetching continue while tests wait. `/api/develop-states` includes
+size. A connected gate executor advertising `gate:post-merge` takes due merge
+windows and nightly runs through the claimable gate transport. Without one, the
+run host executes a merge window once the oldest pending integration reaches the
+project's `windowMinutes`, despite occupied coding slots or host load. Only the
+nightly fallback still waits for free coding capacity. Observation and fetching
+continue while tests wait. `/api/develop-states` includes
 `pendingWindow` with the fetched tip, opening and observation timestamps,
 window minutes, admission reason, and `starved`. Operations shows an alert when
 admission kept a changed branch waiting longer than its window. An admitted
