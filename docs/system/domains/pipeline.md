@@ -5155,6 +5155,21 @@ lifecycle remain platform-owned. Teardown refuses untouched text conflict marker
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
 
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. A mechanical fallback advances
+the pin only if the published ref resolves to the exact reported commit and
+that commit descends from the pinned delivery. A resolved merge then becomes
+the next checkout base. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
+
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic
 handoffs record the exact saved prompt digest and save timestamp. The existing

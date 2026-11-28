@@ -142,7 +142,7 @@ public sealed class TaskIntegrationRecoveryService
 
         if (!ContinuationBaseStore.Save(current.FolderPath, new ContinuationBaseRecord(
                 subject.ImmutableResultRef ?? subject.ResultRef!, subject.ResultSha,
-                ContinuationBaseReasons.ContinueRoundResult, subject.RunAttemptId, DateTime.UtcNow)))
+                ContinuationBaseReasons.ContinueRoundResult, subject.RunAttemptId, DateTime.UtcNow, RetainUntilIntegrated: true)))
             return Failed("The integration recovery delivery base could not be persisted.");
 
         var supersession = _mutations.SupersedeCurrentDeliveryOnFolder(
