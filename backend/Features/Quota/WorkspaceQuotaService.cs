@@ -32,7 +32,8 @@ public sealed record QuotaOverrideAudit(DateTimeOffset At, string WorkspaceId, s
 public sealed record QuotaDeployExecution(string ProjectId, string JobId, string EnvironmentId,
     DateTime StartedAt, DateTime? CompletedAt);
 /// <summary>The unsettled dispatch that owns a hosting slot it reserved; DispatchedAt identifies it.</summary>
-public sealed record QuotaHostingDispatch(string Project, string EnvironmentId, string Workflow, DateTime DispatchedAt);
+public sealed record QuotaHostingDispatch(string Project, string EnvironmentId, string Workflow, DateTime DispatchedAt,
+    long? RunId = null, string? Repository = null, string? GitRef = null);
 
 /// <summary>Workspace and project limits. Usage is projected from the same token and pipeline records as Studio.</summary>
 public sealed class WorkspaceQuotaService
@@ -378,7 +379,7 @@ public sealed class WorkspaceQuotaService
     /// over ownership only from an earlier dispatch that is not settled yet.
     /// </summary>
     public void RecordProjectEnvironmentDispatch(string projectName, string environmentId, string workflow,
-        DateTimeOffset dispatchStartedAt, bool reserved)
+        DateTimeOffset dispatchStartedAt, bool reserved, long? runId = null, string? repository = null, string? gitRef = null)
     {
         var project = _projects.FindByIdOrDisplayName(projectName);
         if (project is null) return;
@@ -390,9 +391,32 @@ public sealed class WorkspaceQuotaService
             var dispatches = _state.Dispatches ?? new(StringComparer.OrdinalIgnoreCase);
             if (!reserved && !dispatches.ContainsKey(key)) return;
             if (reserved) _state.Environments[key] = dispatchStartedAt.ToUniversalTime().ToString("O");
-            dispatches[key] = new(project.DisplayName, environmentId, workflow, dispatchStartedAt.UtcDateTime);
+            dispatches[key] = new(project.DisplayName, environmentId, workflow, dispatchStartedAt.UtcDateTime, runId, repository, gitRef);
             _state = _state with { Dispatches = dispatches };
             Save();
+        }
+    }
+
+    /// <summary>Remembers a discovered run for the dispatch that still owns this slot.</summary>
+    internal void RememberProjectEnvironmentDispatchRun(string projectName, string environmentId, DateTime dispatchedAt, long runId)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return;
+        lock (_gate)
+        {
+            Reload();
+            var key = project.Id + "/" + environmentId;
+            var dispatches = _state.Dispatches;
+            if (dispatches?.GetValueOrDefault(key) is not { RunId: null } dispatch
+                || dispatch.DispatchedAt != dispatchedAt) return;
+            dispatches[key] = dispatch with { RunId = runId };
+            try { Save(); }
+            catch
+            {
+                // Keep the next reconciliation eligible to persist the ID again.
+                dispatches[key] = dispatch;
+                throw;
+            }
         }
     }
 

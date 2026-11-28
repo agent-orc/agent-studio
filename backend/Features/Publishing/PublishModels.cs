@@ -88,6 +88,11 @@ public record PublishWorkflowRun
     public string? Url { get; init; }
     public DateTime TriggeredAt { get; init; }
     public string? Error { get; init; }
+    internal string? Repository { get; init; }
+    internal string? GitRef { get; init; }
+    internal string? HeadSha { get; init; }
+    internal string? PackageName { get; init; }
+    internal string? Ecosystem { get; init; }
 }
 
 public record PublishPackageRequest(string TargetId, string Version, bool DryRun = false);
