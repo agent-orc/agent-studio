@@ -159,6 +159,9 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("extra-argument")]
     [InlineData("extra-positional")]
     [InlineData("valid-quoted-path")]
+    [InlineData("leading-zero")]
+    [InlineData("plus-sign")]
+    [InlineData("index-whitespace")]
     public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
     {
         const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
@@ -180,6 +183,18 @@ public sealed class PostMergeRunStoreTests : IDisposable
             SuiteSelection = new(["tests"], [], []) { SuiteCommands = new Dictionary<string, string> { ["tests"] = command } } };
         receipt = evidence switch
         {
+            "leading-zero" or "plus-sign" or "index-whitespace" => receipt with
+            {
+                Verdicts = [receipt.Verdicts[0], shard, second with
+                {
+                    Command = second.Command.Replace("shard-1.runsettings", evidence switch
+                    {
+                        "leading-zero" => "shard-01.runsettings",
+                        "plus-sign" => "shard-+1.runsettings",
+                        _ => "shard- 1.runsettings",
+                    }, StringComparison.Ordinal),
+                }],
+            },
             "fixed-missing" => receipt with { Envelope = envelope with { ShardPlan = "tests=1" },
                 Verdicts = [receipt.Verdicts[0], shard] },
             "missing" => receipt with { Verdicts = [receipt.Verdicts[0], shard] },
@@ -234,6 +249,29 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.NotNull(store.Record(Project, receipt));
         Assert.Equal(First, store.Read(Project).LastGreenSha);
         Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt));
+    }
+
+    [Fact]
+    public void PersistedDuplicatePlanReceiptCanReplayExactlyWithoutRevalidatingCoverage()
+    {
+        var store = new PostMergeRunStore(_root);
+        var receipt = Run("legacy", First, "window") with
+        {
+            Commands = ["build", "build"], Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), new("build", 0, false)],
+        };
+        Directory.CreateDirectory(_root);
+        var state = PostMergeProjectState.Empty(Project) with
+        {
+            LastGreenSha = First, DevelopState = "green", Runs = [receipt],
+        };
+        File.WriteAllText(Path.Combine(_root, Project + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(state, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+        Assert.NotNull(store.Record(Project, receipt));
+        Assert.Null(store.Record(Project, receipt with { Reason = "changed receipt" }));
+        Assert.Null(store.Record(Project, receipt with { Id = "new-receipt" }));
+        Assert.Equal(First, store.Read(Project).LastGreenSha);
+        Assert.Single(store.Read(Project).Runs);
     }
 
     [Fact]
