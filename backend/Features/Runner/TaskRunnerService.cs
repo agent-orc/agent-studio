@@ -1106,10 +1106,12 @@ public class TaskRunnerService : BackgroundService
         var projection = _attemptAuthority is null || string.IsNullOrWhiteSpace(taskKey)
             ? null
             : _attemptAuthority.GetTaskProjection(taskKey);
+        var existingBase = ContinuationBaseStore.Read(info.FolderPath);
         var decision = ContinueRoundBasePolicy.Decide(
             baseRef,
-            ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(info.FolderPath)),
-            ContinuationBaseStore.Read(info.FolderPath),
+            ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(info.FolderPath),
+                existingBase),
+            existingBase,
             startsFromClaim: queued && info.State != TaskStates.Progress,
             _time.GetUtcNow().UtcDateTime);
         return (null, decision);

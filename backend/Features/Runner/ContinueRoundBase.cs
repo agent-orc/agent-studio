@@ -117,17 +117,27 @@ public static class ContinueRoundBasePolicy
     /// <summary>
     /// The card's result refs: each settled run's immutable envelope ref, each
     /// review subject's ref, and the card's <c>review-subject.json</c> (its
-    /// immutable ref, then a legacy mutable one).
+    /// immutable ref, then a legacy mutable one). A retained integration pin
+    /// excludes failed or commitless successors until that delivery integrates.
     /// </summary>
     public static IReadOnlyList<CardResultRef> Collect(
         AttemptAuthorityProjection? projection,
-        ReviewSubjectRecord? folderSubject)
+        ReviewSubjectRecord? folderSubject,
+        ContinuationBaseRecord? outstandingDelivery = null)
     {
         var refs = new List<CardResultRef>();
+        // Historical review rows and sidecars outlive integration. Only the
+        // retained recovery pin establishes an outstanding delivery here.
+        var hasReviewedDelivery = outstandingDelivery is { RetainUntilIntegrated: true };
         if (projection is not null)
         {
             foreach (var run in projection.RunAttempts)
-                if (run.ResultEnvelope is { ImmutableRemoteRef: { } reference } envelope)
+                if (run.ResultEnvelope is { ImmutableRemoteRef: { } reference } envelope
+                    && (!hasReviewedDelivery
+                        || run.TerminalOutcome is not null
+                            && (run.TerminalOutcome.Equals("done", StringComparison.OrdinalIgnoreCase)
+                                || run.TerminalOutcome.Equals("noop", StringComparison.OrdinalIgnoreCase))
+                            && !string.Equals(envelope.BaseSha, envelope.ResultSha, StringComparison.OrdinalIgnoreCase)))
                     refs.Add(new CardResultRef(reference, envelope.ResultSha, run.AttemptId,
                         run.TerminalAt ?? run.CreatedAt));
             var subjects = projection.ReviewAttempts.Select(attempt => attempt.Subject);
