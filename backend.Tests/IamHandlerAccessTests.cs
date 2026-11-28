@@ -620,6 +620,71 @@ public sealed class IamHandlerAccessTests : IClassFixture<IamHandlerAccessTests.
         Assert.Equal(HttpStatusCode.NotFound, probe.StatusCode);
     }
 
+    [Theory]
+    [InlineData("running")]
+    [InlineData("finished")]
+    [InlineData("failed")]
+    public async Task Completed_lane_audit_reads_authorize_the_stored_project(string status)
+    {
+        var factory = Ready();
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName("beta")!;
+        var store = factory.Services.GetRequiredService<AuditRunStore>();
+        var runId = store.Create(project.Id, project.DisplayName, project.StorageLocation);
+        store.Update(runId, run => run with
+        {
+            Status = status,
+            Total = 1,
+            Processed = 1,
+            NotReallyDone = 1,
+            Error = status == "failed" ? "Synthetic audit failure" : null,
+            Entries = [new CompletedLaneAuditEntry
+            {
+                JobId = "beta-card", Title = "Synthetic beta audit entry",
+                Verdict = AuditVerdicts.NotReallyDone, Reason = "Synthetic missing evidence",
+            }],
+        });
+        using var permitted = Client(factory, Invite(factory, "audit.beta." + status,
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta"))));
+        using var otherProject = Client(factory, Invite(factory, "audit.alpha." + status,
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+
+        using var allowed = await permitted.GetAsync("/api/audits/" + runId);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        var audit = await allowed.Content.ReadFromJsonAsync<CompletedLaneAuditRunStatus>();
+        Assert.NotNull(audit);
+        Assert.Equal(runId, audit.RunId);
+        Assert.Equal(project.Id, audit.ProjectId);
+        Assert.Equal(status, audit.Status);
+        Assert.Equal(1, audit.Total);
+        Assert.Equal("beta-card", Assert.Single(audit.Entries).JobId);
+        Assert.Equal("Synthetic beta audit entry", audit.Entries[0].Title);
+        Assert.Equal(AuditVerdicts.NotReallyDone, audit.Entries[0].Verdict);
+
+        // Query parameters must not replace the project recorded on the run.
+        foreach (var query in new[] { "", "?project=alpha&projectId=alpha&watchPath=" + Uri.EscapeDataString(ProjectPath("alpha")) })
+        {
+            using var denied = await otherProject.GetAsync("/api/audits/" + runId + query);
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            using var body = JsonDocument.Parse(await denied.Content.ReadAsStringAsync());
+            Assert.Equal("project-scope-denied", body.RootElement.GetProperty("error").GetString());
+            Assert.Equal("This account is not a member of the requested project.", body.RootElement.GetProperty("message").GetString());
+            Assert.Equal(2, body.RootElement.EnumerateObject().Count());
+        }
+    }
+
+    [Fact]
+    public async Task Unknown_completed_lane_audit_keeps_the_empty_not_found_response()
+    {
+        var factory = Ready();
+        using var reader = Client(factory, Invite(factory, "audit.missing.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+
+        using var response = await reader.GetAsync("/api/audits/no-such-audit");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(await response.Content.ReadAsStringAsync());
+    }
+
     [Fact]
     public async Task Pipeline_catalogue_checks_its_projectName_query_address()
     {
