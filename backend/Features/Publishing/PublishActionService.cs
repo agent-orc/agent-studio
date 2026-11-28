@@ -1,10 +1,11 @@
-using System.Diagnostics;
 using System.Collections.Concurrent;
-using AgentStudio.TaskServer.Contracts;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentStudio.Publishing;
 
@@ -27,6 +28,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     private readonly ProjectSettingsService _settings;
     private readonly TaskScannerService _scanner;
     private readonly ILogger<PublishActionService> _logger;
+    private readonly GitHubPublishClient _github;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly TimeProvider _clock;
     private readonly TimelineLog? _timeline;
@@ -43,6 +45,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         ProjectSettingsService settings,
         TaskScannerService scanner,
         ILogger<PublishActionService> logger,
+        GitHubPublishClient github,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         TimeProvider? clock = null,
         AgentStudio.Management.StructureLibraryService? library = null,
@@ -54,6 +57,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         _settings = settings;
         _scanner = scanner;
         _logger = logger;
+        _github = github;
         _workspaceQuota = workspaceQuota;
         _clock = clock ?? TimeProvider.System;
         _library = library;
@@ -207,12 +211,16 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 Project = project, TargetId = target.Id, Workflow = target.ReleaseCommand,
                 Version = version, Status = "completed", Conclusion = "success",
                 TriggeredAt = _clock.GetUtcNow().UtcDateTime,
+                PackageName = target.PackageName, Ecosystem = target.Ecosystem,
             });
         }
         if (dryRun) throw new InvalidOperationException("Dry run requires a project release command.");
         var workflow = FindWorkflow(root, package: true)
             ?? throw new InvalidOperationException("No existing version-tag-triggered package workflow was found.");
-        PublishPackageTagPath(root, target.Ecosystem!, version, cancellationToken);
+        var repository = RequireGitHubRepo(project, root);
+        RequirePackagePushDestination(root, repository);
+        var triggeredAt = _clock.GetUtcNow().UtcDateTime;
+        var headSha = PublishPackageTagPath(root, target.Ecosystem!, version, cancellationToken);
 
         _targets.InvalidateCache();
         var run = StoreRun(new PublishWorkflowRun
@@ -222,7 +230,11 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             Workflow = workflow,
             Status = "queued",
             Version = version,
-            TriggeredAt = DateTime.UtcNow,
+            TriggeredAt = triggeredAt,
+            Repository = repository.Canonical,
+            HeadSha = headSha,
+            PackageName = target.PackageName,
+            Ecosystem = target.Ecosystem,
         });
         _logger.LogInformation(
             "package-publish-triggered project={Project} target={Target} version={Version} workflow={Workflow}",
@@ -244,33 +256,38 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         var root = RequireRepo(project);
         var workflow = FindWorkflow(root, package: false)
             ?? throw new InvalidOperationException("No existing website deploy workflow was found.");
-        var repo = RequireGitHubRepo(root);
+        var repo = RequireGitHubRepo(project, root);
         var branch = RunRequired(root, "current branch could not be resolved", "branch", "--show-current").Trim();
         if (string.IsNullOrWhiteSpace(branch)) throw new InvalidOperationException("Website deploy requires a named branch.");
 
         // Reserve before dispatch so concurrent deploys cannot both consume the last slot.
         var reserved = _workspaceQuota?.ReserveProjectEnvironment(project, "website") ?? false;
         var dispatchStartedAt = _clock.GetUtcNow();
+        GitHubPublishDispatch dispatch;
         try
         {
-            RunGhRequired(root, "website workflow dispatch failed", "api", "--method", "POST",
-                $"repos/{repo}/actions/workflows/{Uri.EscapeDataString(workflow)}/dispatches", "-f", $"ref={branch}");
+            dispatch = _github.DispatchAsync(repo, workflow, branch).GetAwaiter().GetResult();
         }
         catch
         {
             if (reserved) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
             throw;
         }
-        _workspaceQuota?.RecordProjectEnvironmentDispatch(project, "website", workflow, dispatchStartedAt, reserved);
         var run = StoreRun(new PublishWorkflowRun
         {
             Project = project,
             TargetId = "website",
             Workflow = workflow,
             Status = "queued",
+            RunId = dispatch.RunId,
+            Url = dispatch.Url,
+            Repository = repo.Canonical,
+            GitRef = branch,
             // The dispatch start also identifies the persisted slot ownership of this run.
             TriggeredAt = dispatchStartedAt.UtcDateTime,
         });
+        _workspaceQuota?.RecordProjectEnvironmentDispatch(project, "website", workflow, dispatchStartedAt, reserved,
+            run.RunId, run.Repository, run.GitRef);
         _logger.LogInformation(
             "website-deploy-triggered project={Project} workflow={Workflow} branch={Branch}",
             project, workflow, branch);
@@ -287,32 +304,34 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         var stored = GetStoredRun(project, targetId);
         if (stored is null) return null;
         if (stored.Status == "completed" && targetId != "website") return stored;
-        var root = RequireRepo(project);
         try
         {
-            var repo = RequireGitHubRepo(root);
-            var runId = stored.RunId ?? FindTriggeredRun(root, repo, stored);
+            // Poll the repository selected at dispatch or push time. Recheck its binding without starting Git on a GET.
+            var repo = _github.RequireRepository(project, $"https://{stored.Repository}");
+            var runId = stored.RunId ?? FindTriggeredRun(repo, stored);
             if (runId is null)
             {
-                if (targetId == "website") ReconcileWebsiteDeployment(root, repo, project);
+                if (targetId == "website") ReconcileWebsiteDeployment(repo, project);
                 return stored;
             }
-            var json = RunGhRequired(root, "workflow status lookup failed", "api", $"repos/{repo}/actions/runs/{runId}");
-            using var doc = JsonDocument.Parse(json);
-            var e = doc.RootElement;
+            // Save the identity before status or deployment reads that can fail independently.
+            stored = stored with { RunId = runId, Repository = repo.Canonical };
+            if (targetId == "website")
+                _workspaceQuota?.RememberProjectEnvironmentDispatchRun(project, "website", stored.TriggeredAt, runId.Value);
+            var status = _github.GetRunAsync(repo, runId.Value).GetAwaiter().GetResult();
             var refreshed = stored with
             {
-                RunId = runId,
-                Status = StringValue(e, "status") ?? stored.Status,
-                Conclusion = StringValue(e, "conclusion"),
-                Url = StringValue(e, "html_url"),
+                Status = status.Status,
+                Conclusion = status.Conclusion,
+                Url = status.Url ?? stored.Url,
                 Error = null,
             };
+            stored = refreshed;
             if (targetId == "website")
             {
                 SettleWebsiteRun(project, stored.TriggeredAt, refreshed.Status, refreshed.Conclusion);
                 if (refreshed.Status == "completed" && refreshed.Conclusion == "success")
-                    ReconcileWebsiteDeployment(root, repo, project);
+                    ReconcileWebsiteDeployment(repo, project);
             }
             return StoreRun(refreshed);
         }
@@ -334,9 +353,9 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 try
                 {
                     var root = RequireRepo(project);
-                    var repo = RequireGitHubRepo(root);
-                    ReconcileWebsiteDispatch(root, repo, project);
-                    ReconcileWebsiteDeployment(root, repo, project);
+                    var repo = RequireGitHubRepo(project, root);
+                    ReconcileWebsiteDispatch(repo, project);
+                    ReconcileWebsiteDeployment(repo, project);
                 }
                 catch (Exception ex)
                 {
@@ -351,20 +370,21 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
     /// A failed workflow that created no GitHub Pages deployment still releases
     /// the slot its dispatch reserved.
     /// </summary>
-    private void ReconcileWebsiteDispatch(string root, string repo, string project)
+    private void ReconcileWebsiteDispatch(GitHubRepositoryName repo, string project)
     {
         var dispatch = _workspaceQuota?.PendingDispatches("website").FirstOrDefault(item =>
             string.Equals(item.Project, project, StringComparison.OrdinalIgnoreCase));
         if (dispatch is null) return;
-        var runId = FindTriggeredRun(root, repo, new PublishWorkflowRun
+        RequireOriginalRepository(repo, dispatch.Repository);
+        var runId = dispatch.RunId ?? FindTriggeredRun(repo, new PublishWorkflowRun
         {
             Project = project, TargetId = "website", Workflow = dispatch.Workflow, TriggeredAt = dispatch.DispatchedAt,
+            GitRef = dispatch.GitRef,
         });
         if (runId is null) return;
-        var json = RunGhRequired(root, "workflow status lookup failed", "api", $"repos/{repo}/actions/runs/{runId}");
-        using var doc = JsonDocument.Parse(json);
-        SettleWebsiteRun(project, dispatch.DispatchedAt, StringValue(doc.RootElement, "status"),
-            StringValue(doc.RootElement, "conclusion"));
+        _workspaceQuota?.RememberProjectEnvironmentDispatchRun(project, "website", dispatch.DispatchedAt, runId.Value);
+        var status = _github.GetRunAsync(repo, runId.Value).GetAwaiter().GetResult();
+        SettleWebsiteRun(project, dispatch.DispatchedAt, status.Status, status.Conclusion);
     }
 
     /// <summary>
@@ -377,60 +397,22 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             && _workspaceQuota.SettleProjectEnvironmentDispatch(project, "website", dispatchedAt,
                 succeeded: conclusion == "success");
 
-    private void ReconcileWebsiteDeployment(string root, string repo, string project)
+    private void ReconcileWebsiteDeployment(GitHubRepositoryName repo, string project)
     {
         if (_workspaceQuota is null || !_workspaceQuota.HasProjectEnvironment(project, "website")) return;
-        // GitHub Pages marks its deployment inactive when the environment is stopped.
-        // An unreadable API response leaves the reservation in place rather than freeing a live slot.
-        var deployments = Run(root, "gh", CancellationToken.None, "api",
-            $"repos/{repo}/deployments?per_page=20");
-        if (deployments.Code != 0) return;
-        using var document = JsonDocument.Parse(deployments.Output);
-        foreach (var deployment in document.RootElement.EnumerateArray())
-        {
-            if (StringValue(deployment, "environment") != "github-pages") continue;
-            var reservedAt = _workspaceQuota.ProjectEnvironmentReservedAt(project, "website");
-            var createdAt = DateTimeOffset.TryParse(StringValue(deployment, "created_at"), out var deployedAt)
-                ? deployedAt : (DateTimeOffset?)null;
-            if (!DeploymentCanReleaseReservation(reservedAt, createdAt)) return;
-            if (!deployment.TryGetProperty("id", out var id) || !id.TryGetInt64(out var value)) return;
-            var statuses = Run(root, "gh", CancellationToken.None, "api",
-                $"repos/{repo}/deployments/{value}/statuses?per_page=1");
-            if (statuses.Code != 0) return;
-            using var statusDocument = JsonDocument.Parse(statuses.Output);
-            var latest = statusDocument.RootElement.EnumerateArray().FirstOrDefault();
-            if (latest.ValueKind == JsonValueKind.Object && StringValue(latest, "state") == "inactive")
-                _workspaceQuota.SetProjectEnvironment(project, "website", false);
-            return;
-        }
+        var reservedAt = _workspaceQuota.ProjectEnvironmentReservedAt(project, "website");
+        if (_github.IsWebsiteDeploymentInactiveAsync(repo, reservedAt).GetAwaiter().GetResult())
+            _workspaceQuota.SetProjectEnvironment(project, "website", false);
     }
 
     internal static bool DeploymentCanReleaseReservation(DateTimeOffset? reservedAt, DateTimeOffset? deployedAt)
         => reservedAt is null || deployedAt >= reservedAt;
 
-    private long? FindTriggeredRun(string root, string repo, PublishWorkflowRun stored)
-    {
-        if (stored.Workflow == "tag-triggered release workflow") return null;
-        var eventName = stored.TargetId == "website" ? "workflow_dispatch" : "push";
-        var args = new List<string> { "api", "--method", "GET",
-            $"repos/{repo}/actions/workflows/{Uri.EscapeDataString(stored.Workflow)}/runs",
-            "-f", $"event={eventName}", "-f", "per_page=10" };
-        if (stored.Version is not null) { args.Add("-f"); args.Add($"branch=v{stored.Version}"); }
-        var json = RunGhRequired(root, "workflow run lookup failed", args.ToArray());
-        using var doc = JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("workflow_runs", out var runs)) return null;
-        foreach (var run in runs.EnumerateArray())
-        {
-            if (run.TryGetProperty("created_at", out var created)
-                && DateTime.TryParse(created.GetString(), out var at)
-                && at.ToUniversalTime() < stored.TriggeredAt.AddMinutes(-1)) continue;
-            if (run.TryGetProperty("id", out var id) && id.TryGetInt64(out var value)) return value;
-        }
-        return null;
-    }
+    private long? FindTriggeredRun(GitHubRepositoryName repo, PublishWorkflowRun stored)
+        => _github.FindRunAsync(repo, stored).GetAwaiter().GetResult();
 
     /// <summary>Fixture-testable mutation path used after all product guards pass.</summary>
-    internal static void PublishPackageTagPath(
+    internal static string PublishPackageTagPath(
         string root,
         string ecosystem,
         string version,
@@ -445,6 +427,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         RunRequired(root, "git add failed", new[] { "add", "--" }.Concat(manifest).ToArray());
         RunRequired(root, "release commit failed", "commit", "-m", $"chore(release): v{version}");
         RunRequired(root, "release tag failed", "tag", $"v{version}");
+        var headSha = RunRequired(root, "release commit could not be resolved", "rev-parse", "HEAD").Trim();
         RunRequired(
             root,
             "atomic release push failed",
@@ -454,6 +437,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             "origin",
             $"HEAD:refs/heads/{releaseBranch}",
             $"refs/tags/v{version}");
+        return headSha;
     }
 
     private static string[] BumpManifest(string root, string ecosystem, string version)
@@ -526,7 +510,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
 
     private static void RequireClean(string root)
     {
-        var status = Run(root, "git", CancellationToken.None, "status", "--porcelain").Output;
+        var status = RunRequired(root, "worktree status could not be resolved", "status", "--porcelain");
         if (!string.IsNullOrWhiteSpace(status))
             throw new InvalidOperationException("Package publish requires a clean working tree.");
     }
@@ -546,24 +530,36 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         return null;
     }
 
-    private static string RequireGitHubRepo(string root)
+    private GitHubRepositoryName RequireGitHubRepo(string project, string root)
     {
         var remote = RunRequired(root, "origin URL could not be resolved", "remote", "get-url", "origin").Trim();
-        var match = Regex.Match(remote, @"github\.com[/:](?<repo>[^/\s]+/[^/\s]+?)(?:\.git)?$");
-        return match.Success ? match.Groups["repo"].Value : throw new InvalidOperationException("origin is not a GitHub repository.");
+        return _github.RequireRepository(project, remote);
+    }
+
+    private static void RequireOriginalRepository(GitHubRepositoryName repository, string? original)
+    {
+        if (original is not null && original != repository.Canonical)
+            throw new InvalidOperationException("The project's GitHub repository changed after this workflow was triggered.");
+    }
+
+    private static void RequirePackagePushDestination(string root, GitHubRepositoryName repository)
+    {
+        var push = RunRequired(root, "origin push URL could not be resolved", "remote", "get-url", "--push", "--all", "origin")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (push.Length != 1 || !Uri.TryCreate(push[0], UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || uri.UserInfo.Length != 0 || GitHubRepositoryName.TryParse(push[0])?.Canonical != repository.Canonical)
+            throw new InvalidOperationException("Tag-triggered publishing requires a single HTTPS push URL for the authorized repository.");
     }
 
     private PublishWorkflowRun StoreRun(PublishWorkflowRun run)
     {
         lock (_runGate) _runs[$"{run.Project}\n{run.TargetId}"] = run;
-        if (run.Status == "completed" && run.Conclusion == "success" && run.Version is { } version)
+        if (run.Status == "completed" && run.Conclusion == "success" && run.Version is { } version
+            && run.PackageName is { } package && run.Ecosystem is { } provider)
         {
             try
             {
-                var target = _targets.GetProjectPublishStatus(run.Project).Targets
-                    .FirstOrDefault(item => item.Id == run.TargetId);
-                if (target?.PackageName is { } package && target.Ecosystem is { } provider)
-                    _library?.RecordPublish(run.Project, package, provider, version, _clock.GetUtcNow().UtcDateTime);
+                _library?.RecordPublish(run.Project, package, provider, version, _clock.GetUtcNow().UtcDateTime);
             }
             catch (Exception ex)
             { _logger.LogWarning(ex, "Registry publish receipt unavailable for {Project} {Target}", run.Project, run.TargetId); }
@@ -576,7 +572,7 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         lock (_runGate) return _runs.GetValueOrDefault($"{project}\n{targetId}");
     }
 
-    /// <summary>Repository shells use the same bounded publishing process boundary as gh.</summary>
+    /// <summary>Repository shells run through the bounded process runner.</summary>
     internal static void RunReleaseCommand(string root, string command, ProjectExecutionDefinition definition, string version, CancellationToken token)
     {
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "bash")
@@ -590,15 +586,8 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             throw new InvalidOperationException($"Release command failed: {command}\n{result.StandardOutput}\n{result.StandardError}");
     }
 
-    private static string? StringValue(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-
     private static string RunRequired(string root, string error, params string[] args)
-    {
-        var result = Run(root, "git", CancellationToken.None, args);
-        if (result.Code != 0) throw new InvalidOperationException($"{error}: {result.Error.Trim()}");
-        return result.Output;
-    }
+        => RunRequired(root, error, CancellationToken.None, args);
 
     private static string RunRequired(
         string root,
@@ -606,34 +595,12 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         CancellationToken cancellationToken,
         params string[] args)
     {
-        var result = Run(root, "git", cancellationToken, args);
-        if (result.Code != 0) throw new InvalidOperationException($"{error}: {result.Error.Trim()}");
-        return result.Output;
-    }
-
-    private static string RunGhRequired(string root, string error, params string[] args)
-    {
-        var result = Run(root, "gh", CancellationToken.None, args);
-        if (result.Code != 0) throw new InvalidOperationException($"{error}: {result.Error.Trim()}");
-        return result.Output;
-    }
-
-    private static (string Output, string Error, int Code) Run(
-        string root,
-        string file,
-        CancellationToken cancellationToken,
-        params string[] args)
-    {
-        var psi = new ProcessStartInfo(file) { WorkingDirectory = root, RedirectStandardOutput = true,
+        var psi = new ProcessStartInfo("git") { WorkingDirectory = root, RedirectStandardOutput = true,
             RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        // Git goes through the boundary; gh is not Git and only borrows the
-        // bounded process runner.
-        var result = file == "git"
-            ? GitProcessBoundary.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout,
-                cancellationToken: cancellationToken)
-            : GitNetworkProcessRunner.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout,
-                cancellationToken: cancellationToken);
-        return (result.StandardOutput, result.StandardError, result.ExitCode);
+        var result = GitProcessBoundary.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout,
+            cancellationToken: cancellationToken);
+        if (result.ExitCode != 0) throw new InvalidOperationException($"{error}: {result.StandardError.Trim()}");
+        return result.StandardOutput;
     }
 }
