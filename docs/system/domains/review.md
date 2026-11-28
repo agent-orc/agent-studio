@@ -34,7 +34,7 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Deterministic measurement dispositions (AGT-4099)
@@ -56,6 +56,27 @@ measurement proof and missing verdicts retain infrastructure handling. A cited,
 diff-confirmed product finding takes the fix-round path even when another
 measurement is environmental. Human holds, immutable results and attempt
 fences remain admission requirements.
+
+For a completed mixed test run, a candidate-only assertion shared with the clean
+repeat receives at most three exact-test control pairs per command. Each pair
+uses fresh candidate and merge-base checkouts with their own pinned declarations.
+A matching assertion fingerprint and an observed passing same-filter base test
+supply the existing product-failure decision, even when other tests fail on the
+base. The settled command retains the assertion identity, fingerprints and both
+control measurements. An aborted host, changed assertion, absent base test or
+unavailable control remains explicit incomplete evidence. Shared base failures
+keep their existing disposition. Parameterized cases that cannot be identified
+by an exact method filter also remain incomplete.
+Assertion fingerprints require the exact test heading, a complete diagnostic
+block and an assertion source location. They retain message whitespace, asserted
+paths, console-like message text and stack locations, including source line
+numbers. Only framing established by the test heading and checkout paths in
+stack source locations are normalized. Missing locations or ambiguous output
+remain incomplete evidence. Report grading requires retained controls before
+accepting a reproduced candidate-only assertion, including environment and
+integration-branch diagnoses; losing the proof cannot turn the mixed run into a
+pass. Inference respects the frozen comparison mode and known backend diff
+scope. A clean repeat that passed keeps its existing disposition.
 
 When a deterministic command is red on a stale merge base and the fetched target
 has advanced, the review host measures the command on a clean target checkout.
