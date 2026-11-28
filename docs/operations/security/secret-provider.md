@@ -519,6 +519,23 @@ The Secrets section is under Settings → Global → Secrets, next to Credential
 (workspace, project, or project environment) with versions and metadata. Owners
 and operators can add, rotate and revoke there. Viewers see metadata only.
 
+## Credential inventory metadata (WI-1)
+
+Settings > Credentials includes each readable secret's reference, scope,
+creator, creation date, last use and last rotation, without reading its value.
+Deploy target keys, kubeconfig credentials and app secrets therefore appear as
+long-lived entries with a manual rotation reminder plan. Rotating a secret
+through the provider resets that plan's baseline to `rotatedAt`. Revoked
+secrets remain visible without lifecycle warnings.
+
+Each configured Vault/OpenBao or 1Password Connect binding also contributes an
+external-store-token metadata row, including bindings whose authentication
+comes from an environment variable. The inventory does not read that variable
+or return the backend URL, token, locator content or token prefix. A missing
+expiry is displayed as `none` (no expiry recorded). Unknown historical dates
+stay unknown. The default 90-day reminder interval and 14/3-day Owner notices
+are described in the [security overview](overview.md#credential-lifetimes-and-manual-rotation-plans-wi-1-2026-11-28).
+
 ## Not in this card
 
 - External store adapters (IP-9).

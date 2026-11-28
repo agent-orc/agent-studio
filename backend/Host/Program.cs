@@ -497,6 +497,12 @@ builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
     sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
 // Registered before every Git-using hosted service. Its background loop writes
 // the first App tokens; integration waits on the readiness without holding startup.
+builder.Services.AddSingleton<AgentStudio.GitHubApp.ICredentialLifecycleNotifier, AgentStudio.GitHubApp.CredentialLifecycleNotifier>();
+builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.CredentialLifecycleMonitor(
+    Path.Combine(sp.GetRequiredService<AccessSecurityStore>().SecurityFolder, "credential-lifecycle.json"),
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<AgentStudio.GitHubApp.ICredentialLifecycleNotifier>()));
+builder.Services.AddSingleton<AgentStudio.GitHubApp.CredentialInventoryService>();
+builder.Services.AddHostedService<AgentStudio.GitHubApp.CredentialLifecycleHostedService>();
 builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
 builder.Services.AddSingleton<SecretProjectKeys>();

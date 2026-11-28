@@ -91,6 +91,7 @@ public static class EndpointMapping
         app.MapOrchestrationRolloutEndpoints();
         app.MapLeaseEndpoints();
         app.MapAttemptAuthorityEndpoints();
+        app.MapCredentialInventoryEndpoints();
         if (mapsLocalV1)
         {
             app.MapV1ReviewPlaneEndpoints();

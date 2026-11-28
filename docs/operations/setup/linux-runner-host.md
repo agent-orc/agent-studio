@@ -15,6 +15,36 @@ and the binding lease contract in
 the Runner API surface added by RM-3 (fenced lease) and RM-4 (log + artifact
 upload).
 
+## Credential inventory and rotation plans (WI-1)
+
+After updating Studio and Task Server, open Settings > Credentials. Check the
+holder and target of each host's provider login, repository deploy key, PAT
+fallback and service principal. Host registry observations supply custody
+metadata only; never paste credentials or token prefixes into metadata fields.
+The Studio inventory also includes deploy secrets and external-store tokens.
+
+Every entry is marked `short-lived` or `long-lived`. A refreshable CLI login is
+long-lived even if its current access token expires in minutes. A principal
+bootstrapped from a file without expiry remains allowed and shows `none`.
+Unknown creation and real-use dates stay unknown; a probe is not a real use.
+
+Record `rotationDueAt` and the known renewal date through the existing
+Owner-only credential registry metadata API. The inventory retains their
+whole-day interval. When an interval cannot be established, Studio supplies a
+labelled 90-day manual reminder plan. Dates without issuance metadata are anchored to the first
+persisted inventory observation, rather than sliding forward on refresh.
+Task Server's direct inventory uses installation creation as its conservative
+fallback for unknown source dates. Studio retains its own first observations.
+
+When the Owner feed raises a 14-day or 3-day expiry or rotation warning, rotate
+at the target using its existing runbook, replace the host credential, verify
+access and let the host report its new generation and dates. For a bootstrap
+principal, replace its configured secret file through the established bootstrap
+procedure. Updating inventory metadata alone does not rotate a credential.
+Stored fallbacks remain allowed for targets without federation and always
+retain their long-lived mark (WI-D6 option A). Federation and automatic target
+rotation are outside WI-1.
+
 ## Subscription quota reporting
 
 Deploy the updated Task Server and Studio before updating coding and review
