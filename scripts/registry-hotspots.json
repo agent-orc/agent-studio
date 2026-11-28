@@ -27,8 +27,8 @@
       "path": "backend.Tests/PostMergeIncidentServiceTests.cs",
       "status": "measured-backlog",
       "strategy": "Split tests into partial fixtures for repair creation and closure, guardian receipts and owner questions, and per-test quarantine, lift and relapse. Keep receipt builders and project setup shared.",
-      "lines": 669,
-      "bytes": 36933
+      "lines": 677,
+      "bytes": 37353
     },
     {
       "path": "backend/Features/Dispatch/DispatchRegistration.cs",
@@ -76,8 +76,15 @@
       "path": "backend/Features/Pipeline/PostMerge/PostMergeRunEndpoints.cs",
       "status": "measured-backlog",
       "strategy": "Extract ordered endpoint mapping methods for develop-state and project reads, placement and window control, and run receipts with their evidence validators.",
-      "lines": 241,
-      "bytes": 16523
+      "lines": 244,
+      "bytes": 16766
+    },
+    {
+      "path": "backend/Features/Pipeline/PostMerge/PostMergeRunStore.cs",
+      "status": "measured-backlog",
+      "strategy": "Separate window and incident updates, run receipt and command coverage validation, and custody renewal into partial files. Share the locked state reader, atomic writer and acceptance evidence cache.",
+      "lines": 379,
+      "bytes": 20109
     },
     {
       "path": "backend/Features/Projects/ProjectSettingsEndpoints.cs",

@@ -57,13 +57,13 @@ class RegistryHotspotTests(unittest.TestCase):
                 git("add", "--", filename)
                 git("commit", "-qm", message)
 
-            def check(exit_code, review=True):
+            def check(exit_code, review=True, checkout=repo):
                 env = os.environ.copy()
                 if review:
                     env["AGENT_REVIEW_NAMESPACE"] = "fixture-attempt"
                 else:
                     env.pop("AGENT_REVIEW_NAMESPACE", None)
-                result = subprocess.run([sys.executable, hotspots.__file__, "--guard", "--repo", folder,
+                result = subprocess.run([sys.executable, hotspots.__file__, "--guard", "--repo", str(checkout),
                                          "--output", str(output)], env=env, capture_output=True, text=True)
                 self.assertEqual(exit_code, result.returncode, result.stdout + result.stderr)
                 return result.stdout + result.stderr
@@ -88,8 +88,18 @@ class RegistryHotspotTests(unittest.TestCase):
             # Exact-result review can be detached and can span several commits.
             git("update-ref", "refs/remotes/origin/develop", base)
             git("switch", "--detach", "-q")
+            commit("Revise the same card\n\nAgent-Studio-Task: AGT-8", path, "// same card\n" + content)
+            check(0)
+            git("checkout", "--detach", "-q", "develop")
             commit("Integrate AGT-9: change registration", path, "// first\n" + content + "// last\n")
             self.assertIn("Record the strategy", check(1))
+            subject = git("rev-parse", "HEAD")
+            # The subject names an already counted card, not the owner of this review.
+            git("merge", "--no-ff", "-qm", "Integrate AGT-8 follow-up into card work", "card-9")
+            self.assertIn("Record the strategy", check(1))
+            commit("AGT-9: finish after local merge", "notes.txt", "done")
+            self.assertIn("9 distinct cards", check(1))
+            git("checkout", "--detach", "-q", subject)
             commit("Finish the card\n\nIntegrate the notes.\n\nAgent-Studio-Task: AGT-9", "notes.txt", "done")
             ninth = git("rev-parse", "HEAD")
             self.assertIn("9 distinct cards", check(1))
@@ -102,18 +112,32 @@ class RegistryHotspotTests(unittest.TestCase):
             commit("AGT-10: unrelated", "notes.txt", "unrelated")
             self.assertIn("WARNING", check(0))
             # Review clones may contain the subject history without a named target branch.
+            git("fetch", "-q", ".", "refs/heads/develop")
             git("update-ref", "-d", "refs/remotes/origin/develop")
             git("branch", "-D", "develop")
             check(0)
             git("checkout", "--detach", "-q", ninth)
             self.assertIn("scripts/registry-hotspots.json", check(1))
 
-            # A real single-parent net-change receipt supplies the base in this clone.
+            # The private review transport fetches the target through a temporary ref.
             git("checkout", "--detach", "-q", ninth + "~2")
             commit(f"Integrate net change from {ninth[:8]}\n\nAgent-Studio-Net-Change-Of: {ninth}",
                    path, "// first\n" + content + "// last\n")
+            git("update-ref", "refs/agent-review/fetched", "HEAD")
+            git("fetch", "-q", ".", "refs/agent-review/fetched")
+            git("update-ref", "-d", "refs/agent-review/fetched")
             commit("AGT-10: unrelated", "notes.txt", "unrelated")
             self.assertIn("WARNING", check(0))
+            # Baseline worktrees and clean repeats use the candidate's integration fetch.
+            baseline = repo / "baseline"
+            git("worktree", "add", "--detach", "-q", str(baseline), "HEAD^")
+            self.assertIn("WARNING", check(0, checkout=baseline))
+            repeat = repo / "repeat"
+            git("clone", "-q", "--shared", "--no-checkout", folder, str(repeat))
+            git("-C", str(repeat), "checkout", "-q", "--detach", ninth)
+            self.assertIn("9 distinct cards", check(1, checkout=repeat))
+            git("fetch", "-q", ".", "refs/heads/card-9")
+            self.assertIn("Fetch the 'develop' branch", check(1))
 
     def test_ledger_filters_project_target_period_and_deduplicates_collisions(self):
         with tempfile.TemporaryDirectory() as folder:

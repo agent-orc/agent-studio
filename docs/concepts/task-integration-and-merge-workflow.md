@@ -116,8 +116,14 @@ ending at the checked revision. Candidates include document tables and section
 collections, TSV inventories, registration calls, policy type lists and
 transition adapters.
 
-In Studio review (`AGENT_REVIEW_NAMESPACE`), the guard includes the pending
-card's net change since its integration base. It exits 1 when the card touches
+In Studio review (`AGENT_REVIEW_NAMESPACE`), the guard compares the card with
+its merge base on the integration target. It uses local or remote-tracking
+target refs and the review runner's integration fetch. A merge on the card
+keeps its net changes in scope. The `Agent-Studio-Task` trailer identifies
+repeat work on the same card. A result without that trailer counts as one
+pending card. If the target is unavailable, fetch it with
+`git fetch origin develop` (substitute the configured target when needed)
+and rerun the review. The guard exits 1 when the card touches
 an unhandled candidate with more than eight distinct cards in the card's week.
 Record the file's strategy, line count and byte count in
 `scripts/registry-hotspots.json`. A `measured-backlog` row describes a planned

@@ -58,35 +58,44 @@ def changed_paths(repo, base, ref):
     return [p for p in paths.split("\0") if p]
 
 
-def review_change(repo, ref, target, start):
-    """Return the integration base and the pending card's net change for exact-subject review."""
-    info, _ = git(repo, "show", "-s", "--format=%H%x00%cI%x00%B", ref)
-    sha, at, body = info.split("\0", 2)
+def integration_tips(repo, target):
     refs = (f"refs/heads/{target}", f"refs/remotes/origin/{target}")
-    available, _ = git(repo, "for-each-ref", "--format=%(refname)", *refs)
-    targets = [branch for branch in available.splitlines() if branch in refs]
-    # Detached clones can have stale or missing target refs. A receipt needs
-    # either the platform's card merge or a net-change commit with its source trailer.
-    receipts, _ = git(repo, "log", "-z", "--topo-order", "--since=" + start.isoformat(),
-                      "--grep=^Integrate ", "--format=%H%x00%P%x00%s%x00"
-                      "%(trailers:key=Agent-Studio-Net-Change-Of,valueonly,unfold,separator=%x2c)", sha)
-    fields = receipts.split("\0")
-    for i in range(0, len(fields) - 3, 4):
-        revision, parents, subject, source = fields[i:i + 4]
-        card_merge = (len(parents.split()) == 2 and subject.startswith("Integrate ")
-                      and CARD.match(subject, len("Integrate ")))
-        net_change = re.fullmatch(r"Integrate net change from ([0-9a-f]+)", subject)
-        if card_merge or (net_change and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source)
-                          and source.startswith(net_change[1])):
-            targets.append(revision)
-            break
+    available, _ = git(repo, "for-each-ref", "--format=%(objectname) %(refname)", *refs)
+    tips = [sha for sha, branch in (line.split() for line in available.splitlines()) if branch in refs]
+    # The review runner can fetch the integration tip without creating a tracking
+    # branch. Baseline worktrees share the primary checkout's integration fetch.
+    paths, _ = git(repo, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD", "--git-common-dir")
+    fetched, common = map(Path, paths.splitlines())
+    for file in {fetched, common / "FETCH_HEAD"}:
+        if file.is_file():
+            for line in file.read_text(errors="replace").splitlines():
+                revision, _, source = line.partition("\t\t")
+                if source.startswith((f"branch '{target}' of ", "'refs/agent-review/fetched' of ")):
+                    tips.append(revision)
+    return tips
+
+
+def review_change(repo, ref, target):
+    """Return the integration base and the pending card's net change for exact-subject review."""
+    info, _ = git(repo, "show", "-s", "--format=%H%x00%cI%x00"
+                  "%(trailers:key=Agent-Studio-Task,valueonly,unfold)", ref)
+    sha, at, task = info.rstrip().split("\0")
+    targets = integration_tips(repo, target)
     if not targets:
-        return ref, None
+        # Clean repeats are shared clones of the runner's candidate repository.
+        origin, _ = git(repo, "config", "--get", "remote.origin.url", allowed=(0, 1))
+        local = Path(origin.strip())
+        if local.is_absolute() and local.is_dir():
+            targets = integration_tips(local, target)
+    if not targets:
+        raise SystemExit(f"Cannot determine the card's integration base. Fetch the '{target}' branch before review.")
     base, code = git(repo, "merge-base", sha, *targets, allowed=(0, 1))
     base = base.strip()
-    if code or base == sha:
+    if code:
+        raise SystemExit(f"No common ancestor between {ref} and the '{target}' integration target.")
+    if base == sha:
         return ref, None
-    return base, dict(card=owner(repo, body) or sha, at=at, paths=changed_paths(repo, base, sha))
+    return base, dict(card=task or sha, at=at, paths=changed_paths(repo, base, sha))
 
 
 def integrated(repo, ref, start, end):
@@ -211,7 +220,7 @@ def main():
     start = instant(args.start) if args.start else end - dt.timedelta(days=7)
     if start >= end:
         parser.error("--from must precede --to (UTC half-open interval)")
-    base, review = (review_change(args.repo, args.ref, args.target, start)
+    base, review = (review_change(args.repo, args.ref, args.target)
                     if args.guard == "review" else (args.ref, None))
     cards, unknown = integrated(args.repo, base, start, end)
     conflicts, warnings = ([], []) if args.guard else recorded_conflicts(
