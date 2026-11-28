@@ -151,7 +151,8 @@ public sealed record ClaimResponse(
     // AGT-3061: why the base was recorded. "review-fix-round" (D17) makes the
     // base required for the worktree; see ContinuationBaseReasons.
     string? ContinuationBaseReason = null,
-    SelectionResult? ModelSelection = null);
+    SelectionResult? ModelSelection = null,
+    int? StatusCommandIntervalSeconds = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(

@@ -340,6 +340,19 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetStatusCommandInterval(string projectName, int? seconds)
+    {
+        if (seconds is < 0) throw new ArgumentOutOfRangeException(nameof(seconds));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { StatusCommandIntervalSeconds = seconds };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// AGT-3011: pause or resume one operator sweep for one project. The sweep
     /// id is validated by the calling boundary; resuming a sweep that is not

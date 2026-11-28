@@ -40,6 +40,10 @@
     <InternalsVisibleTo Include="OrchestratorEngine.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="StatusGuard/*" />
+  </ItemGroup>
+
   <!-- Post-merge shares the existing cross-process gate slot locks with bridge workers. -->
   <ItemGroup>
     <Compile Include="../backend/Features/Pipeline/MachineGateSlots.cs" Link="GateCapacity/MachineGateSlots.cs" />

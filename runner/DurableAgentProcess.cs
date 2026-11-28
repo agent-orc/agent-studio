@@ -29,7 +29,9 @@ internal sealed record DetachedJobSpec(
     // pre-TE-52 spec.json deserialises with null and simply binds nothing.
     IReadOnlyDictionary<string, string>? Environment = null,
     long? TokenCeiling = null,
-    long? TokenBaseline = null);
+    long? TokenBaseline = null,
+    int StatusCommandIntervalSeconds = 0,
+    string? StatusGuardDirectory = null);
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -40,7 +42,8 @@ internal sealed record DetachedJobResult(
     bool TimedOut,
     DateTime CompletedAtUtc,
     bool LaunchFailed = false,
-    int? Signal = null);
+    int? Signal = null,
+    AgentStudio.TaskServer.Contracts.StatusCommandSummary? StatusCommands = null);
 
 internal sealed record DetachedJobProcessObservation(
     bool IsLive,
@@ -110,7 +113,8 @@ internal sealed class DurableAgentProcess
         Action<string>? log = null,
         long? tokenCeiling = null,
         int? timeoutSeconds = null,
-        long? tokenBaseline = null)
+        long? tokenBaseline = null,
+        string? statusGuardDirectory = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -126,7 +130,10 @@ internal sealed class DurableAgentProcess
             environment,
             tokenCeiling,
             timeoutSeconds,
-            tokenBaseline);
+            tokenBaseline) with
+        {
+            StatusGuardDirectory = statusGuardDirectory ?? Path.GetFullPath(Path.Combine(workerDirectory, "status-commands")),
+        };
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
         // DP-S3: shadow evidence only; the detached worker keeps the process executor.
         WorkContainers.WorkContainerShadow.Record(workerDirectory, "coding", options.StateDir, log);
@@ -224,7 +231,9 @@ internal sealed class DurableAgentProcess
             Environment: environment?.Where(entry => WorkerEdgeCredentialBoundary.IsCodingRuntimeName(entry.Key, invocation.CliType))
                 .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
             TokenCeiling: tokenCeiling,
-            TokenBaseline: tokenBaseline);
+            TokenBaseline: tokenBaseline,
+            StatusCommandIntervalSeconds: runSpec?.StatusCommandIntervalSeconds
+                ?? AgentStudio.TaskServer.Contracts.StatusCommandInterval.DefaultSeconds);
     }
 
     /// <summary>
@@ -234,11 +243,14 @@ internal sealed class DurableAgentProcess
     /// the whole run.
     /// </summary>
     internal static IReadOnlyDictionary<string, string>? TryReadEnvironment(string workerDirectory)
+        => TryReadSpec(workerDirectory)?.Environment;
+
+    internal static DetachedJobSpec? TryReadSpec(string workerDirectory)
     {
         try
         {
             var path = Path.Combine(workerDirectory, "spec.json");
-            return File.Exists(path) ? ReadSpec(path).Environment : null;
+            return File.Exists(path) ? ReadSpec(path) : null;
         }
         catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
         {
@@ -476,12 +488,14 @@ internal sealed class DurableAgentProcess
             lock (logGate) logWriter.WriteLine(json);
         }
 
+        var guard = StatusCommandGuard.Prepare(spec, spec.CliType ?? CliSelection.ClaudeCli, Append);
         ProcessResult processResult;
         bool timedOut;
         bool launchFailed;
         try
         {
-            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append);
+            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
+                spec, directory, Append, statusGuard: guard);
         }
         catch (Exception ex)
         {
@@ -504,7 +518,8 @@ internal sealed class DurableAgentProcess
             timedOut,
             DateTime.UtcNow,
             launchFailed,
-            processResult.Signal);
+            processResult.Signal,
+            guard?.ReadSummary(Append));
         await WriteAtomicAsync(resultPath, JsonSerializer.Serialize(result, Json));
         return processResult.ExitCode;
     }

@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Cli;
 using AgentStudio.Runner;
+using StatusCommandRunSummary = AgentStudio.TaskServer.Contracts.StatusCommandRunSummary;
+using StatusCommandSummary = AgentStudio.TaskServer.Contracts.StatusCommandSummary;
 
 namespace AgentStudio.Tasks;
 
@@ -54,6 +56,18 @@ public sealed class RemoteTokenReceiptService
         var lines = CliOutputLogParser.ParseFile(path)
             .Select((line, index) => (Line: line, Index: index))
             .ToList();
+        var statusCommands = lines
+            .Where(item => item.Line.Stream == "system")
+            .Select(item => StatusCommandRunSummary.FromLogLine(item.Line.Text))
+            .LastOrDefault(item => item?.AttemptId == runAttemptId)?.Commands;
+
+        RemoteTokenReceiptResult PersistWithoutUsage(string warning)
+        {
+            if (statusCommands is not null)
+                _mutations.SetRemoteTokenSummaryOnFolder(task.FolderPath, runAttemptId, new TaskTokenSummary(), statusCommands);
+            return new RemoteTokenReceiptResult(false, 0, warning, StatusCommands: statusCommands);
+        }
+
         var run = _sessions.ReadSessionEvents(task.Id, task.WatchPath)
             .LastOrDefault(entry => string.Equals(
                 entry.RunAttemptId,
@@ -64,7 +78,7 @@ public sealed class RemoteTokenReceiptService
         if (!CliTypes.IsValid(runCli)) runCli = ModelIdentity.Resolve(runModel)?.Cli;
         var parser = _parsers.Get(runCli);
         if (parser is null)
-            return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the run CLI.");
+            return PersistWithoutUsage("No usage parser is registered for the run CLI.");
         if (run is not null)
         {
             // One task log can contain several continuation attempts. Restrict
@@ -158,16 +172,17 @@ public sealed class RemoteTokenReceiptService
             .ToList();
 
         if (entries.Count == 0)
-            return new RemoteTokenReceiptResult(false, 0, "The remote CLI log contains no token usage frames.");
+            return PersistWithoutUsage("The remote CLI log contains no token usage frames.");
 
         var summary = TaskTokenSummaryFold.PerJob(_pricing.Price(entries)).GetValueOrDefault(task.Id);
         if (summary is null)
-            return new RemoteTokenReceiptResult(false, 0, "Token usage frames could not be summarized.");
+            return PersistWithoutUsage("Token usage frames could not be summarized.");
 
         var written = _mutations.SetRemoteTokenSummaryOnFolder(
             task.FolderPath,
             runAttemptId,
-            summary);
+            summary,
+            statusCommands);
         if (!written)
         {
             _logger.LogWarning(
@@ -175,10 +190,10 @@ public sealed class RemoteTokenReceiptService
                 task.Key ?? task.Id,
                 runnerId,
                 runAttemptId);
-            return new RemoteTokenReceiptResult(false, entries.Count, "The token receipt could not be persisted.");
+            return new RemoteTokenReceiptResult(false, entries.Count, "The token receipt could not be persisted.", StatusCommands: statusCommands);
         }
 
-        return new RemoteTokenReceiptResult(true, entries.Count, null, summary.TotalTokens);
+        return new RemoteTokenReceiptResult(true, entries.Count, null, summary.TotalTokens, statusCommands);
     }
 
     /// <summary>
@@ -220,4 +235,5 @@ public sealed class RemoteTokenReceiptService
     }
 }
 
-public sealed record RemoteTokenReceiptResult(bool Persisted, int Calls, string? Warning, long? TotalTokens = null);
+public sealed record RemoteTokenReceiptResult(bool Persisted, int Calls, string? Warning,
+    long? TotalTokens = null, StatusCommandSummary? StatusCommands = null);

@@ -175,7 +175,8 @@ internal static class TaskEndpointHelpers
         // so the field stays absent on cards where nothing is happening.
         var summary = runners.SummaryService.GetState(job.TaskKey);
         TaskTokenSummary? tokens = null;
-        if (tokensByJobId != null && tokensByJobId.TryGetValue(job.TaskKey, out var t) && t.TotalTokens > 0)
+        if (tokensByJobId != null && tokensByJobId.TryGetValue(job.TaskKey, out var t)
+            && (t.TotalTokens > 0 || t.StatusCommandsByRun is { Count: > 0 }))
         {
             tokens = new RunModelPricing(pricing).Apply(t, exec?.Model ?? job.Model);
         }

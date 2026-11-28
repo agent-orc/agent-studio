@@ -2494,6 +2494,12 @@ public static class LeaseEndpoints
                     _ => $"TASK_{outcome.ToUpperInvariant()}",
                 },
             };
+            if (tokenReceipt.StatusCommands is { } statusCommands)
+            {
+                details["commandCalls"] = statusCommands.CommandCalls.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                details["delayedCommandCalls"] = statusCommands.DelayedCalls.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                details["repeatedStatusCommandShare"] = statusCommands.RepeatedStatusShare.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
             if (reviewAttemptRequest?.Plan?.DeepReviewDecision is { } deepReview)
             {
                 details["deepReviewReceiptId"] = deepReview.ReceiptId;
@@ -3658,7 +3664,8 @@ public static class LeaseEndpoints
             modeFraming,
             RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
             RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator",
-            TaskTitle: task.Title);
+            TaskTitle: task.Title,
+            StatusCommandIntervalSeconds: projectSettings.StatusCommandIntervalSeconds);
     }
 
     internal static string? BuildModeFraming(

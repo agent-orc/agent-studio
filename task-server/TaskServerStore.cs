@@ -746,28 +746,27 @@ public sealed partial class TaskServerStore
         }
         if (string.IsNullOrWhiteSpace(taskId)) throw new KeyNotFoundException("Task was not found.");
 
-        var runs = new List<RunDto>();
-        await using (var runCommand = Command(connection, """
-            SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at, brief_version
-              FROM runs WHERE task_id = $task ORDER BY created_at, id;
-            """, ("$task", taskId)))
-        await using (var reader = await runCommand.ExecuteReaderAsync(ct))
+        var result = new List<ExecutionAttemptTimelineDto>();
+        await using var runCommand = Command(connection, """
+            SELECT r.id, r.task_id, r.status, r.runner_id, r.fence,
+                   r.created_at, r.started_at, r.finished_at, r.brief_version,
+                   (SELECT payload_json FROM events WHERE run_id = r.id AND kind = 'execution.outcome.classified'
+                    ORDER BY cursor DESC LIMIT 1),
+                   (SELECT json_extract(payload_json, '$.text') FROM events
+                    WHERE run_id = r.id AND kind = $statusKind AND json_valid(payload_json)
+                    ORDER BY cursor DESC LIMIT 1)
+              FROM runs r WHERE r.task_id = $task ORDER BY r.created_at, r.id;
+            """, ("$task", taskId), ("$statusKind", StatusCommandRunSummary.EventKind));
+        await using var reader = await runCommand.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            while (await reader.ReadAsync(ct)) runs.Add(ReadRun(reader));
-        }
-
-        var result = new List<ExecutionAttemptTimelineDto>(runs.Count);
-        foreach (var run in runs)
-        {
-            await using var outcomeCommand = Command(connection, """
-                SELECT payload_json FROM events
-                 WHERE run_id = $run AND kind = 'execution.outcome.classified'
-                 ORDER BY cursor DESC LIMIT 1;
-                """, ("$run", run.RunId));
-            var payload = Convert.ToString(await outcomeCommand.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
-            var decision = string.IsNullOrWhiteSpace(payload)
-                ? null
-                : JsonSerializer.Deserialize<ExecutionOutcomeDecision>(payload, OutcomeJson);
+            var run = ReadRun(reader);
+            var outcomePayload = reader.IsDBNull(9) ? null : reader.GetString(9);
+            var decision = string.IsNullOrWhiteSpace(outcomePayload) ? null
+                : JsonSerializer.Deserialize<ExecutionOutcomeDecision>(outcomePayload, OutcomeJson);
+            var summary = reader.IsDBNull(10) ? null : StatusCommandRunSummary.FromLogLine(reader.GetString(10));
+            if (summary?.AttemptId == run.RunId)
+                run = run with { StatusCommands = summary.Commands };
             result.Add(new ExecutionAttemptTimelineDto(run, decision));
         }
         return result;
@@ -1971,7 +1970,8 @@ public sealed partial class TaskServerStore
                 MechanicalFreshRoute: mechanicalFreshRoute,
                 FollowUp: followUp,
                 PlacementReason: placementReason,
-                ContinuationIntent: continuationIntent, ModelSelection: modelSelection);
+                ContinuationIntent: continuationIntent, ModelSelection: modelSelection,
+                StatusCommandIntervalSeconds: await ReadStatusCommandIntervalAsync(connection, transaction, task.ProjectId, ct));
         }, ct);
         if (_selectionPoster is not null)
             foreach (var receipt in selectionReceipts)

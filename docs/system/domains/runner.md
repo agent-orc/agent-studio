@@ -9,6 +9,30 @@ compares the role's commit and image with Stable. An idle role still uses the
 host release watchdog's grace period. A fresh heartbeat reporting the expected
 commit and image clears the attention fact.
 
+## Repeated status commands
+
+Detached Linux coding workers use the project setting `statusCommandIntervalSeconds`
+(default 180 seconds, 0 disables the guard). Update it with
+`PUT /api/projects/{project}/status-command-interval` on Studio or
+`PUT /api/v1/studio/projects/{project}/status-command-interval` on Task Server.
+The request is `{"seconds": 0}` to disable or `{"seconds": null}` to restore the
+default. A new claim takes the current setting. Same-attempt worker restarts share
+the original attempt's counters and last status command times.
+
+The guard recognizes fixed read-only utilities in simple pipelines and command
+lists. It keys on exact command text and working directory and stores only the
+digest and counters. Codex sets `BASH_ENV` through its tool environment policy.
+Claude Code starts the guard
+through a `PreToolUse` Bash hook before the Bash tool timeout. The configured
+interval may exceed the wait cap for the provider. Each delayed command reports
+the wait and whether it was capped. Interactive chat leaves the guard off.
+
+Runner logs and run completion projections report observed command calls,
+delayed calls and the share of all observed calls that repeated an eligible
+status command inside the interval. The card token summary aggregates the
+counts across measured attempts and includes the original per-attempt counts.
+Historical and disabled runs have no guard measurement.
+
 ## Writable preparation copies
 
 Each coding attempt reserves its own preparation copy ID in its durable slot before

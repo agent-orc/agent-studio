@@ -10,6 +10,8 @@ using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Registry;
 using AgentStudio.Security;
+using SetStatusCommandIntervalRequest = AgentStudio.TaskServer.Contracts.SetStatusCommandIntervalRequest;
+using StatusCommandInterval = AgentStudio.TaskServer.Contracts.StatusCommandInterval;
 using AgentStudio.ExecutionPreparation;
 using ProjectDefinitionIssue = AgentStudio.TaskServer.Contracts.ProjectDefinitionIssue;
 using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefinitionReader;
@@ -365,6 +367,7 @@ public static class ProjectSettingsEndpoints
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
+                    statusCommandIntervalSeconds = kv.Value.StatusCommandIntervalSeconds ?? StatusCommandInterval.DefaultSeconds,
                     codingEmergencyLimitSeconds = kv.Value.CodingEmergencyLimitSeconds,
                     effectiveCodingEmergencyLimitSeconds = defaults.ResolveCodingEmergencyLimit(kv.Key).Seconds,
                     codingEmergencyLimitSource = defaults.ResolveCodingEmergencyLimit(kv.Key).Source,
@@ -1689,6 +1692,18 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { codingEmergencyLimitSeconds = request.Seconds,
                 effectiveSeconds = resolved.Seconds, source = resolved.Source });
         });
+
+        app.MapPut("/api/projects/{projectName}/status-command-interval", (
+            string projectName, SetStatusCommandIntervalRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (request.Seconds is < 0)
+                return Results.BadRequest(new { error = "seconds must be zero or greater, or null to use the default." });
+            settings.SetStatusCommandInterval(projectName, request.Seconds);
+            return Results.Ok(new { statusCommandIntervalSeconds = request.Seconds ?? StatusCommandInterval.DefaultSeconds });
+        }).RequirePermission(IamPermissions.ProjectSettingsWrite);
 
         // ADR-0026: per-project autonomy slider for the orchestrator-prep
         // loop. Returns the resolved level (default 2 when not set) so the

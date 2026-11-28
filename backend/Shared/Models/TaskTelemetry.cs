@@ -17,6 +17,11 @@ public record SessionUsage
 /// </summary>
 public record TaskTokenSummary
 {
+    public IReadOnlyDictionary<string, AgentStudio.TaskServer.Contracts.StatusCommandSummary>? StatusCommandsByRun { get; init; }
+    public AgentStudio.TaskServer.Contracts.StatusCommandSummary? StatusCommands => StatusCommandsByRun is { Count: > 0 } runs
+        ? AgentStudio.TaskServer.Contracts.StatusCommandSummary.Sum(runs.Values)
+        : null;
+
     public int Calls { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }

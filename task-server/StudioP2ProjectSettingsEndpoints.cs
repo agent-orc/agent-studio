@@ -51,6 +51,11 @@ public static class StudioP2ProjectSettingsEndpoints
             => await TaskServerEndpoints.InvokeAsync(
                 () => store.SetMaxParallelismAsync(project, request, TaskServerEndpoints.Actor(context), ct)));
 
+        projects.MapPut("/{project}/status-command-interval", async (
+            string project, SetStatusCommandIntervalRequest request, TaskServerStore store, HttpContext context, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => store.SetStatusCommandIntervalAsync(project, request, TaskServerEndpoints.Actor(context), ct)));
+
         projects.MapPut("/{project}/orchestrator-model", async (
             string project, SetOrchestratorModelRequest request, TaskServerStore store, HttpContext context, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(

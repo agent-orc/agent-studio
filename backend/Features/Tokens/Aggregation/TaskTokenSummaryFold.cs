@@ -7,7 +7,9 @@ namespace AgentStudio.Tokens;
 /// </summary>
 public static class TaskTokenSummaryFold
 {
-    public static Dictionary<string, TaskTokenSummary> PerJob(IReadOnlyList<PricedTokenEntry> ledger)
+    public static Dictionary<string, TaskTokenSummary> PerJob(
+        IReadOnlyList<PricedTokenEntry> ledger,
+        IReadOnlyDictionary<string, TaskTokenSummary>? receipts = null)
     {
         var perJob = new Dictionary<string, JobAccumulator>(StringComparer.Ordinal);
         foreach (var priced in ledger)
@@ -27,6 +29,15 @@ public static class TaskTokenSummaryFold
         var result = new Dictionary<string, TaskTokenSummary>(perJob.Count, StringComparer.Ordinal);
         foreach (var (jobId, job) in perJob)
             result[jobId] = job.ToSummary();
+        if (receipts is not null)
+        {
+            foreach (var (jobId, receipt) in receipts)
+            {
+                if (receipt.StatusCommandsByRun is not { Count: > 0 } statusCommands) continue;
+                var summary = result.GetValueOrDefault(jobId) ?? new TaskTokenSummary();
+                result[jobId] = summary with { StatusCommandsByRun = statusCommands };
+            }
+        }
         return result;
     }
 

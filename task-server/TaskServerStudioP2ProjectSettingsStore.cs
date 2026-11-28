@@ -28,6 +28,7 @@ public sealed partial class TaskServerStore
                 max_parallelism INTEGER,
                 orchestrator_model TEXT,
                 quota_wait_policy_json TEXT,
+                status_command_interval_seconds INTEGER,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS studio_project_ownership_mappings(
@@ -50,6 +51,26 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_project_urls_project
                 ON studio_project_urls(project_id);
             """, ct);
+        await EnsureColumnAsync(connection, "studio_project_settings", "status_command_interval_seconds", "INTEGER", ct);
+    }
+
+    public async Task<StudioProjectSettingsDto> SetStatusCommandIntervalAsync(
+        string projectIdentity, SetStatusCommandIntervalRequest request, string actorId, CancellationToken ct)
+    {
+        if (request.Seconds is < 0)
+            throw new ArgumentException("Seconds must be zero or greater, or null to use the default.");
+        return await UpsertProjectSettingAsync(
+            projectIdentity, "status_command_interval_seconds", request.Seconds ?? (object)DBNull.Value,
+            actorId, "project-settings.status-command-interval.updated", ct);
+    }
+
+    private static async Task<int?> ReadStatusCommandIntervalAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string projectId, CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT status_command_interval_seconds FROM studio_project_settings WHERE project_id = $project;
+            """, transaction, ("$project", projectId));
+        return await command.ExecuteScalarAsync(ct) is long seconds ? checked((int)seconds) : null;
     }
 
     public async Task<StudioProjectSettingsDto> SetAutoCommitAsync(
@@ -148,7 +169,7 @@ public sealed partial class TaskServerStore
         await using var command = Command(connection, """
             SELECT project_id, auto_commit, auto_push_strategy, cli_context_mode, cli_mode,
                    crash_recovery_enabled, lane_sort_strategy, max_parallelism, orchestrator_model,
-                   quota_wait_policy_json, updated_at
+                   quota_wait_policy_json, updated_at, status_command_interval_seconds
               FROM studio_project_settings
              WHERE project_id = $project;
             """, transaction, ("$project", projectId));
@@ -169,7 +190,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(7) ? 1 : (int)reader.GetInt64(7),
             reader.IsDBNull(8) ? "default" : reader.GetString(8),
             reader.IsDBNull(9) ? null : reader.GetString(9),
-            Parse(reader.GetString(10)));
+            Parse(reader.GetString(10)),
+            reader.IsDBNull(11) ? StatusCommandInterval.DefaultSeconds : reader.GetInt32(11));
     }
 
     public async Task<ProjectDto> UpdateProjectAsync(

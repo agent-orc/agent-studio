@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Runner;
+using StatusCommandSummary = AgentStudio.TaskServer.Contracts.StatusCommandSummary;
 
 namespace AgentStudio.Tasks;
 
@@ -582,13 +583,16 @@ public class TaskMutationService
     public bool SetRemoteTokenSummaryOnFolder(
         string folderPath,
         string runAttemptId,
-        TaskTokenSummary attemptSummary)
+        TaskTokenSummary attemptSummary,
+        StatusCommandSummary? statusCommands = null)
     {
         if (string.IsNullOrWhiteSpace(runAttemptId)) return false;
         return SetTokenReceiptEntriesOnFolder(
             folderPath,
             $"{TokenUsageHost.RemoteRunnerParticipantPrefix}{runAttemptId}",
-            attemptSummary.Entries ?? []);
+            attemptSummary.Entries ?? [],
+            statusCommands is { IsValid: true } ? runAttemptId : null,
+            statusCommands);
     }
 
     /// <summary>
@@ -601,7 +605,9 @@ public class TaskMutationService
     public bool SetTokenReceiptEntriesOnFolder(
         string folderPath,
         string participantId,
-        IReadOnlyList<TaskTokenCall> entries)
+        IReadOnlyList<TaskTokenCall> entries,
+        string? statusAttemptId = null,
+        StatusCommandSummary? statusCommands = null)
     {
         lock (TaskJsonFile.SyncRoot(folderPath))
         {
@@ -617,6 +623,17 @@ public class TaskMutationService
                     {
                         persisted = tokenSummary.Deserialize<TaskTokenSummary>(TaskJsonFile.ReadOpts);
                     }
+                }
+
+                var statusRuns = persisted?.StatusCommandsByRun;
+                var statusChanged = statusAttemptId is not null && statusCommands is not null
+                    && statusRuns?.GetValueOrDefault(statusAttemptId) != statusCommands;
+                if (statusChanged)
+                {
+                    statusRuns = new Dictionary<string, StatusCommandSummary>(statusRuns ?? new Dictionary<string, StatusCommandSummary>())
+                    {
+                        [statusAttemptId!] = statusCommands!,
+                    };
                 }
 
                 var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
@@ -681,9 +698,11 @@ public class TaskMutationService
                         continue;
                     attemptEntries.Add(entry);
                 }
-                var merged = retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
-                if (merged.Count == 0) return false;
-                if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
+                var merged = statusAttemptId is not null && entries.Count == 0
+                    ? persisted?.Entries ?? []
+                    : retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
+                if (merged.Count == 0 && statusRuns is null) return false;
+                if (persisted is not null && !statusChanged && persisted.Entries.SequenceEqual(merged)) return true;
 
                 var lastAgentEntry = merged
                     .Where(entry => TokenParticipants.IsAgent(entry.ParticipantId)
@@ -692,6 +711,7 @@ public class TaskMutationService
                     .LastOrDefault();
                 var summary = new TaskTokenSummary
                 {
+                    StatusCommandsByRun = statusRuns,
                     Calls = merged.Count,
                     InputTokens = merged.Sum(entry => entry.InputTokens),
                     OutputTokens = merged.Sum(entry => entry.OutputTokens),
@@ -705,10 +725,13 @@ public class TaskMutationService
                     LastModel = lastAgentEntry is null
                         ? null
                         : ModelIdentity.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
-                    LastUpdate = merged.Max(entry => entry.Ts),
+                    LastUpdate = merged.Max(entry => (DateTime?)entry.Ts),
                     Entries = merged,
                     HasModelMismatch = merged.Any(entry => entry.ModelMismatch),
                 };
+                if (statusAttemptId is not null && entries.Count == 0 && persisted is not null)
+                    summary = persisted with { StatusCommandsByRun = statusRuns };
+
                 TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary, _keyFileWriter);
                 return Updated(folderPath);
             }

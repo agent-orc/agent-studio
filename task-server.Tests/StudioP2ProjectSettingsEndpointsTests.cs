@@ -34,6 +34,21 @@ public sealed class StudioP2ProjectSettingsEndpointsTests
         Assert.True(afterMaxParallelism.AutoCommit);
         Assert.Equal(4, afterMaxParallelism.MaxParallelism);
 
+        Assert.Equal(180, afterMaxParallelism.StatusCommandIntervalSeconds);
+        using var disabled = await client.PutAsJsonAsync($"{basePath}/status-command-interval",
+            new SetStatusCommandIntervalRequest(0));
+        disabled.EnsureSuccessStatusCode();
+        var afterDisable = (await disabled.Content.ReadFromJsonAsync<StudioProjectSettingsDto>())!;
+        Assert.Equal(0, afterDisable.StatusCommandIntervalSeconds);
+        Assert.Equal(4, afterDisable.MaxParallelism);
+        using var invalidInterval = await client.PutAsJsonAsync($"{basePath}/status-command-interval",
+            new SetStatusCommandIntervalRequest(-1));
+        Assert.Equal(HttpStatusCode.BadRequest, invalidInterval.StatusCode);
+        using var reset = await client.PutAsJsonAsync($"{basePath}/status-command-interval",
+            new SetStatusCommandIntervalRequest(null));
+        reset.EnsureSuccessStatusCode();
+        Assert.Equal(180, (await reset.Content.ReadFromJsonAsync<StudioProjectSettingsDto>())!.StatusCommandIntervalSeconds);
+
         var invalidParallelism = await client.PutAsJsonAsync($"{basePath}/max-parallelism", new SetMaxParallelismRequest(0));
         Assert.Equal(HttpStatusCode.BadRequest, invalidParallelism.StatusCode);
 

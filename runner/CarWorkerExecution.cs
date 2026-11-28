@@ -67,7 +67,8 @@ internal static class CarWorkerExecution
         Func<CliOptions, CliOptions>? optionsCustomizer = null,
         string? cleanContextRoot = null,
         IReadOnlyList<string>? extraCliArguments = null,
-        CancellationToken stopToken = default)
+        CancellationToken stopToken = default,
+        StatusCommandGuard? statusGuard = null)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
@@ -86,7 +87,7 @@ internal static class CarWorkerExecution
         options = options with
         {
             Spawner = new CodingWorkerSpawner(cliType, options.Spawner,
-                optionsCustomizer is null ? null : options.EnvironmentOverrides),
+                optionsCustomizer is null ? null : options.EnvironmentOverrides, statusGuard),
         };
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
@@ -369,11 +370,13 @@ internal static class CarWorkerExecution
     internal sealed class CodingWorkerSpawner(
         string cliType,
         ICliProcessSpawner? inner = null,
-        IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null) : ICliProcessSpawner
+        IReadOnlyDictionary<string, string>? testEnvironmentOverrides = null,
+        StatusCommandGuard? statusGuard = null) : ICliProcessSpawner
     {
         public CliSpawn Spawn(ProcessStartInfo startInfo)
         {
             WorkerEdgeCredentialBoundary.ApplyCodingEnvironment(startInfo.Environment, cliType);
+            statusGuard?.Apply(startInfo, cliType);
             if (testEnvironmentOverrides is not null)
                 foreach (var pair in testEnvironmentOverrides) startInfo.Environment[pair.Key] = pair.Value;
             if (inner is not null) return inner.Spawn(startInfo);

@@ -125,7 +125,8 @@ public sealed record WorkPermitAcceptanceDto(
     // AGT-3061: the permit path carries the same review fix round as a claim:
     // the recorded base reason and the ordered rework prompt.
     string? ContinuationBaseReason = null,
-    FollowUpDeliveryDto? FollowUp = null);
+    FollowUpDeliveryDto? FollowUp = null,
+    int? StatusCommandIntervalSeconds = null);
 
 public sealed record RunReconcileRequest(
     string SchemaVersion,

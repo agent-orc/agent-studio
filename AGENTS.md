@@ -136,6 +136,7 @@ apply only under `frontend/`.
   command, or start them in the background and use one blocking command to wait
   (for example, `wait <pid>` in the launching shell or
   `timeout 20m tail --pid=<pid> -f /dev/null`), then read the end of the log once.
+- Detached coding workers delay repeated read-only Bash status commands through the status command guard.
 - Do not poll logs in a loop of separate commands. If a command can outlast the
   tool's per-call limit, wait in blocks of at least five minutes.
 - Each check re-sends the whole conversation, and builds on the shared host take

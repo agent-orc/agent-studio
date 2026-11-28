@@ -116,7 +116,7 @@ public sealed class TaskTokenUsageCache
         {
             _beforeProjectWalk?.Invoke();
             var ledger = _ledger.LoadFreshSnapshot(projectName, watchPath);
-            var result = new ProjectSnapshot(TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries)),
+            var result = new ProjectSnapshot(TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries), ledger.ReceiptSummaries),
                 receiptStamps, busRevisions, _clock.GetUtcNow() + Ttl);
             lock (project)
             {

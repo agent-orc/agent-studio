@@ -132,7 +132,8 @@ public sealed class TokenAggregationService : ITokenAggregator
         var resolvedProject = !string.IsNullOrWhiteSpace(projectName)
             ? projectName
             : ResolveProjectName(watchPath!) ?? Path.GetFileName(watchPath!.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        return TaskTokenSummaryFold.PerJob(PricedLedger(resolvedProject, watchPath));
+        var ledger = _ledger.LoadSnapshot(resolvedProject, watchPath);
+        return TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries), ledger.ReceiptSummaries);
     }
 
     /// <summary>

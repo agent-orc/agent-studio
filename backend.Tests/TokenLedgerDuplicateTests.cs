@@ -409,6 +409,38 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     }
 
     [Fact]
+    public void Command_counters_survive_completion_replay_and_appear_in_card_usage_without_token_frames()
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(tokenSummary: null);
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var log = TaskPaths.CliOutputLog(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        var first = new StatusCommandSummary(10, 3, 3);
+        var second = new StatusCommandSummary(20, 4, 5);
+        var timestamp = SessionAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
+        File.WriteAllLines(log,
+        [
+            $"[{timestamp}] [system] {new StatusCommandRunSummary(Attempt, first).ToLogLine()}",
+            $"[{timestamp}] [system] {new StatusCommandRunSummary(LaterAttempt, second).ToLogLine()}",
+        ]);
+
+        var task = scanner.FindJob(JobId, _watchPath)!;
+        Assert.Equal(first, receipts.PersistFromLog(task, Attempt, "host").StatusCommands);
+        Assert.Equal(second, receipts.PersistFromLog(task, LaterAttempt, "host").StatusCommands);
+        var beforeReplay = File.ReadAllText(TaskJsonPath());
+        receipts.PersistFromLog(task, Attempt, "host");
+        Assert.Equal(beforeReplay, File.ReadAllText(TaskJsonPath()));
+
+        var summary = BuildProjectReader().WorkspacePerJob(ProjectName, _watchPath)[JobId];
+        Assert.Equal(0, summary.TotalTokens);
+        Assert.Equal(first, summary.StatusCommandsByRun![Attempt]);
+        Assert.Equal(second, summary.StatusCommandsByRun[LaterAttempt]);
+        Assert.Equal(new StatusCommandSummary(30, 7, 8), summary.StatusCommands);
+        Assert.Equal(8d / 30, summary.StatusCommands!.RepeatedStatusShare);
+    }
+
+    [Fact]
     public void Receipt_store_preserves_distinct_equal_turns_and_replay_is_a_noop()
     {
         var (_, mutations, _) = BuildWriteServices();

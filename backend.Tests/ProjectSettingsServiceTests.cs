@@ -34,6 +34,20 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Status_command_interval_persists_zero_and_can_be_reset()
+    {
+        var settings = Build();
+        Assert.Null(settings.Get("demo").StatusCommandIntervalSeconds);
+
+        settings.SetStatusCommandInterval("demo", 0);
+        Assert.Equal(0, Build().Get("demo").StatusCommandIntervalSeconds);
+        Assert.Throws<ArgumentOutOfRangeException>(() => settings.SetStatusCommandInterval("demo", -1));
+
+        settings.SetStatusCommandInterval("demo", null);
+        Assert.Null(Build().Get("demo").StatusCommandIntervalSeconds);
+    }
+
+    [Fact]
     public void Clearing_last_step_model_override_prunes_empty_parent_maps()
     {
         var svc = Build();

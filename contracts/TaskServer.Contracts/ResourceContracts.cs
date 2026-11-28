@@ -75,7 +75,8 @@ public sealed record RunDto(
     DateTime? FinishedAt,
     string? ResultSha = null,
     string? RepositoryId = null,
-    string? BriefVersion = null);
+    string? BriefVersion = null,
+    StatusCommandSummary? StatusCommands = null);
 
 public sealed record OlderBriefDeliveryDto(
     string RunId, string BriefVersion, string CurrentBriefVersion,

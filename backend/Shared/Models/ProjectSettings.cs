@@ -79,6 +79,9 @@ public record ProjectSettings
     /// <summary>Project override for the coding process emergency stop, in seconds.</summary>
     public int? CodingEmergencyLimitSeconds { get; init; }
 
+    /// <summary>Minimum interval between identical Bash status commands. Zero disables the worker guard.</summary>
+    public int? StatusCommandIntervalSeconds { get; init; }
+
     /// <summary>
     /// AGT-3011: operator sweeps (<c>fix-rounds</c>, <c>gate-triage</c>,
     /// <c>salvage</c>) an operator paused for this project. Persisted so a pause

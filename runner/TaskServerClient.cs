@@ -520,8 +520,10 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             RunSpec: acceptance.MechanicalFreshRoute is { } hostRoute
                 ? new RunSpecDto(hostRoute.CliType, hostRoute.Model, hostRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title)
-                : new RunSpecDto(FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title),
+                    FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title,
+                    StatusCommandIntervalSeconds: acceptance.StatusCommandIntervalSeconds)
+                : new RunSpecDto(FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title,
+                    StatusCommandIntervalSeconds: acceptance.StatusCommandIntervalSeconds),
             FreshRunReason: acceptance.MechanicalDelta is null
                 ? acceptance.MechanicalFreshRoute?.Reason : null,
             ContinuationBaseRef: acceptance.ContinuationBaseRef,
@@ -843,7 +845,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             // A required mechanical route wins. Otherwise operator fields
             // resolve with normal host settings as one route.
             RunSpec: !route.HasRoute && claim.MechanicalFreshRoute is null && claim.FollowUp is null
-                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion, TaskTitle: claim.Task.Title)
+                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion, TaskTitle: claim.Task.Title,
+                    StatusCommandIntervalSeconds: claim.StatusCommandIntervalSeconds)
                 : new RunSpecDto(
                     route.CliType,
                     route.Model,
@@ -851,7 +854,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                     ContextMode: route.CleanContext ? CodingAgentRunner.Model.CliContextModes.Clean : null,
                     FollowUp: claim.FollowUp,
                     BriefVersion: claim.Run.BriefVersion,
-                    TaskTitle: claim.Task.Title),
+                    TaskTitle: claim.Task.Title,
+                    StatusCommandIntervalSeconds: claim.StatusCommandIntervalSeconds),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             ContinuationBaseReason: claim.ContinuationBaseReason,
@@ -1956,6 +1960,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     {
         if (string.Equals(line.Stream, "system", StringComparison.OrdinalIgnoreCase))
         {
+            if (line.Text.StartsWith(Contract.StatusCommandRunSummary.LogPrefix, StringComparison.Ordinal))
+                return Contract.StatusCommandRunSummary.EventKind;
             if (Contract.ProtocolNoveltyTelemetry.TryParseMarker(line.Text, out _))
                 return Contract.LifecycleEventKinds.ProtocolUnknownFrame;
             if (line.Text.Contains("runner transport disconnected", StringComparison.Ordinal))

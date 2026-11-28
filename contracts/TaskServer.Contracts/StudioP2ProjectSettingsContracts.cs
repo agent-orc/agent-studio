@@ -38,7 +38,8 @@ public sealed record StudioProjectSettingsDto(
     int MaxParallelism,
     string OrchestratorModel,
     string? QuotaWaitPolicyJson,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    int StatusCommandIntervalSeconds = StatusCommandInterval.DefaultSeconds);
 
 public sealed record UpdateStudioProjectRequest(string? Name);
 

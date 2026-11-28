@@ -1653,6 +1653,7 @@ public sealed class RemoteTaskRunner
                             LastOutputSequence = 0,
                             Phase = "launching",
                         });
+                        var previousSpec = DurableAgentProcess.TryReadSpec(slot.WorkerDirectory);
                         var resumed = DurableAgentProcess.Start(
                             _options,
                             resumeSlot.WorkerDirectory,
@@ -1667,7 +1668,8 @@ public sealed class RemoteTaskRunner
                             // same preparation cache binding, which a reattaching
                             // daemon can only read back from the first attempt's
                             // own worker specification.
-                            environment: DurableAgentProcess.TryReadEnvironment(slot.WorkerDirectory),
+                            environment: previousSpec?.Environment,
+                            statusGuardDirectory: previousSpec?.StatusGuardDirectory,
                             log: _log);
                         resumeSlot = _state.Save(resumeSlot with
                         {
@@ -1689,6 +1691,8 @@ public sealed class RemoteTaskRunner
                             operatorStopRequested);
                     }
 
+                    if (result.StatusCommands is { IsValid: true } statusCommands)
+                        shipper.Add("system", new StatusCommandRunSummary(slot.AttemptId, statusCommands).ToLogLine());
                     shipper.Add(
                         "system",
                         $"[runner] CLI exited {classified.Decision.RawFacts.ExitCode?.ToString() ?? "without an exit code"}; launchFailed={classified.Decision.RawFacts.LaunchFailed} typedOutcome={classified.Decision.Outcome} recovery={classified.Decision.RecoveryAction} classifier={classified.Decision.ClassifierVersion} legacyOutcome={classified.Outcome.Kind}");
