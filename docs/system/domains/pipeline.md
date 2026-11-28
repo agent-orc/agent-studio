@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -210,6 +210,36 @@ project definition. Generic projects without a map keep their conservative
 full-inventory behavior. The generated per-card project map remains available
 for those projects. `ProjectTestSelectionGuardTests` checks every tracked
 top-level source folder and every declared routine/build/lint assignment.
+
+Fast coding reviews can additionally opt into fixed .NET checks through
+`.agent-studio/review-base.json`. This repository-owned array names an existing
+routine `suite`, exact-file or directory-prefix `paths` (`*` means any .NET
+input), and a `category` trait value or `classes` list. Selector names accept
+only identifiers and dots, never filter operators or shell text. Each suite
+must also be present in `commands.test` as a single filterable `dotnet test`
+invocation. Invalid opt-in inventory refuses planning. No executable command
+is read from this file, and projects without it keep their existing behavior.
+
+The Studio inventory selects `Category=ReviewBase` on any .NET input: durable
+task mutations, every board mutation theory row, deferred actionable-concern
+settlement, and every monolith engine-settlement theory row. Task Server,
+contracts, runner, engine and decision changes also select the separate
+`StandaloneReviewLoopCutoverTests` class through `orchestrator-engine-routine`.
+The existing architecture/Guard selection includes both request-delegate
+generator profiles. Fixed checks and guards share one invocation per declared
+test command, retaining its original exclusions such as `MachineBound`.
+Other selected class invocations exclude those checks to avoid duplicate cases.
+
+This union runs after fast review fallback, including an unmapped path or an
+overly broad type-reference selection, on both the shared impact map and the
+legacy generated-map path. Whole .NET routine invocations remain post-merge
+obligations in these opted-in fast reviews. The selection audit records the
+commands and their reasons without treating selection as execution: attempted
+commands and tests must come from execution receipts, and selected commands
+without receipts remain missing evidence. A narrowed check never claims a
+complete routine suite. Docs-only and report-only reviews, balanced and strict
+strategies, batch gates, full and nightly verification keep their existing
+semantics. The opt-in file does not activate the shared `testSelection` map.
 
 Compile-only integration under fast, balanced or exact-review reuse still
 runs the selected builds; its receipt explicitly omits tests and lint. Docs-only

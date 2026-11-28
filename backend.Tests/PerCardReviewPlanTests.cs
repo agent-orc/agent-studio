@@ -4,10 +4,12 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
+using AgentStudio.TestSupport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
+using Xunit.Abstractions;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
@@ -30,9 +32,11 @@ public sealed class PerCardReviewPlanTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "per-card-plan-" + Guid.NewGuid().ToString("N"));
     private readonly string _repo;
     private readonly string _folder;
+    private readonly ITestOutputHelper _output;
 
-    public PerCardReviewPlanTests()
+    public PerCardReviewPlanTests(ITestOutputHelper output)
     {
+        _output = output;
         _repo = Path.Combine(_root, "repo");
         _folder = Path.Combine(_root, "task");
         Directory.CreateDirectory(_repo);
@@ -141,9 +145,17 @@ public sealed class PerCardReviewPlanTests : IDisposable
                 || argument.Contains("frontend-build", StringComparison.Ordinal)));
     }
 
-    [Fact]
-    public void Fast_defers_a_mapped_whole_test_project_command_to_after_integration()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Fast_defers_a_mapped_whole_test_project_command_to_after_integration(bool fixedChecks)
     {
+        if (fixedChecks)
+        {
+            ReviewBaseInventory(mapped: false);
+            Git("add", ".");
+            Git("commit", "-qm", "fixed review inventory");
+        }
         var resultSha = Commit("backend/FooService.cs");
         var settings = Settings(TestingStrategies.Fast) with
         {
@@ -159,6 +171,238 @@ public sealed class PerCardReviewPlanTests : IDisposable
         var plan = Build(settings, resultSha, "backend/FooService.cs");
         Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest));
         Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+        Assert.Equal(fixedChecks, plan.Commands.Any(command => command.Arguments.Any(argument =>
+            argument.Contains("Category=ReviewBase", StringComparison.Ordinal))));
+    }
+
+    [Theory]
+    [InlineData(false, "backend/FooService.cs", false)]
+    [InlineData(true, "backend/FooService.cs", false)]
+    [InlineData(false, "backend/Program.cs", false)]
+    [InlineData(true, "unmapped/Unknown.cs", false)]
+    [InlineData(false, "runner/Changed.cs", true)]
+    [InlineData(true, "contracts/Changed.cs", true)]
+    [InlineData(true, "orchestrator-engine/Changed.cs", true)]
+    [InlineData(false, "orchestration-decisions/Changed.cs", true)]
+    [InlineData(true, "task-server/Changed.cs", true)]
+    public void Fast_review_keeps_fixed_checks_through_mapped_legacy_and_broad_fallback(
+        bool mapped, string changed, bool cutover)
+    {
+        ReviewBaseInventory(mapped);
+        if (changed != "backend/FooService.cs") Write(changed, "// composition or unmapped input\n");
+        Git("add", ".");
+        Git("commit", "-qm", "fixed review inventory");
+        var sha = Commit(changed);
+
+        var plan = Build(Settings(TestingStrategies.Fast), sha, changed);
+        var shells = plan.Commands.SelectMany(command => command.Arguments).ToArray();
+        _output.WriteLine("fixed-review-selection: " + JsonSerializer.Serialize(new
+        {
+            mapped, changed,
+            selected = shells.Where(command => command.StartsWith("dotnet test", StringComparison.Ordinal)),
+            attempted = Array.Empty<string>(),
+            note = "Planner evidence only; test execution receipts establish attempted and missing evidence.",
+        }));
+        var fixedCommand = Assert.Single(shells, command => command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+        Assert.Contains("(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard|Category=ReviewBase)", fixedCommand);
+        Assert.Contains("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build", fixedCommand);
+        // No second guard invocation for the backend: both RDG profiles remain Guard.
+        Assert.Single(shells, command => command.Contains("backend.Tests/OrchestratorApi.Tests.csproj", StringComparison.Ordinal)
+            && command.Contains("Category=Guard", StringComparison.Ordinal));
+        Assert.Equal(cutover, shells.Any(command => command.Contains("FullyQualifiedName~Example.CutoverTests", StringComparison.Ordinal)));
+        Assert.DoesNotContain(BackendTest, shells);
+        Assert.DoesNotContain("dotnet test engine.Tests/Engine.Tests.csproj --no-build --filter Category!=MachineBound", shells);
+        Assert.NotNull(plan.TestSelectionDigest);
+        if (mapped)
+        {
+            Assert.NotNull(plan.SuiteSelection);
+            Assert.DoesNotContain("backend-routine", plan.SuiteSelection.SelectedSuites);
+            Assert.Contains("backend-routine", plan.SuiteSelection.OmittedSuites);
+        }
+    }
+
+    [Theory]
+    [InlineData("docs/notes.md", null)]
+    [InlineData("backend/FooService.cs", "research")]
+    public void Fixed_checks_leave_documentation_and_report_only_reviews_unchanged(string changed, string? mode)
+    {
+        ReviewBaseInventory(mapped: false);
+        if (changed.StartsWith("docs/", StringComparison.Ordinal)) Write(changed, "Notes.\n");
+        Git("add", ".");
+        Git("commit", "-qm", "fixed review inventory");
+        var sha = Commit(changed);
+
+        var plan = Build(Settings(TestingStrategies.Fast), sha, changed, mode);
+
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("Category=ReviewBase", StringComparison.Ordinal)
+            || argument.Contains("Example.CutoverTests", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Fixed_check_audit_distinguishes_selection_from_execution_and_leaves_full_plans_alone()
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var ordinary = PerCardVerifyPlanner.Plan(_repo, verify, ["backend/Program.cs"], null, null, null);
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify, ordinary, ["backend/Program.cs"]);
+
+        Assert.Contains(selected.Audit.SelectedCommands, command => command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+        Assert.Empty(selected.Audit.AttemptedTestCommands);
+        Assert.Contains(selected.Audit.Reasons, reason => reason.Contains("not attempted", StringComparison.Ordinal));
+        Assert.DoesNotContain(ordinary.Commands, command => command.Command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+        Assert.Contains(selected.Audit.OmittedTestCommands, command => command.Contains(BackendTest, StringComparison.Ordinal));
+        Assert.NotEqual(ordinary.Audit.Digest, selected.Audit.Digest);
+    }
+
+    [Theory]
+    [InlineData("strict")]
+    [InlineData("balanced")]
+    public void Fixed_inventory_does_not_change_other_review_strategies(string strategy)
+    {
+        ReviewBaseInventory(mapped: false);
+        Git("add", ".");
+        Git("commit", "-qm", "fixed review inventory");
+        var sha = Commit("backend/FooService.cs");
+        var plan = Build(Settings(strategy), sha, "backend/FooService.cs");
+
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("Category=ReviewBase", StringComparison.Ordinal)
+            || argument.Contains("Example.CutoverTests", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Deferred_fast_review_also_keeps_fixed_checks()
+    {
+        ReviewBaseInventory(mapped: false);
+        Git("add", ".");
+        Git("commit", "-qm", "fixed review inventory");
+        var sha = Commit("backend/FooService.cs");
+        var settings = Settings(TestingStrategies.Fast) with
+        {
+            BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only"),
+        };
+
+        var plan = Build(settings, sha, "backend/FooService.cs");
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("Category=ReviewBase", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Repository_inventory_selects_the_four_methods_and_keeps_Rdg_in_Guard()
+    {
+        var expected = new[]
+        {
+            (typeof(TaskCoreEndpointTests), "DurableMutations_AreVisibleToTheNextDetailRequest", 1),
+            (typeof(BoardReadMutationTests), "Mutations_replace_cached_board_bytes_and_validator", 14),
+            (typeof(BatchGatePilotRecoveryTests), "Batch_deferred_actionable_concern_waits_for_a_fix_before_admission", 1),
+            (typeof(MonolithOrchestrationEndpointTests), "Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied", 4),
+        };
+        var tagged = typeof(TaskCoreEndpointTests).Assembly.GetTypes().SelectMany(type => type.GetMethods())
+            .Where(method => HasCategory(method, "ReviewBase")).ToArray();
+        Assert.Equal(expected.Select(item => item.Item2).Order(), tagged.Select(method => method.Name).Order());
+        foreach (var (type, name, rows) in expected)
+        {
+            var method = type.GetMethod(name)!;
+            Assert.Equal(rows, Math.Max(1, method.GetCustomAttributes(typeof(InlineDataAttribute), false).Length));
+        }
+        var rdg = typeof(RequestDelegateGeneratorCoverageTests);
+        Assert.True(HasCategory(rdg, "Guard"));
+        Assert.False(HasCategory(rdg, "ReviewBase"));
+
+        var root = RepositoryRoot.Find();
+        var verify = VerifyCommandPlanner.Plan(root, null);
+        var selection = new StagedVerifyPlan([], new TestSelectionAudit());
+        var plan = PerCardVerifyPlanner.WithReviewBase(root, verify, selection, ["contracts/TaskServer.Contracts/ReviewPlan.cs"]);
+        Assert.Single(plan.Commands, command => command.Command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+        Assert.Single(plan.Commands, command => command.Command.Contains(
+            "FullyQualifiedName~OrchestratorEngine.Tests.StandaloneReviewLoopCutoverTests", StringComparison.Ordinal));
+        Assert.Contains("OrchestratorEngine.Tests.StandaloneReviewLoopCutoverTests", plan.Audit.SelectedTestClasses);
+        Assert.All(plan.Commands, command => Assert.Contains("Category!=MachineBound", command.Command));
+
+        static bool HasCategory(System.Reflection.MemberInfo member, string category)
+            => member.CustomAttributes.Any(attribute => attribute.AttributeType == typeof(TraitAttribute)
+                && Equals(attribute.ConstructorArguments[0].Value, "Category")
+                && Equals(attribute.ConstructorArguments[1].Value, category));
+    }
+
+    [Fact]
+    public void Fixed_checks_exclude_their_cases_from_retained_class_commands()
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var classes = DeterministicTestScope.DotNetProjectCommand(verify,
+            "backend.Tests/OrchestratorApi.Tests.csproj", ["BoardReadMutationTests", "RequestDelegateGeneratorCoverageTests"])!;
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([classes], new TestSelectionAudit()), ["backend/FooService.cs"]);
+
+        var retained = Assert.Single(selected.Commands, command => command.Command.Contains(
+            "FullyQualifiedName~BoardReadMutationTests", StringComparison.Ordinal));
+        Assert.Contains("Category!=ReviewBase", retained.Command);
+        Assert.Contains("Category!=Guard", retained.Command);
+        Assert.Contains("FullyQualifiedName!~.Architecture.", retained.Command);
+        Assert.Single(selected.Commands, command => command.Command.Contains("Category=ReviewBase", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Fixed_dotnet_checks_preserve_selected_other_ecosystem_commands()
+    {
+        ReviewBaseInventory(mapped: true);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        string[] changed = ["backend/FooService.cs", "frontend/src/app.ts"];
+        var affected = PerCardVerifyPlanner.Plan(_repo, verify, changed, null, null, null);
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            affected, changed);
+
+        Assert.Contains(selected.Commands, command => command.Command == FrontendUnit);
+        Assert.Contains("frontend-unit", selected.Audit.SelectedSuites);
+        Assert.DoesNotContain(selected.Audit.OmittedTestCommands, command => command.Contains(FrontendUnit, StringComparison.Ordinal));
+        Assert.DoesNotContain(selected.Commands, command => command.Command == BackendTest);
+    }
+
+    [Theory]
+    [InlineData("Bad|Category=Guard")]
+    [InlineData("Bad\"; echo unsafe")]
+    public void Fixed_checks_reject_filter_operators_in_selector_names(string category)
+    {
+        ReviewBaseInventory(mapped: false);
+        Write(ReviewBaseChecks.InventoryPath, JsonSerializer.Serialize(new[]
+        {
+            new { suite = "backend-routine", paths = new[] { "*" }, category },
+        }));
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var selection = new StagedVerifyPlan([], new TestSelectionAudit());
+
+        Assert.Throws<InvalidDataException>(() => PerCardVerifyPlanner.WithReviewBase(
+            _repo, verify, selection, ["backend/FooService.cs"]));
+    }
+
+    private void ReviewBaseInventory(bool mapped)
+    {
+        var definition = File.ReadAllText(Path.Combine(_repo, ".agent-studio/project.yml"))
+            .Replace($"    - {BackendTest}\n", $"    - {BackendTest}\n    - dotnet test engine.Tests/Engine.Tests.csproj --no-build --filter Category!=MachineBound\n", StringComparison.Ordinal)
+            .Replace("testSuites:\n", $"testSuites:\n  - id: backend-routine\n    category: routine\n    expectedDurationSeconds: 1\n    command: {BackendTest}\n  - id: engine-routine\n    category: routine\n    expectedDurationSeconds: 1\n    command: dotnet test engine.Tests/Engine.Tests.csproj --no-build --filter Category!=MachineBound\n", StringComparison.Ordinal);
+        if (mapped) definition += """
+
+            testSelection:
+              - paths: [backend/, backend.Tests/]
+                suites: [backend-routine]
+                build: [0, 1]
+              - paths: [runner/, contracts/, task-server/, orchestrator-engine/, orchestration-decisions/]
+                suites: [engine-routine]
+              - paths: [frontend/]
+                suites: [frontend-unit]
+                lint: [0]
+            """;
+        Write(".agent-studio/project.yml", definition);
+        Write("engine.Tests/Engine.Tests.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>");
+        Write(ReviewBaseChecks.InventoryPath, """
+            [
+              { "suite": "backend-routine", "paths": ["*"], "category": "ReviewBase" },
+              { "suite": "engine-routine", "paths": ["runner/", "contracts/", "task-server/", "orchestrator-engine/", "orchestration-decisions/"], "classes": ["Example.CutoverTests"] }
+            ]
+            """);
     }
 
     [Fact]
@@ -537,11 +781,12 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.All(web.Commands, item => Assert.Equal("web", item.WorkingSubdir));
     }
 
-    private Contract.ReviewPlanDto Build(ProjectSettings? settings, string resultSha, string changed)
+    private Contract.ReviewPlanDto Build(ProjectSettings? settings, string resultSha, string changed, string? mode = null)
         => Builder().Build(new TaskInfo
         {
             Id = "task", TaskKey = "task", ProjectName = "project",
             WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+            Mode = mode ?? TaskModes.Coding,
         }, _repo, settings, "develop", resultSha, [changed], ResultRef);
 
     private static ProjectSettings Settings(string strategy)

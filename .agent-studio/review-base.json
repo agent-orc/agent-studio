@@ -1,0 +1,12 @@
+[
+  {
+    "suite": "backend-routine",
+    "paths": ["*"],
+    "category": "ReviewBase"
+  },
+  {
+    "suite": "orchestrator-engine-routine",
+    "paths": ["task-server/", "task-server.Tests/", "contracts/", "runner/", "runner.Tests/", "orchestrator-engine/", "orchestrator-engine.Tests/", "orchestration-decisions/", "orchestration-decisions.Tests/"],
+    "classes": ["OrchestratorEngine.Tests.StandaloneReviewLoopCutoverTests"]
+  }
+]

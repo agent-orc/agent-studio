@@ -338,6 +338,11 @@ public sealed partial class RemoteReviewPlanBuilder
                             ReferenceSelection(selectionRepo, resultSha!));
                     if (usesSharedSelection) level = selection.Audit.Level;
                     LogReferenceSelection(task!, selection.Audit);
+                    if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                    {
+                        selection = FixedReviewSelection(task!, selectionRepo, verify, selection, changedPaths);
+                        level = selection.Audit.Level;
+                    }
                     var selected = selection.Commands.Where(command =>
                         command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
                     if (selection.Audit.Level == TestExecutionLevels.Full
@@ -417,6 +422,8 @@ public sealed partial class RemoteReviewPlanBuilder
                             },
                         });
                 }
+                if (TestingStrategies.Resolve(projectSettings) == TestingStrategies.Fast)
+                    selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
@@ -441,12 +448,13 @@ public sealed partial class RemoteReviewPlanBuilder
                 var selection = DeterministicTestScope.WithDigest(TestSelectionPlanner.Plan(
                     repositoryPath, verify, changedPaths, projectSettings.TestExecution,
                     TaskStates.AutoReview, TestExecutionLevels.BuildOnly));
+                selection = FixedReviewSelection(task, repositoryPath, verify, selection, changedPaths);
                 toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
                     integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
                 {
                     RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
                 };
-                testLevel = TestExecutionLevels.BuildOnly;
+                testLevel = selection.Audit.Level;
                 selectionDigest = selection.Audit.Digest;
                 perCardApplied = true;
             }
@@ -888,6 +896,19 @@ public sealed partial class RemoteReviewPlanBuilder
                     build),
             Time = _time,
         };
+
+    private StagedVerifyPlan FixedReviewSelection(TaskInfo task, string repositoryPath, VerifyPlan verify,
+        StagedVerifyPlan selection, IReadOnlyList<string>? changedPaths)
+    {
+        var selected = PerCardVerifyPlanner.WithReviewBase(repositoryPath, verify, selection, changedPaths);
+        if (selected.Commands.Any(command => command.TestScope == ReviewBaseChecks.Scope))
+            _logger?.LogInformation(
+                "remote-review-fixed-checks task={TaskKey} selection={Digest} selected={Selected} attempted={Attempted} awaitingExecution={AwaitingExecution}",
+                task.TaskKey ?? task.Id, selected.Audit.Digest, string.Join(" | ", selected.Audit.SelectedCommands),
+                string.Join(" | ", selected.Audit.AttemptedTestCommands),
+                string.Join(" | ", selected.Audit.SelectedCommands.Except(selected.Audit.AttemptedTestCommands)));
+        return selected;
+    }
 
     private void LogReferenceSelection(TaskInfo task, TestSelectionAudit audit)
     {

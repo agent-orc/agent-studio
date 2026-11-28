@@ -123,6 +123,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "ReviewBase")]
     public async Task DurableMutations_AreVisibleToTheNextDetailRequest()
     {
         Seed("AGT-edit", TaskStates.Ready);
