@@ -12,12 +12,20 @@ internal sealed class RunnerModelAcceptanceProbe
     internal static RunnerModelAcceptanceProbe Shared { get; } = new();
     internal static readonly TimeSpan CapacityTtl = TimeSpan.FromMinutes(15);
 
+    internal static readonly TimeSpan LaunchRefusalTtl = TimeSpan.FromMinutes(15);
+    private readonly Dictionary<string, (string Subscription, DateTime At, IReadOnlyList<HostQuotaWindowDto> Windows)> _usage = new();
+    private readonly Dictionary<string, (string? Generation, DateTimeOffset Since, DateTimeOffset Until)> _limits = new();
+
     private readonly object _sync = new();
     private readonly SemaphoreSlim _refresh = new(1, 1);
     private readonly Dictionary<string, ModelVerdict> _verdicts = new(StringComparer.Ordinal);
+    // The server may have missed a short-lived launch refusal between advertisements.
+    // Send the non-ready acknowledgement it requires before collecting fresh proof.
+    private readonly HashSet<string> _awaitingAcknowledgement = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _invalidationSequences = new(StringComparer.Ordinal);
     private Func<string, string, CancellationToken, Task<ProcessResult>>? _launch;
     private Func<string, string?> _generation = _ => null;
+    private Action<string, ProcessResult, DateTimeOffset>? _quotaRefused;
     private Func<DateTimeOffset> _clock = () => DateTimeOffset.UtcNow;
     private IReadOnlyList<(string Provider, string Model)> _configured = [];
     private readonly Dictionary<string, string> _catalogueRevision = new(StringComparer.Ordinal);
@@ -52,14 +60,18 @@ internal sealed class RunnerModelAcceptanceProbe
     internal void Configure(
         Func<string, string, CancellationToken, Task<ProcessResult>> launch,
         Func<string, string?> generation,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null, Action<string, ProcessResult, DateTimeOffset>? quotaRefused = null)
     {
         lock (_sync)
         {
             _launch = launch;
             _generation = generation;
+            _quotaRefused = quotaRefused;
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             _verdicts.Clear();
+            _awaitingAcknowledgement.Clear();
+            _usage.Clear();
+            _limits.Clear();
             _invalidationSequences.Clear();
             _catalogueRevision.Clear();
         }
@@ -77,12 +89,16 @@ internal sealed class RunnerModelAcceptanceProbe
                 _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var verdict);
                 var current = verdict is not null && verdict.Generation == currentGeneration
                     && (verdict.ExpiresAt is null || verdict.ExpiresAt > _clock());
-                var status = current ? verdict!.Status : "unknown";
+                var status = current && !_awaitingAcknowledgement.Contains(CapabilityProtocol.ModelAcceptance(provider, model))
+                    ? verdict!.Status : "unknown";
                 return new AdvertisedCapabilityDto(
                     CapabilityProtocol.ModelAcceptance(provider, model), "model-acceptance",
                     status,
                     Identity: $"{provider}/{model}",
-                    Detail: current ? verdict!.Detail : "Model acceptance has not been checked for this login.",
+                    Detail: current ? verdict!.Detail
+                        : _limits.TryGetValue(provider, out var limit) && limit.Generation == currentGeneration && limit.Until > _clock()
+                            ? $"Provider usage window is exhausted until {limit.Until:O}."
+                            : "Model acceptance has not been checked for this login.",
                     CredentialGeneration: currentGeneration,
                     CredentialObservedAt: current ? verdict!.ObservedAt.UtcDateTime : null,
                     ProbeSequence: status == "ready" ? verdict!.Sequence : horizon);
@@ -90,13 +106,26 @@ internal sealed class RunnerModelAcceptanceProbe
         }
     }
 
-    internal void RecordRejection(string provider, string model)
+    internal void AcknowledgeAdvertisement(AdvertisedCapabilityDto sent, string effectiveStatus)
+    {
+        lock (_sync)
+        {
+            if (sent.Status == "ready" && effectiveStatus == "unavailable")
+                _awaitingAcknowledgement.Add(sent.Key);
+            else if (sent.Status != "ready" && _awaitingAcknowledgement.Remove(sent.Key)
+                     && _verdicts.TryGetValue(sent.Key, out var verdict) && verdict.Status == "ready"
+                     && verdict.Sequence <= sent.ProbeSequence)
+                _verdicts.Remove(sent.Key);
+        }
+    }
+
+    internal void RecordRejection(string provider, string model, bool accountRestriction = false)
     {
         var generation = _generation(provider);
         lock (_sync)
             _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
                 generation, "unavailable", "The provider refused this model for the host login.", _clock(),
-                ++_sequence);
+                ++_sequence, accountRestriction ? null : _clock().Add(LaunchRefusalTtl), LaunchRefusal: !accountRestriction);
     }
 
     internal void NoteCatalogueRefresh(string provider, string revision)
@@ -110,12 +139,72 @@ internal sealed class RunnerModelAcceptanceProbe
                 foreach (var key in _verdicts.Where(item =>
                              item.Key.StartsWith(prefix, StringComparison.Ordinal)
                              && item.Value.Status == "unavailable"
-                             && item.Value.ExpiresAt is null)
+                             && (item.Value.ExpiresAt is null || item.Value.LaunchRefusal))
                          .Select(item => item.Key).ToArray())
                     _verdicts.Remove(key);
-                _sequence++;
+                _invalidationSequences[provider] = ++_sequence;
             }
             _catalogueRevision[provider] = revision;
+        }
+    }
+
+    internal bool ObserveUsage(string provider, string subscription, DateTime at, IReadOnlyList<HostQuotaWindowDto> windows)
+    {
+        lock (_sync)
+        {
+            if (windows.Count == 0) return false;
+            var known = _usage.TryGetValue(provider, out var prior) && prior.Subscription == subscription;
+            if (known && at <= prior.At) return false;
+            _usage[provider] = (subscription, at, windows);
+            if (!known || !windows.Any(window => prior.Windows.Any(old => old.Label == window.Label
+                    && (old.ResetAt.HasValue && window.ResetAt.HasValue && old.ResetAt != window.ResetAt
+                        || window.UsedPct < old.UsedPct)))) return false;
+
+            if (_limits.TryGetValue(provider, out var limit) && limit.Since <= at)
+                _limits.Remove(provider);
+            foreach (var key in _verdicts.Where(pair => pair.Value.LaunchRefusal && pair.Value.ObservedAt <= at
+                         && pair.Key.StartsWith($"model-acceptance:{provider}:", StringComparison.Ordinal))
+                     .Select(pair => pair.Key).ToArray())
+                _verdicts.Remove(key);
+            _invalidationSequences[provider] = ++_sequence;
+            return true;
+        }
+    }
+
+    internal DateTimeOffset RecordQuota(string provider, string? model, ProviderAccessEvidence evidence)
+    {
+        lock (_sync)
+        {
+            var now = _clock();
+            DateTimeOffset? reset = evidence.ResetTimeReported ? evidence.LimitedUntil : null;
+            if (reset is null && _usage.TryGetValue(provider, out var reading)
+                && HostQuotaCoordinator.IsFreshForAdmission(reading.At, null, now.UtcDateTime,
+                    TimeSpan.FromSeconds(HostQuotaCoordinator.DefaultTtlSeconds)))
+                reset = reading.Windows.Where(window => window.UsedPct >= 100 && window.ResetAt > now.UtcDateTime)
+                    .Max(window => window.ResetAt);
+            var until = reset ?? now.Add(ProviderAccessClassifier.UnknownLimitRetry);
+            if (!string.IsNullOrWhiteSpace(model))
+            {
+                var key = CapabilityProtocol.ModelAcceptance(provider, model);
+                if (_verdicts.TryGetValue(key, out var verdict) && (verdict.Status != "unavailable" || verdict.LaunchRefusal))
+                    _verdicts.Remove(key);
+            }
+            _limits[provider] = (_generation(provider), now, until);
+            _invalidationSequences[provider] = ++_sequence;
+            return until;
+        }
+    }
+
+    internal string? CredentialGeneration(string provider) => _generation(provider);
+
+    internal void RecordSuccess(string provider, string model, string? generation)
+    {
+        lock (_sync)
+        {
+            var current = _generation(provider);
+            if (current is null || current != generation) return;
+            _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
+                current, "ready", "A real request was accepted for this model.", _clock(), ++_sequence);
         }
     }
 
@@ -139,6 +228,8 @@ internal sealed class RunnerModelAcceptanceProbe
         {
             foreach (var key in _verdicts.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
                 _verdicts.Remove(key);
+            _limits.Remove(provider);
+            _usage.Remove(provider);
             _invalidationSequences[provider] = ++_sequence;
         }
     }
@@ -161,6 +252,8 @@ internal sealed class RunnerModelAcceptanceProbe
                     started = _sequence;
                     launch = _launch;
                     generation = _generation(provider);
+                    if (_awaitingAcknowledgement.Contains(CapabilityProtocol.ModelAcceptance(provider, model))) continue;
+                    if (_limits.TryGetValue(provider, out var limit) && limit.Generation == generation && limit.Until > _clock()) continue;
                     cached = _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var prior)
                         && prior.Generation == generation
                         && (prior.ExpiresAt is null || prior.ExpiresAt > _clock())
@@ -195,8 +288,11 @@ internal sealed class RunnerModelAcceptanceProbe
                 // the route unprobed so the next refresh retries it.
                 if (result.ExitCode != 0
                     && result.StdErr == ProviderRealRequestHostFlight.InProgress) continue;
+                var access = ProviderAccessClassifier.ClassifyRun(result.ExitCode, result.StdOut, result.StdErr,
+                    observedAt: _clock());
                 var status = result.ExitCode == 0 ? "ready" :
-                    IsModelRejection(result, model) ? "unavailable" : "unknown";
+                    access.Kind == ProviderAccessEvidenceKind.RequestRejected && IsModelRejection(result, model)
+                        ? "unavailable" : "unknown";
                 lock (_sync)
                 {
                     if (_generation(provider) != generation) continue;
@@ -205,10 +301,20 @@ internal sealed class RunnerModelAcceptanceProbe
                     // evidence; the probe result must not overwrite it.
                     if (_verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var newer)
                         && newer.Generation == generation && newer.Sequence > started) continue;
+                    if (result.ExitCode != 0 && access.Kind == ProviderAccessEvidenceKind.RateLimited)
+                    {
+                        var retry = RecordQuota(provider, model, access);
+                        _quotaRefused?.Invoke(provider, result, retry);
+                        continue;
+                    }
+                    if (status == "unavailable")
+                    {
+                        RecordRejection(provider, model, IsAccountRestriction(result, model));
+                        continue;
+                    }
                     _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
                         generation, status,
                         status == "ready" ? "A real request was accepted for this model."
-                            : status == "unavailable" ? "The provider refused this model for the host login."
                             : "The model acceptance probe could not verify this route.",
                         _clock(), ++_sequence);
                 }
@@ -223,7 +329,13 @@ internal sealed class RunnerModelAcceptanceProbe
                string.Join('\n', result.StdOut, result.StdErr), out var rejection)
            && ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model);
 
+    internal static bool IsAccountRestriction(ProcessResult result, string model)
+        => ProviderRequestRejectionClassifier.TryClassify(string.Join('\n', result.StdOut, result.StdErr), out var refusal)
+           && ProviderRequestRejectionClassifier.IsModelUnavailable(refusal, model)
+           && Regex.IsMatch(refusal.Message, @"\b(?:for (?:this|your|the) (?:account|login)|with (?:a |your )?ChatGPT account)\b",
+               RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     private sealed record ModelVerdict(
         string? Generation, string Status, string Detail, DateTimeOffset ObservedAt, long Sequence,
-        DateTimeOffset? ExpiresAt = null);
+        DateTimeOffset? ExpiresAt = null, bool LaunchRefusal = false);
 }

@@ -53,7 +53,7 @@ public sealed class HostOrchestratorStoreTests
         Assert.Equal("accepted", acceptance.Status);
         Assert.Equal(delta.DeliverySha, acceptance.MechanicalDelta?.DeliverySha);
         Assert.Equal("pending-mechanical-continuation", acceptance.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-5.6-terra", acceptance.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, acceptance.MechanicalFreshRoute?.Model);
         var replay = await first.AcceptWorkPermitAsync(
             permit.PermitId,
             new WorkPermitAcceptRequest(

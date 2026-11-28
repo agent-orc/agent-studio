@@ -1,10 +1,44 @@
 # Model Routing Policy
 
-Version: 2026-10-11
+Version: 2026-11-28
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
 Owner: Pipeline and CLI domains
+
+## Codex defaults since 28 November 2026
+
+The Studio owner selected GPT-6.2 Sol as the standard Codex model on
+28 November 2026 (AGT-4379), superseding AGT-3958's explicit-pin-only
+decision. New Codex cards, unconfigured Codex review and orchestrator
+routes, repair cards, and follow-ups without a parent route use
+`gpt-6.2-sol` at `medium`. Correctness-critical cards use Sol at `high`.
+`gpt-6.2-astra` is the strong tier, available by explicit selection.
+Older generations are superseded for automatic routing and remain selectable
+as pins where an execution host advertises them. Explicit installation
+settings for reviews, client and legacy profiles, and the orchestrator take
+precedence over the shipped defaults.
+
+The Codex 6.2 provider ladder is `low, medium, high, xhigh, max, ultra`.
+The provider defaults to `low`. Studio supplies `medium` when it selects
+the standard route and preserves any supported explicit level. An unoffered
+level, including `minimal` and `none`, maps to `low`.
+
+On a fresh coding selection, preference pins on `gpt-6-sol` or
+`gpt-6.1-sol` resolve to `gpt-6.2-sol` with the mapped level. The upgrade
+is applied to the effective route at qualification and admission, so stored
+card metadata and historical receipts retain the original pin. Hard pins
+retain the model and reasoning level they specify. A resumed session keeps
+its recorded route. Other superseded models remain available for deliberate
+selection and are outside this preference upgrade.
+
+`GET /api/cli/codex/models` reads fresh advertisements from coding and
+review hosts, including Task Server inventory in a split installation.
+A ready model acceptance or a CLI model list supplies availability evidence.
+A fresh model-specific refusal overrides that host's CLI model list.
+Without current evidence, the model remains visible as unavailable.
+An API container's local Codex discovery is used only for local execution
+diagnostics and never determines what the picker claims the fleet offers.
 
 ## Networked one-shot custody
 
@@ -83,8 +117,9 @@ remains read only during this compatibility release.
 Card and project pins default to `preference`. A `hard` pin waits with a reason
 when the route cannot launch. Provider-refusal continuation stores a temporary
 preference with an expiry instead of replacing the operator's card pin.
-The policy declares `gpt-6-sol:xhigh` to `claude-opus-5:xhigh` as the explicit
-cross-provider fallback recommended in D5 of the concept Dossier.
+D5's declared high-capability recovery route uses the Opus thinking level
+from the policy's Anthropic override for `sol-high`. Quota fallbacks use
+the published Token Economy pairs.
 
 ### Model selection API contract
 
@@ -104,7 +139,7 @@ instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
 | `GET /api/model-selection/effective?project={projectName}&pipelineType={pipelineType}` | Both query parameters are optional; `pipelineType` must be valid when supplied. | `{ "project": ..., "pipelineType": ..., "routes": [...] }`. Each route has `consumer`, nullable `stepId`, `configured`, nullable `effective`, `rule`, and nullable `reason`. `configured` and `effective` use `cliType`, `model`, and `thinkingLevel`; a null `effective` means admission would wait. The preview does not launch a model. |
 | `GET /api/model-selection/active` | None. | `ModelSelectionEvent[]` lists open switch and unexpired health entries. A `returned` event with `closesId` removes the matching switch from this projection. |
 | `GET /api/model-selection/events` | Optional `provider`, `project`, `consumer`, `rule`, model `from` and `to`, `taskKey`, `eventId`, ISO timestamps `since` and `until`, and page `cursor`. | `{ "events": [...], "nextCursor": ... }`, newest first. The CLI Management view keeps its provider, project, consumer, rule, period, card, and event filters in the URL query. A card timeline receipt links to the view using `msCard` and `msEvent`; an event link ignores the default period so older receipts remain reachable. |
-| `PUT /api/projects/{projectName}/model-selection-overrides/{consumer}` | `{ "pipelineType": null, "override": { "primary": { "cliType": "codex", "model": "gpt-6-sol", "thinkingLevel": "high" }, "fallbacks": [], "pinMode": "preference" } }`. `pipelineType` selects a type-specific override; omit or set it to null for the consumer-wide override. Set `override` to null to clear that scope. | `{ "projectName": ..., "modelSelectionOverrides": ... }`. Unknown projects or consumers are rejected; `pinMode` must be `preference` or `hard`. Overrides can also contain `byPipelineType` and `byStep` maps. |
+| `PUT /api/projects/{projectName}/model-selection-overrides/{consumer}` | `{ "pipelineType": null, "override": { "primary": { "cliType": "codex", "model": "gpt-6.2-sol", "thinkingLevel": "medium" }, "fallbacks": [], "pinMode": "preference" } }`. `pipelineType` selects a type-specific override; omit or set it to null for the consumer-wide override. Set `override` to null to clear that scope. | `{ "projectName": ..., "modelSelectionOverrides": ... }`. Unknown projects or consumers are rejected; `pinMode` must be `preference` or `hard`. Overrides can also contain `byPipelineType` and `byStep` maps. |
 | `PUT /api/projects/{projectName}/pipeline-step` | The existing step body with `pipelineType`, `stepId`, optional `cliType`, `model`, `thinkingLevel`, and `pinMode` (default `preference`), alongside the other step settings. | The existing step response gains `modelSelectionOverrides`. A model or CLI selection writes the matching step override; clearing both removes it. The compatibility step fields remain readable. |
 | `PUT /api/tasks/{jobId}/model`, `/thinking-level`, `/cli-type` | Respectively `{ "model": ..., "pinMode": "preference" }`, `{ "thinkingLevel": ..., "pinMode": "preference" }`, and `{ "cliType": ..., "pinMode": "preference", "useOwnSession": ... }`. `pinMode` may be omitted and then defaults to `preference`. | `200 OK` for a saved card pin, `404` when the card is absent; invalid pin modes return `400`. The CLI route also validates `cliType`. These pins affect later attempts, not a running CLI session. |
 
@@ -136,8 +171,8 @@ is not written by the new policy editor.
 
 This slice implements the Dossier's recommended working choices for its scope:
 D2 makes pins preferences with a hard opt-in; D3 keeps the 95 percent cap and
-records the 10-point, 30-minute return hysteresis; D5 declares the Sol/xhigh to
-Opus 5/xhigh fallback; D8 sets the cost guard factor to 2.0. The consumer
+records the 10-point, 30-minute return hysteresis; D5 declares the original high-capability
+provider-rejection fallback; D8 sets the cost guard factor to 2.0. The consumer
 policy retains D4's same-class review rule and D6's sticky review setting.
 The Dossier implementation log records decisions handled by the other slices.
 
@@ -176,114 +211,55 @@ orchestrator should explain when a pin is below the policy floor.
 
 A capacity refusal marks the selected model on its execution host for 15 minutes,
 or until a later provider retry hint. It does not mark the provider account as
-rate limited. A model-unavailable refusal stays scoped to that model and host
-until the next catalogue refresh; an unauthorized provider response holds
-that provider on the affected host until a successful provider probe. After
+rate limited. A temporary model refusal is probed again within the
+15-minute backoff and the regular probe cadence. A new usage window ends
+the backoff early. An explicit account restriction lasts until the login or
+catalogue changes, or successful use proves the model is accepted.
+A usage-window refusal holds the login until reset. An unauthorized provider
+response holds that provider on the affected host until a successful provider probe. After
 bounded same-session capacity retries, a fresh attempt first tries the declared
 same-provider sibling, then a host-accepted cross-provider equivalent that
-clears the card's correctness floor. Sol/xhigh uses the declared Opus 5/xhigh
-policy route. A running process keeps its selected model.
+clears the card's correctness floor. A running process keeps its selected
+model.
 
 ## Routing tiers
 
-| Route | Default use | Do not use for | Evidence and rationale |
+| Tier | Codex route | Anthropic route | Use |
 |---|---|---|---|
-| `gpt-6-luna` / `medium` (`luna-medium`) | Trivial, mechanical, locally specified changes with a small expected diff and an obvious verification path. Examples: remove one control, rename a local label, update a narrow fixture. | Unclear bugs, cross-subsystem behavior, public contracts, migrations, security, concurrency, or distributed state. | No Luna cohort existed in the 2026-07-23 benchmark. This is therefore a cost-saving hypothesis, not a validated quality claim. The empirical uncertainty adds points and keeps borderline work on Terra. |
-| `gpt-6-sol` / `low` (`sonnet-low`; or `claude-sonnet-5` / `low`) | Added 2026-09-13 (AGT-2808). The economy floor for feature (and any coding/concept/planning/research) work: the weakest route economy mode may ever select for that class. Not a normal-mode default; only reached by an economy-mode downgrade. | Anything below the floor - economy mode must never fall through to a Haiku-class model for feature/bug work. Haiku-class models are only used by the separate pipeline-support/classification path (`ModelFamilyResolver`, not this registry). | No dedicated historical cohort; introduced to close the Haiku-fallback gap found in AGT-2793/AGT-2807 (economy mode landing Claude-CLI feature cards on `claude-haiku-4-5` via the old positional catalogue fallback). |
-| `gpt-5.6-terra` / `medium` (`terra-medium`) | Economy downgrade for standard features and bugs when the correctness floor permits it; also suited to content and reversible UI or service changes inside one subsystem. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Promote on substantive reissue until controlled data validates it. |
-| `gpt-6-sol` / `medium` (`sol-medium`) | Default for new feature and bug cards, including demanding implementation, investigation, or analysis with several interacting concepts. | Correctness-critical control-plane work that meets a hard floor. | The GPT-6 route is provisional. Its predecessor Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
-| `gpt-6-sol` / `xhigh` (`sol-xhigh`) | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
+| `luna-medium` | GPT-6.2 Sol / medium | Haiku 4.5 / medium | Chores with a small expected diff and an obvious verification path |
+| `sonnet-low` | GPT-6.2 Sol / low | Sonnet 5 / low | Feature economy floor |
+| `terra-medium` | GPT-6.2 Sol / medium | Sonnet 5 / medium | Bug correctness floor and eligible economy downgrade |
+| `sol-medium` | GPT-6.2 Sol / medium | Sonnet 5 / medium | Default for feature and bug cards |
+| `sol-high` | GPT-6.2 Sol / high | Opus 5 / xhigh | Correctness-critical work, including fencing, distributed authority, security boundaries and data-loss prevention |
+| `astra-high` | GPT-6.2 Astra / high | | Explicit strong-tier route |
 
-Deep review uses the same floor: `gpt-6-sol` at `medium` for discretionary
-large-diff or history-triggered review, and `xhigh` for P0 or critical touched
-areas. Its frozen decision is attached to the remote ReviewSubject. Shadow
-mode records the decision without spending review tokens; active mode executes
-on the review host and attributes usage to the review command. Quota can defer
-the critical command, but cannot substitute a route below its frozen floor.
+Codex deep review uses Sol/medium for discretionary large-diff or
+history-triggered review and Sol/high for correctness-critical work. The
+frozen decision is attached to the remote ReviewSubject. Active mode runs
+on the review host and attributes usage to the review command. Shadow mode
+records the decision without issuing the review call. Quota admission
+respects the frozen floor.
 
-`high` and `ultra` are supported reasoning levels but are not default core-task
-routes in this policy. Add a default tier only after controlled comparisons
-show a repeatable benefit over `medium` or `xhigh`.
-
-`gpt-6-astra` is **not yet tiered**. It is onboarded as a known model so the
-picker can offer it (or explain its absence) when the installed codex-cli lists
-it, but it has no routing tier, is not the product default, and has no cohort
-in the benchmark below. Whether it becomes a tier or the default is a separate
-operator decision; until then it is selectable only as an explicit pin, and an
-explicit pin is not evidence that it clears any correctness floor.
-
-### GPT-6 re-base (policy 2026-10-04, AGT-2903)
-
-The operator moved new fleet cards to GPT-6 Sol on 2026-09-25. Policy
-`2026-10-04` records that decision and mirrors the Token Economy GPT-6 ladder
-revision shipped in TokenEconomy `0.3.6` (TE-57 routes, TE-59 catalogue
-refresh, TE policy `2026-09-25`):
-
-- `luna-medium` routes to `gpt-6-luna`; `sonnet-low`, `sol-medium` and
-  `sol-xhigh` route to `gpt-6-sol`. `terra-medium` stays on `gpt-5.6-terra`
-  because Token Economy retained Terra as the 21-50 tier. The tier count is
-  unchanged, so no ADR was needed.
-- Feature and bug cards default to `sol-medium` (intake score 51). This is the
-  operator decision, not a cohort result: at dated prices GPT-6 Sol
-  (USD 2 / 0.20 / 10 per MTok input / cached / output) is cheaper on output than
-  GPT-5.6 Terra (2 / 0.20 / 12). The Anthropic route for Sol/medium is the same
-  Sonnet 5/medium route Terra used, so Claude cards are unaffected. The
-  correctness floor for bugs (`terra-medium`) and the feature economy floor
-  (`sonnet-low`) are unchanged. Chores stay on `luna-medium`.
-- Economy mode still lowers one tier, so a feature or bug card lands on
-  Terra/medium. At dated prices that saves nothing over GPT-6 Sol/medium, so
-  `estimatedSavingsPercent` for Terra is now 0. Revisit this when Token Economy
-  decides Terra's future.
-- `estimatedSavingsPercent` is measured against GPT-6 Sol/medium: Luna 95 (GPT-6
-  Luna lists at USD 0.10 / 0.01 / 0.50), Sol/low 50 (fewer reasoning tokens,
-  same price; still a hypothesis).
-- Everything GPT-6 is still **provisional**. TE-57 ran 32 medium fixture
-  attempts without returned model identity (GPT-6 Luna passed 5/8 with one
-  output-contract failure), and xhigh, max and ultra have no local cohort. The
-  routes rest on dated prices, vendor claims (OpenAI states GPT-6 Sol makes
-  about half the mistakes of GPT-5.6 Sol) and the operator decision. Promote on
-  substantive reissue as usual.
-- When the installed codex-cli does not offer the GPT-6 tier model, the
-  recommendation uses the declared provider-rejection sibling (`gpt-6-sol` to
-  `gpt-5.6-sol`, `gpt-6-luna` to `gpt-5.6-luna`) instead of the positional
-  catalogue fallback. Those siblings also inherit the GPT-6 tier when
-  correctness floors are checked, so an existing `gpt-5.6-sol xhigh` pin still
-  clears Sol/xhigh.
-- `gpt-6-astra` is still untiered: two `access_programs.cyber` HTTP 400s in
-  about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
-  is priced and selectable with TokenEconomy `0.3.7` when the installed CLI
-  offers it. It is not a default route.
-- `gpt-6.2-sol` and `gpt-6.2-astra` (released 2026-11-17, AGT-3958) are
-  explicit-pin only. No tier, default, family resolver, migration or
-  provider-rejection fallback points at either: 6.2 Sol's coding-agent index
-  is reported three points below 6.1 Sol, and the owner decides after the
-  Studio's own comparison. A provider refusal of a 6.2 pin is therefore not
-  rerouted to a sibling, so a blind comparison never silently runs another
-  model.
+The initial GPT-6 routing decision (AGT-2903, policy 2026-10-04) assigned
+GPT-6 Luna to the chore tier, GPT-5.6 Terra to the middle tier, and GPT-6 Sol
+to the standard and critical tiers. That remains historical evidence.
+The 28 November decision replaces those Codex routes. The tier ranks, bug
+floor and feature economy floor still preserve the Anthropic policy. Moving
+from Codex `sol-medium` to `terra-medium` now retains the same model and level.
 
 **Unpriced legacy pins (2026-10-11).** GPT-4.1 and GPT-4o are absent from
 TokenEconomy 0.3.7. Studio no longer includes them in the curated CLI registry
 or explicit pin policy, so every curated Claude and Codex model id has a
 catalog listing. Historical usage for those ids remains explicitly unpriced.
 
-**Codex default.** `ModelMetadataRegistry.DefaultForCli(codex)` prefers
-`gpt-6-sol` when live discovery offers it, then `gpt-5.6-sol`, then the static
-`gpt-5.5` baseline. The CLI's own flagged default does not override this
-order. Its default level comes from discovery (`medium`).
+**Older Codex ladders.** On older explicit pins a requested level above the
+offered ladder maps down to the highest supported rung. For example,
+`ultra` on GPT-6.1 Sol maps to `xhigh`. The picker and card badge report
+the mapping.
 
-**Ladders and unoffered levels.** Live codex-cli discovery on 2026-10-04
-reports `gpt-6-sol` as `low, medium, high, xhigh, max, ultra` and `gpt-6-luna`
-as `low, medium, high, xhigh, max` (both default `medium`; `minimal` is
-rejected). No per-model mapping is hard-coded. A pinned level the discovered
-ladder does not offer runs at the highest offered rung below it (for example
-`ultra` on `gpt-6-luna` runs at `max`; `ultra` on a ladder ending at `xhigh`
-runs at `xhigh`). An unknown level, or one below the ladder, still lands on the
-model default. The picker and the card's model badge state the mapping
-visibly ("Pinned ultra is not offered by gpt-6-luna; runs at max."). The badge
-shows it as an `ultra→max` chip.
-
-**Picker and prices.** The picker lists the newest generation first, so GPT-6
-models lead and GPT-5.6 entries sit under "Older models". Each row shows the
+**Picker and prices.** The picker lists the newest offered generation first.
+Superseded generations stay visible under "Older models" when a newer
+generation is advertised. Each row shows the
 current input/output list price from the TokenEconomy cost API
 (`POST /api/token-pricing/calculate`). Studio holds no rates. Token cost for
 GPT-6 runs comes from the same dated TokenEconomy price snapshots. Cached
@@ -343,16 +319,14 @@ For core task execution, map the total to the ladder:
 
 | Score | Route |
 |---:|---|
-| `0-20` | Luna / medium (GPT-6 Luna) |
+| `0-20` | Sol / medium (`luna-medium`) |
 | `21-24` | Sol / low (`sonnet-low`, economy floor only - see below) |
-| `25-50` | Terra / medium |
-| `51-69` | Sol / medium (GPT-6 Sol) |
-| `70-100` | Sol / xhigh (GPT-6 Sol) |
+| `25-50` | Sol / medium (`terra-medium`) |
+| `51-69` | Sol / medium (`sol-medium`) |
+| `70-100` | Sol / high (`sol-high`) |
 
-Luna/high is a role exception for bounded pipeline decisions with structured
-evidence and a parseable output contract. It is not the bottom rung of the
-core-task ladder. GPT-5.4 Mini was retired on 2026-09-11 and is retained only
-as a historical identifier.
+Codex bounded pipeline decisions also use Sol/medium. GPT-5.4 Mini was
+retired on 2026-09-11 and is retained as a historical identifier.
 
 ### Automated card convention
 
@@ -400,7 +374,7 @@ The standalone Task Server uses the same versioned policy document for both
 direct claims and accepted host permits. A pending mechanical delta gets at
 least Terra/medium before the runner checks session admission; a recorded
 semantic fallback gets at least Sol/medium on the next fresh claim. Task text
-that names a critical boundary raises the route to Sol/xhigh. The claim carries
+that names a critical boundary raises the route to Sol/high. The claim carries
 the selected CLI, model, thinking level, and reason to the runner.
 
 When a new task has no explicit model pin (`modelExplicit=false`), model
@@ -414,14 +388,14 @@ qualification starts from this convention:
 
 This is an intake fallback, not permission to ignore better task evidence.
 Security boundaries, distributed authority, credible data-loss paths, and
-subtle concurrent state machines promote to Sol/xhigh. Public protocols,
+subtle concurrent state machines promote to Sol/high. Public protocols,
 persistent-state migrations, and changes spanning three or more runtime
 subsystems promote to at least Sol/medium. These promotions become correctness
 floors and economy mode cannot lower them.
 
 Added 2026-09-13 (AGT-2808): economy mode's one-step downgrade can never drop
 feature (or any coding/concept/planning/research) work below `sonnet-low`
-(Sonnet 5, or `gpt-6-sol`, at `low`). Before this floor existed, the
+(Sonnet 5, or `gpt-6.2-sol`, at `low`). Before this floor existed, the
 registry's per-vendor model id fallback for an unrecognized catalogue (e.g. a
 Claude CLI, since this registry's tiers are keyed to `gpt-5.6-*` ids) picked a
 model by position in the catalogue's ranked list; on a Claude catalogue this
@@ -463,15 +437,12 @@ result below the 0.8 confidence threshold remains a proposal. See
 
 ### Create-card contract
 
-`TaskCrudEndpoints`' create handler never persists a card with a model but no
-thinking level: when the caller omits `thinkingLevel`, the handler calls
-`ModelRoutingPolicyRegistry.Recommend()` and stamps both `model` and
-`thinkingLevel` from the same recommendation, with `thinkingLevelExplicit`
-mirroring `modelExplicit` (`false` for a policy-derived pick, `true` only when
-the caller pinned a level). The model-level badge (`model-level-indicator`)
-always renders a level code for any non-human, non-unknown model family, so a
-model without a level shows as missing (`?`, dimmed) instead of silently
-rendering only the model code.
+`TaskCrudEndpoints` uses the configured client route when supplied.
+Otherwise it fills missing model and level choices through
+`ModelRoutingPolicyRegistry.Recommend()`. The request keeps its separate
+`modelExplicit` and `thinkingLevelExplicit` flags, so qualification can
+recognize a caller's choices. Direct product-created cards materialize the
+standard Codex route when neither the caller nor the client supplies a route.
 
 ### Backfill contract
 
@@ -491,14 +462,12 @@ the report first and confirm the entry list before applying.
 Apply these after scoring:
 
 - P0, fencing, lease ownership, stale-write rejection, distributed authority,
-  security boundaries, and credible data-loss paths require Sol/xhigh.
+  security boundaries, and credible data-loss paths require Sol/high.
 - A public protocol, persistent-state migration, or change spanning three or
   more runtime subsystems requires at least Sol/medium.
-- An unclear bug requires at least Terra/medium even when the expected diff is
-  tiny.
-- A bounded decision that can itself authorize a destructive, security, or
-  lane-affecting action must move from Mini to Sol/medium when its evidence is
-  ambiguous or unbounded.
+- An unclear bug requires at least the `terra-medium` tier even for a tiny diff.
+- A decision that can authorize a destructive, security, or lane-affecting
+  action requires at least Sol/medium when its evidence is ambiguous or unbounded.
 - Quota and cost never lower a hard floor. Prefer an equivalent-capability
   provider fallback, wait for quota, or request an explicit human override.
 
@@ -553,26 +522,24 @@ CLI actually offers.
 ### Families
 
 `ModelFamilyResolver` (`backend/Shared/Models/CliModels.cs`) resolves a family
-id to the newest available model, live-catalog first, falling back to the
-static registry's declared (newest-first) generation order and
-Available/Deprecated flags when discovery has not run yet:
+id to a runtime model. Claude families use discovery and the registry's
+generation order. The two Codex families follow the Studio policy:
 
 | Family | Members today (newest first) | Resolves to today |
 |---|---|---|
 | `claude-haiku` | claude-haiku-4-5 | claude-haiku-4-5 |
 | `claude-sonnet` | claude-sonnet-5, claude-sonnet-4-6, claude-sonnet-4-5 | claude-sonnet-5 |
 | `claude-opus` | claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5 | claude-opus-5 |
-| `gpt-mini` compatibility id | gpt-5.6-luna | gpt-5.6-luna |
-| `gpt-flagship` | detected gpt-6-sol, else gpt-5.6-sol, else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
+| `gpt-mini` compatibility id | gpt-6.2-sol | gpt-6.2-sol |
+| `gpt-flagship` | gpt-6.2-sol | gpt-6.2-sol |
 
-The explicit-pin registry includes these newly onboarded models. Neither changes
-a default route or family resolver:
+The model registry carries the provider ladders and Codex context windows:
 
 | Model | Picker availability | Thinking ladder | Context window |
 |---|---|---|---:|
-| `gpt-6.1-sol` | Codex live discovery | CLI reported `minimal, low, medium, high, xhigh`; default `xhigh` | 1,050,000 |
-| `gpt-6.2-sol` | Codex live discovery at codex-cli `0.166.0` or later | `low, medium, high, xhigh, max, ultra`; default `low` | 500,000 |
-| `gpt-6.2-astra` | Codex live discovery at codex-cli `0.166.0` or later | `low, medium, high, xhigh, max, ultra`; default `low` | 272,000 |
+| `gpt-6.1-sol` | Execution-host advertisements | CLI reported `minimal, low, medium, high, xhigh`; default `xhigh` | 1,050,000 |
+| `gpt-6.2-sol` | Execution-host advertisements, verified from codex-cli `0.166.0` | `low, medium, high, xhigh, max, ultra`; default `low` | 500,000 |
+| `gpt-6.2-astra` | Execution-host advertisements, verified from codex-cli `0.166.0` | `low, medium, high, xhigh, max, ultra`; default `low` | 272,000 |
 | `claude-sonnet-5-5` | Claude live discovery at `2.1.284` or later | `low, medium, high, xhigh, max`; default `medium` | 1,000,000 |
 
 All start unavailable in the registry. GPT-6.1 Sol and Sonnet 5.5 use
@@ -584,7 +551,7 @@ The GPT-6.2 ladder comes from `codex debug models` on 0.166.0 and the
 CLI value; the Codex app's names map as Light = `low`, Medium = `medium`,
 High = `high`, Extra High = `xhigh`, Max = `max`, Ultra = `ultra` (Ultra adds
 automatic subagent delegation). The API has no `none` effort for 6.2, so a
-stored `none` resolves to the model default. The context column is the Codex
+stored `none` resolves to `low`. The context column is the Codex
 default window; both models support 1M through `model_context_window`.
 
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
@@ -610,26 +577,12 @@ installed Claude Code 2.1.263 `/model` picker found no Haiku generation beyond
 
 `backend/Policies/model-migration-catalog.v1.json` (loaded by
 `ModelMigrationCatalogRegistry`, served at `GET /api/cli/model-migrations`) is
-the versioned list of known-safe "from model -> to model" replacements: same
-family, newer generation, `safeAuto: true` when the orchestrator may apply it
-without operator confirmation. Today it holds exactly the superseded Opus and
-Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
-Haiku entry. Retired GPT-5.4 Mini is not a migration target or route.
-It also proposes `claude-opus-5` to `claude-opus-5-5`, `gpt-5.6-sol` to
-`gpt-6-sol`, `gpt-5.6-luna` to `gpt-6-luna`, and `gpt-6-sol` to
-`gpt-6.1-sol`. These entries have
-`safeAuto: false`, mirroring the TokenEconomy `0.3.6` and `0.3.7` verdicts.
-The GPT-6.1 Sol target has a shorter ladder and a lower cached input price;
-no qualifying no-regression evidence supports automatic migration. Operators can review
-and apply them, while run admission never applies them. A card pinned to the
-source model shows the proposal on its model badge. The GPT-6.1 Sol proposal
-shows that `max` and `ultra` pins would run at `xhigh` after acceptance. Until
-acceptance, the card retains its GPT-6 Sol pin and level. The operator accepts it per
-card (`PUT /api/tasks/{id}/model`) or for every explicitly pinned card of a
-project in backlog, preparation, orchestrator-prep, or ready
-(`POST /api/projects/{project}/model-migrations/apply` with `{ "from": ... }`).
-Running, reviewed, and finished cards are never rewritten, and a non-explicit
-card follows the policy default instead. The release dates and model ids are documented in the
+the versioned list of model replacements. The 28 November policy records
+both Sol preference upgrades as `safeAuto: true`. The GPT-5.6 Sol and Luna
+entries remain manual proposals to GPT-6.2 Sol. Claude entries continue to
+track their own families and evidence. Operators can also apply a migration
+deliberately per card or through the project migration API for explicit pins
+in backlog, preparation, orchestrator-prep, or ready. The release dates and model ids are documented in the
 [Anthropic release notes](https://platform.claude.com/docs/en/release-notes/overview#september-22-2026)
 and [OpenAI API changelog](https://developers.openai.com/api/docs/changelog).
 
@@ -648,22 +601,16 @@ implemented by AGT-2716.
 
 | Surface | Visible when superseded | Applied automatically | Explicit pin protection |
 |---|---|---|---|
-| Task/card pinned model (`modelExplicit == true`) | Card model badge shows "update available" with a one-click apply | Never | Always - the orchestrator only rewrites `modelExplicit == false` models |
-| Task/card model when `modelExplicit == false` | N/A - already resolves live via `ModelQualificationService`; a stale stored literal self-heals at run admission | Yes, when the workspace switch is on and the catalog entry is `safeAuto` | N/A |
-| Project pipeline-step override | Pipeline settings row shows "update available" with a one-click apply | Never - an explicit project choice | Always |
-| Configuration pin (e.g. `ClaudeCli:SummaryModel`) | Not surfaced by this policy; an operator-edited config key is out of the runtime settings surface | Never | Always |
+| Task card with a Sol 6.0 or 6.1 preference | Card model badge offers the new route | Effective route upgrades to 6.2 Sol on fresh coding selection | Hard pins keep their stored route |
+| Task card with another explicit model | Card model badge can offer a manual upgrade | Operator applies the offer | Automatic migration preserves the pin |
+| Task card with no explicit model | Qualification displays the current policy route | Standard Codex route applies on fresh selection | The policy selects the route |
+| Project pipeline-step override | Pipeline settings can offer a manual upgrade | Operator applies the offer | Saved step overrides keep their precedence |
+| Configuration model | The settings surface shows the configured model | Operator edits the setting | The configured model keeps its precedence |
 
-Automatic application happens at run admission
-(`ProjectRunner.ApplyAutoModelMigration`, decided by the pure
-`ModelMigrationPolicy.DecideAutoMigration`): a non-explicit task whose stored
-`Model` matches a `safeAuto` catalog entry is rewritten, the change is
-persisted to `task.json`, and a `model_migrated` timeline event records
-`fromModel`, `toModel`, `family`, and the catalog version that authorized it.
-A workspace can turn this off entirely with
-`PUT /api/workspaces/{id}/auto-apply-model-migrations`
-(`WorkspaceSettings.AutoApplyModelMigrations`, default on); the switch never
-affects the visibility of the "update available" offer, only whether it can
-apply itself.
+For other `safeAuto` catalogue entries, `ProjectRunner.ApplyAutoModelMigration`
+can update a non-explicit stored model and record a `model_migrated` timeline
+event. `WorkspaceSettings.AutoApplyModelMigrations` controls those stored-model
+rewrites. The two Sol preference upgrades are effective-route decisions.
 
 ## Benchmark basis
 
@@ -871,11 +818,11 @@ a CLI start or `CliRouter.Get(...)` outside its allow-lists.
 
 A provider-side HTTP 400, 403, or 404 model-request refusal is distinct from
 quota and authentication. The versioned policy document declares same-provider
-sibling routes for this condition: `gpt-6-astra` and `gpt-6-sol` to
-`gpt-5.6-sol`, `gpt-6-luna` to `gpt-5.6-luna`, Claude Opus 5.5 to Opus 5,
-Anthropic Opus 5 to Opus 4.8, and Anthropic Sonnet 5 to Sonnet 4.6. The
-continuation keeps the original thinking level and must still clear the card's
-correctness floor.
+sibling routes for this condition. GPT-6.2 Astra and the listed older
+Codex models target GPT-6.2 Sol. Sol has no older automatic sibling.
+Anthropic routes retain their declared same-family alternatives. The
+continuation maps the original thinking level onto the target ladder and
+must still clear the card's correctness floor.
 
 The first refusal uses a run-scoped `modelFallback` and leaves the card's model
 unchanged. A second refusal of the same configured model pins the card to the

@@ -10,7 +10,10 @@ public sealed record ModelSelectionRoute(string? CliType, string? Model, string?
 public sealed record ModelSelectionEvidence(string? Excerpt, string? ClassifierKind);
 public sealed record ModelSelectionQuota(string? Provider, string? Window, double? UsedPct, double? CapPct,
     double? ProjectedPct, DateTimeOffset? ResetAt, double? SnapshotAgeSeconds,
-    IReadOnlyDictionary<string, QuotaPace>? WindowPaces = null);
+    IReadOnlyDictionary<string, QuotaPace>? WindowPaces = null)
+{
+    public string? SubscriptionKey { get; init; }
+}
 public sealed record ModelSelectionEquivalence(string? CapabilityClass, string? CatalogueVersion, string? Source);
 public sealed record ModelSelectionPrice(double? From, double? To);
 
@@ -40,6 +43,7 @@ public sealed record ModelSelectionEvent
     public string? ExecutionProvider { get; init; }
     public bool ProviderFailure { get; init; }
     public bool NearbyResetWait { get; init; }
+    public string? AdmissionOutcome { get; init; }
     public ModelSelectionPrice? PricePerMTok { get; init; }
     public int Count { get; init; } = 1;
     public IReadOnlyList<string>? CollapsedIds { get; init; }
@@ -96,6 +100,8 @@ public sealed class ModelSelectionLedger
                     && e.Project == sanitized.Project && e.Host == sanitized.Host
                     && e.PipelineType == sanitized.PipelineType && e.StepId == sanitized.StepId
                     && e.AttemptId == sanitized.AttemptId && e.Round == sanitized.Round
+                    && e.Quota?.SubscriptionKey == sanitized.Quota?.SubscriptionKey
+                    && e.AdmissionOutcome == sanitized.AdmissionOutcome
                     && e.From == sanitized.From && e.To == sanitized.To && e.At.UtcDateTime.Date == sanitized.At.UtcDateTime.Date);
                 if (prior is not null && !string.IsNullOrWhiteSpace(prior.TaskKey))
                 {
@@ -181,6 +187,16 @@ public sealed class ModelSelectionLedger
         lock (_sync) return _active.Values
             .Where(e => e.Kind != "health-marked" || e.ReturnToPrimaryAt is null || e.ReturnToPrimaryAt > _time.GetUtcNow())
             .OrderByDescending(e => e.At).ToArray();
+    }
+
+    internal IReadOnlyList<ModelSelectionEvent> LatestQuotaAdmissions(DateTime nowUtc)
+    {
+        lock (_sync)
+            return _events.Where(entry => entry.At.UtcDateTime <= nowUtc && entry.Quota?.Window is not null
+                    && entry.Kind is "selected" or "returned" or "waiting" or "switched" or "refused")
+                .OrderByDescending(entry => entry.At).ThenByDescending(entry => entry.Id)
+                .DistinctBy(entry => ((entry.Quota!.Provider ?? entry.From?.CliType)?.ToUpperInvariant(),
+                    entry.Quota.Window!.ToUpperInvariant(), entry.Quota.SubscriptionKey)).ToArray();
     }
 
     public ModelSelectionEvent? ReturnToPrimary(string consumer, string? project, string? taskKey,

@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model call ledger | Agent Studio</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #696762;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>.section-nav{display:flex;flex-wrap:wrap;gap:0.25rem 0.85rem;font:0.82rem/1.6 var(--article-sans);padding-block:1rem;border-block:1px solid var(--article-line)}code{overflow-wrap:anywhere}td{vertical-align:top}.wide-sample{overflow:auto}</style>
+</head>
+<body>
+<main class="article">
+<header class="page">
+  <p class="kicker">Agent Studio · AGT-4392 · 28 November 2026</p>
+  <h1>Model call ledger</h1>
+  <p class="lede">Every observed model response gets a traceable cost record. The owner can see what a card cost from creation to integration, which host and step incurred the cost, and which work drove it.</p>
+</header>
+<nav aria-label="Contents" class="section-nav"><a href="#owner" lang="de">Entscheidungsvorlage</a><a href="#evidence">Evidence</a><a href="#record">Call record</a><a href="#capture">Capture</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#cost">Cost</a><a href="#reporting">Reporting</a><a href="#explorer">Explorer</a><a href="#backfill">Backfill</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Implementation</a></nav>
+
+<section id="owner" lang="de">
+  <h2>Entscheidungsvorlage</h2>
+  <p>Die Modellkosten sollen vom Anlegen einer Karte bis zu ihrer Integration sichtbar sein. Die 30-Tage-Abrechnung nennt 41,2 Mrd. Tokens, 11.915 USD zu Listenpreisen und 1.196 Karten. 358 Läufe haben keinen Preis. Allein das automatische Verschlagworten verursachte rund 224 USD. In der Messnacht haben 5.516 Coding-Aufrufe nur auf laufende Arbeit gewartet oder ihren Status geprüft. Das waren 729 Mio. Tokens. Welcher Befund die nächste Runde ausgelöst hat, lässt sich heute nur aus mehreren Spuren rekonstruieren.</p>
+  <p><strong>Empfehlung.</strong> Jeder Host puffert die erfassten Antworten und liefert sie an den Task Server. Dort speichert eine eigene SQLite-Datei die Buchungen mit Karte, Host, Schritt, Anlass und Preisgrundlage. Damit reicht für eine Einzelinstallation der vorhandene Stack. Ein zweiter aktiver Task Server wäre der Anlass, auf PostgreSQL umzusteigen. Ein verteilter Key-Value-Store würde erst bei einem eigenständigen Bedarf an verteilter Aufnahme oder Koordination geprüft.</p>
+  <p><strong>Produkt.</strong> Unter Token Usage gibt es einen Explorer mit Filtern und Vergleichsansicht. Von der Wochenzahl geht es über Host, Modell oder Anlass bis zur Antwort. Zwei feste Ansichten zeigen die Pipeline nach Hosts und den Kostenverlauf einer Karte. Das Magazin liefert Tages- und Wochenberichte mit den teuersten Karten und belegten Auffälligkeiten. Szenarien zeigen, was bei unveränderter Folgearbeit rechnerisch entfallen wäre.</p>
+  <p><strong>Standard.</strong> 180 Tage Einzelaufrufe, dauerhafte verdichtete Summen, Prompt-Referenzen ohne Prompt-Text. Listenpreis und gemeldete Abo-Punkte stehen nebeneinander. Fehlende Preise, Punkte und Zuordnungen bleiben sichtbar. Empfehlungen gelten für Umsetzungskarten, soweit keine abweichende Entscheidung vorliegt. Die erste Karte macht die Coding-Nacht vom 27. auf den 28. November im Produkt abfragbar.</p>
+  <p><strong>Zuordnung und Betrieb.</strong> Eine Wiederholung wird als neuer Aufruf erfasst. Dieselbe Meldung kann gefahrlos erneut eintreffen. Wenn mehrere Befunde gemeinsam eine Runde ausgelöst haben, erscheint sie einmal in einer gemeinsamen Gruppe. Ein abgetrennter Host liefert seine Buchungen nach. Bei fehlender Abdeckung nennt der Bericht Zeitraum und Host.</p>
+  <p><a href="prototype.html" hreflang="en">Entwurf öffnen</a> · <a href="#open-decisions">Optionen und Standards</a></p>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+  <h2>Evidence</h2>
+  <figure class="evidence-figure media-breakout">
+    <div class="evidence-captures">
+      <div class="evidence-capture"><img src="assets/current-token-usage-light--pinned.png" alt="Light Demo App project Token Usage panel with token totals, recent activity, and Pipeline Cost by Step Kind."></div>
+      <div class="evidence-capture"><img src="assets/current-token-usage-dark--pinned.png" alt="Dark Demo App project Token Usage panel with the same token totals and step-kind cost chart."></div>
+    </div>
+    <figcaption><span class="figure-claim"><b>Existing product.</b> The pinned project Token Usage panel displays project token totals and a chart grouped by pipeline step kind.</span><span class="figure-as-of"><span><b>Light and dark:</b> <time datetime="2026-08-10">10 August 2026</time> repository capture refresh, Demo App pinned fixture, commit <code>1749e56289</code>, Playwright scene 05. <a href="../../frontend/e2e/visual-evidence/presentation-capture.spec.ts">Capture spec</a> · <a href="../operations/setup/presentation-capture.md">Runbook</a></span></span></figcaption>
+  </figure>
+  <dl>
+    <dt><strong>30-day production figures supplied on 28 November</strong></dt>
+    <dd>41.2 billion tokens, USD 11,915 at list prices, 1,196 cards, and 358 unpriced runs with <code>AmbiguousPromptSize</code> on <code>gpt-6.1-sol</code>. Auto-tag contributed 129.9 million tokens and USD 223.52 in that window. The before-noon report shows 563 auto-tag calls and USD 7.41, with about 11,000 tokens and 1.3 cents per call. Post-summary assessment shows 22,057 runs on 881 cards in 30 days. The 30-day and before-noon windows differ from the research night.</dd>
+    <dt><strong>AGT-4375 response export, reproduced from CSV</strong></dt>
+    <dd><code>calls.csv</code> and <code>measurements.json</code> cover 27 Nov 21:52 UTC to 28 Nov 09:12:07 UTC. Joining each card to its mode yields 20,454 responses, of which 19,774 are coding on 58 cards and 680 are research on 23 cards. Coding total is 2,639,640,822 tokens (provider input including cache plus output). The research classifier tags 4,592 waits and 924 status checks within the 5,516, for 729.4 million tokens combined. The research summary attributes 45 runs and 27.9% of coding volume to blocking findings. That share overlaps waiting. The supplied list-price reconstruction is approximately USD 765, with 73% from cache reads, 16% output and 11% fresh input. Astra high accounts for 36% of tokens and 66% of priced cost. The CSV carries response ordinal and event time but omits response IDs and price basis. The original parser uses nearest-turn matching within 120 seconds, and its measurement reports 108 invalid stdout JSON lines and two missing journals. Treat historical inferred links as estimates.</dd>
+    <dt><strong>Operator reference</strong></dt>
+    <dd>The 28 November <em>Modellaufrufe in der Pipeline</em> page at <code>/home/agent/operator-evidence/pages/modellaufrufe-pipeline.html</code> combines the research night, 7,346 selection entries and 105 review settlements. It reports 541 auto-tag executions, 60 summaries and 23 report reviews from selection evidence, plus 423 review aspect executions from round evidence. These counts describe mixed source units. The tag execution evidence supplies no tokens for that night. The companion page <code>/home/agent/operator-evidence/pages/arbeit-auf-jedem-host.html</code> records that one coding runner on <code>agent-runner-01</code> served this project and KORI supplied all 105 review rounds in the measured night. Host roles and capacity can change. Use the actual executing host and launch envelope, with separately recorded configured role and service identity. The operator page describes work containers, while the placement research identifies cgroups and shadow containers in some paths. Record both fields independently where known.</dd>
+  </dl>
+  <figure class="evidence-figure media-breakout">
+    <div class="evidence-captures">
+      <div class="evidence-capture"><img src="assets/research-a-overview-light.png" alt="Research prototype A in light theme, with spend by hour and a token class cost breakdown."></div>
+      <div class="evidence-capture"><img src="assets/research-a-overview-dark.png" alt="Research prototype A in dark theme, with the same cost and token breakdowns."></div>
+    </div>
+    <figcaption><span class="figure-claim"><b>Research prototype A.</b> The full export view shows 20,454 responses and separates fresh input, cached input and output costs next to hourly spend.</span><span class="figure-as-of">Both captures dated 28 November 2026, AGT-4393 <code>results/prototype/screens/overview-desktop-*.png</code>. The screenshot covers coding and research, while the first implementation slice uses coding only. Its own pricing assumptions apply.</span></figcaption>
+  </figure>
+  <p>AGT-4393 supplies the explorer, multi-filter comparison, receipt detail and savings interaction reference. Carry forward its adjacent hourly spend and token class composition, and keep point and rate coverage in the same reading path. AGT-4394 is the second design reference. Its artifacts were unavailable at the time of this inspection.</p>
+  <h3>Current API and ownership</h3>
+  <ul>
+    <li><code>GET /api/projects/{project}/token-usage/pipeline-cost</code> uses <code>TokenAnalysisService.ProjectCostItems</code> through <code>ProjectPipelineCostService</code>. The reconciliation combines historical token bus, task receipts, persona occurrence receipts, chat fallback and applicable pipeline measurements. The existing summary groups ledger usage, heatmap and expensive routes rank cards, job returns a card rollup, reviews returns review statistics, and <code>analysis/cards/{id}</code> and <code>/api/workspace/tokens/analysis</code> expose card-centric slices. <a href="../system/domains/tokens.md">Token domain</a> · <a href="../../backend/Features/Pipeline/ProjectPipelineCostService.cs">Cost service</a></li>
+    <li><code>/api/usage/cockpit</code> combines usage, route and quota observations. <code>POST /api/token-pricing/calculate</code> returns dated rate basis and component costs, and <code>POST /api/token-pricing/what-if</code> models routing changes. <code>GET /api/model-selection/events</code> records selection, refusal, waiting decisions and execution context, including consumer, host, step and task. A selection wait is a routing event, distinct from an inference response classified as waiting. <a href="../system/domains/token-pricing.md">Pricing domain</a> · <a href="../../backend/Features/Tokens/TokenPricingEndpoints.cs">Pricing routes</a> · <a href="../../backend/Features/Cli/CliEndpoints.cs">Selection routes</a></li>
+    <li>Review settlement stores commands and timing by round and usage by aspect. The aspect aggregate may cover multiple responses. Task Server already uses <code>Microsoft.Data.Sqlite</code> for control state and has an existing <code>studio_token_usage</code> ingestion/read model. Its write DTO and tables need an explicit compatibility and migration decision during MC-1. Keep existing run-level facts at their actual granularity. <a href="../../backend/Features/Runner/RemoteReviewSettlementJournal.cs">Settlement journal</a> · <a href="../../task-server/TaskServerBoardReadModelStore.cs">Task Server read model</a></li>
+    <li>The operator usage audit (<code>/home/agent/operator-evidence/research/usage-recording-today.md</code>) locates local coding usage on bus/result paths, remote coding at completion, Claude <code>message.usage</code> in an aggregate fallback, and shadow decision usage on its decision receipt. Remote one-shot failures can lose usage and existing one-shot host labels can fall back to “local”. Use the dispatch/settlement context to close both gaps in capture. The current selection hot window is 90 days, with archive cleanup after 400 days, and general runtime retention can be shorter. Measure retained coverage before any backfill. <a href="../../backend/Features/Cli/Execution/ClaudeSessionInspector.cs">Claude inspector</a> · <a href="../../task-server/StudioP2InsightEndpoints.cs">Task Server token ingest</a> · <a href="../../backend/Features/Cli/Quota/ModelSelectionLedger.cs">Selection maintenance</a></li>
+  </ul>
+</section>
+
+<section id="record">
+  <h2>Call record</h2>
+  <p><strong>Unit.</strong> One provider request observed through a response usage event, a single-request wrapper, or a request-start trace later filled by a terminal event. Failed or cancelled requests with evidence of dispatch get a status and nullable usage. A refused selection or a shell command creates no call. Process-level totals are stored as <code>coverage_receipt</code> facts with source granularity. The API exposes observed calls, unsplit coverage and telemetry gaps as distinct measures.</p>
+  <p><strong>Identity.</strong> Derive <code>call_id</code> from a versioned hash of provider identity scope and response ID when available. For request wrappers, persist a generated invocation ID before dispatch and reuse it on delivery retry; a genuine new request gets a new ID. Alias response ID to invocation ID when both appear. File sources without response IDs use a persisted session stream identity and immutable event position, avoiding paths and inferred times. Exports that lack both use a dataset-scoped key and stay in the historical import namespace until mapped to canonical events. Never deduplicate on counters or timestamps. A repeated identical event is a no-op. Apply whitelisted enrichment by revision and retain evidence. Conflicting immutable facts enter quarantine with an operator-visible count.</p>
+  <div class="breakout"><table>
+    <thead><tr><th>Fields</th><th>Authority and capture point</th><th>Unavailable or limited</th></tr></thead>
+    <tbody>
+      <tr><td>Workspace, project, task ID and display key, card class and mode</td><td>Workspace-scoped lease or service request. Snapshot the task class/mode at dispatch. A card creation correlation ID links early requests to the persisted task via an audited mapping.</td><td>Workspace chat, fleet maintenance and shared jobs can have no task or project. Failed creation may never obtain a task. Historical current classification is a weak hint, never a snapshot.</td></tr>
+      <tr><td>Persona, operator, service, consumer</td><td>Occurrence ID and persona descriptor; initiating account or authenticated service principal; selection consumer and actor kind.</td><td>Scheduled jobs have a service actor. Older sources may lack the initiating actor. Distinguish explicit system or not applicable from unknown.</td></tr>
+      <tr><td>Start, end, duration, received time, outcome</td><td>Wrapper or provider request trace, monotonic elapsed time where instrumented, and server receipt clock. CLI usage timestamp is generally response/observation time.</td><td>Response-only traces have no request start or duration. Adjacent response times include tool work. Store the timestamp's basis and clock quality; order by event time plus ID.</td></tr>
+      <tr><td>Host, runner, role, container ID or cgroup, CLI and version</td><td>Authenticated producer and active runner registration; deployment role at launch; launcher snapshot of container/cgroup and binary version.</td><td>In-process HTTP has no CLI. Bare-metal service can lack a container. Historical receipts can lack any of these. Provider remote compute host is outside Studio's scope.</td></tr>
+      <tr><td>Pipeline step, run ID, attempt, fence, round</td><td>Dispatch, lease or review claim envelope; persisted root/parent run and settlement links. Store fence generation as a reference, never a credential.</td><td>Workspace chat and maintenance can lack a pipeline attempt. Historical timestamps alone establish no fence or round. A valid late call from a superseded attempt still incurred usage.</td></tr>
+      <tr><td>Cause, trigger ID, review round, finding ID and aspect</td><td>Write at dispatch from consumed decision/follow-up evidence. Enum covers initial, blocking finding, concern, merge conflict, operator instruction, technical retry, scheduled/ad hoc, unknown. Bridge carries causal IDs and any co-triggers.</td><td>Legacy researchers may infer causes with method and confidence. Ambiguity stays visible. Old aspect-only receipts cannot identify a finding. One primary trigger is used only when the dispatch explicitly designates it.</td></tr>
+      <tr><td>Prompt hash and scope, template revision, ordered skill IDs/versions and enrichment IDs/versions</td><td>Prompt assembly records exact rendered launch hash, template ID/revision, skill set and block manifest. Session responses inherit a launch manifest. Use a versioned workspace-keyed SHA-256 HMAC for private content. An exact provider-request hash is a distinct scope when a trusted adapter sees the request.</td><td>CLI responses rarely reveal exact serialized request, provider instructions, tool schemas or dynamic context. Keep launch scope explicit. Legacy settlements may provide only a template or no prompt reference.</td></tr>
+      <tr><td>Provider, observed model, level, service tier, call kind</td><td>Response and turn context supply observed model where reported. Selection and launch capture requested model/level separately. Typed consumer actions or a versioned host-local tool metadata classifier set work, waiting, status check or unknown with confidence.</td><td>One-shot settlement may know only requested model. Classify from tool operation and session state. A response with both useful work and polling remains work. Ambiguous tool intent remains unknown. Persist reason code and classifier version.</td></tr>
+      <tr><td>Fresh input, cached read, cache write by policy, output, reasoning, prompt size</td><td>Provider usage and schema-versioned normalization. Inclusive Codex input subtracts explicit cache reads; retain raw prompt size for tariff. Count cache writes separately only when the provider reports them as disjoint; otherwise keep a priced subset and its semantics. Reasoning is a subset of output.</td><td>Absent fields are null unless the provider contract establishes zero. A CLI total or terminal turn delta alone does not establish response-level attribution, cache split or prompt size.</td></tr>
+      <tr><td>List-price components and basis, subscription points and basis</td><td>Task Server prices through <code>ITokenPricing</code> at the call timestamp. Store price revision, applied tariff, currency, amounts per class and status. Capture actual points with provider unit and scope if attributable to the response.</td><td>No assumed service tier or inferred quota points. Provider account-window measurements stay window facts. Older rows may remain unpriced.</td></tr>
+      <tr><td>Source, precision, parser version, origin fingerprint, evidence references</td><td>Producer assigns <code>response</code>, <code>single_request</code> or receipt granularity and carries opaque allowed references. Ingestion stamps batch and revision. Optional dimension provenance holds observed, inferred, unknown or not applicable.</td><td>Absence never upgrades a source. Raw logs and command output stay outside the ledger.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="capture">
+  <h2>Capture and delivery</h2>
+  <div class="breakout"><table><thead><tr><th>Call sites</th><th>Instrumentation and fallback</th></tr></thead><tbody>
+    <tr><td>Coding and research, local and remote</td><td>The host agent tails only the CLI session files registered to the launch, including resumed forks and subagent sessions with a verified parent. Codex adapter reads <code>token_usage_record</code> response IDs and usage, handles partial lines, rotation and restarts, and final-drains even on failure/abort. Claude, Gemini and Copilot adapters report response facts only where supported by their local traces; otherwise store the genuine turn or session receipt and coverage gap. A process-external agent persists context before the job container can disappear. Conflict-resolution sessions use the same path with merge cause and parent delivery.</td></tr>
+    <tr><td>Remote/local review and batch aspects</td><td>Attach instrumentation at the aspect runner. Carry review claim, aspect, attempt, round and delivery SHA reference. Drain before deleting run artifacts. Feed the settlement's existing usage as an independent control total. Grade, deep review and report review have separate steps. Build, tests and lint executed directly by the host are operational intervals from the settlement.</td></tr>
+    <tr><td>One-shots and card creation</td><td>Instrument the common quota-aware invocation path and Task Server one-shot completion path, on the actual execution host. Include auto-tag, post-summary assessment, summary generation, tag maintenance, other ad hoc work and retries. Join pre-create context to the card when the assignment exists. Verify CLI wrapper granularity before counting a call. Use <code>AdHocUsageRecorder</code> receipts for reconciliation and inventory any remaining direct provider calls.</td></tr>
+    <tr><td>Orchestrator, chat and personas</td><td>Instrument the shared session launcher and provider client. Carry turn, actor and parent task/project/workspace, persona occurrence and purpose. Route fallback responses count separately when actually dispatched. Keep chat fallback and persona receipts as control totals. Attach scheduled recommendations to their occurrence.</td></tr>
+    <tr><td>Decision jobs</td><td>Capture model-based decisions and shadow jobs at the execution boundary with decision ID, shadow/live and returned outcome. Pure decision-library policies create zero model calls. Link routing evidence by explicit selection/execution correlation ID. <a href="../system/contracts/orchestration-decisions.md">Decision contract</a></td></tr>
+  </tbody></table></div>
+  <figure><svg role="img" aria-labelledby="capture-picture" viewBox="0 0 680 204"><title id="capture-picture">Several producers submit sanitized batches to one Task Server. It acknowledges durable commits and serves analytics and reporting.</title>
+    <g fill="var(--article-surface)" stroke="var(--article-line)"><rect x="12" y="20" width="174" height="41" rx="6"/><rect x="12" y="81" width="174" height="41" rx="6"/><rect x="12" y="142" width="174" height="41" rx="6"/><rect x="246" y="72" width="192" height="58" rx="6"/><rect x="502" y="72" width="166" height="58" rx="6"/></g>
+    <g fill="none" stroke="var(--article-link)" stroke-width="2"><path d="M186 40H212V91H246m-60 10h60m-60 61h26v-51h34m192-10h64m-8-5 8 5-8 5"/></g>
+    <g fill="var(--article-ink)" text-anchor="middle" font-family="system-ui" font-size="14"><text x="99" y="46">Runner outbox</text><text x="99" y="107">Review outbox</text><text x="99" y="168">Service outbox</text><text x="342" y="96">Task Server ingestion</text><text x="342" y="116">commit → acknowledge</text><text x="585" y="96">Explorer + Magazine</text><text x="585" y="116">authorized reads</text></g>
+  </svg><figcaption>Proposed flow. Every producer keeps sanitized events until the Task Server acknowledges a durable write.</figcaption></figure>
+  <p>Send versioned batches on the existing authenticated Task Server channel via a dedicated bounded endpoint (target every 10 seconds or 200 events, plus a terminal drain), using current runner/service authentication and project/run authorization. Keep DDL/parser versions and capability negotiation independent of leases. Sequence each producer stream, persist cursor and sanitized event atomically before advancing the reader, then ACK accepted, duplicate or durably quarantined IDs only after commit. Track contiguous coverage and outstanding holes separately. Retry with jitter, bounded timeouts and capped backoff. No synchronous network dependency on model execution. Reject spoofed scopes while accepting authorized late usage for known old fences without giving old workers task mutation rights.</p>
+  <p>While disconnected, store the outbox on the host volume outside disposable containers, encrypted or protected by host-volume controls and least privilege. Replay on reconnection, in bounded batches while live traffic continues. Default buffer budget is seven days at observed host load, with a 2 GB per-host initial cap and alerts at 70% and 90%. At capacity preserve unacked evidence, pause optional backfills, keep eligible raw sources under their existing policy and report known unrecorded ranges if capture cannot continue. The runner's existing admission rules govern work. Use a reserved small quota for gap markers, plus missed-heartbeat coverage when even the marker cannot be sent. Show per-host lag, last source event, missing intervals and rejected frames. A lost host disk is an explicit coverage loss.</p>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+  <h2>Alternatives</h2>
+  <p>20,000 to 50,000 calls a day is 0.23 to 0.58 calls per second on average and 7.30 to 18.25 million per year. Batch arrivals, concurrent reports, long reads, replay and backup matter more than the average. Compare the same five questions using the <a href="queries.html">query workbook</a>, which gives executable SQL shapes or concrete indexed reads for each candidate.</p>
+  <div class="breakout"><table><thead><tr><th>Candidate</th><th>Analysis and ingestion</th><th>Install, recovery and split sites</th></tr></thead><tbody>
+    <tr><td>A · SQLite or DuckDB embedded at Task Server</td><td>SQL answers all five questions. SQLite favors transactional deduplication and point lookup with one short writer and concurrent readers in WAL. Embedded DuckDB favors column scans and bulk writes in the owning process. Both need bounded analytical reads.</td><td>Application-owned local volume and migrations. SQLite online snapshot and restore with outbox replay; DuckDB consistent export/snapshot with writer coordination. A cut-off producer buffers. A second active server requires migration or a separately operated server protocol. <a href="https://www.sqlite.org/wal.html">SQLite WAL</a> · <a href="https://www.sqlite.org/backup.html">Backup API</a> · <a href="https://duckdb.org/docs/current/connect/concurrency">DuckDB concurrency</a></td></tr>
+    <tr><td>B · PostgreSQL as a stack service</td><td>Same SQL with larger concurrency headroom and shared transactions. Keep report work bounded to protect ingestion. PostgreSQL is the natural migration target. ClickHouse is a possible later analytics projection for scans after ingestion identity is settled.</td><td>Extra service, credentials, health checks, upgrades and restore maintenance on every install. Base backup plus WAL allows point-in-time recovery. Hosts still buffer on isolation. Multiple Task Servers can share the database, with single authority for control-plane leases and a fenced report job. <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">PostgreSQL recovery</a></td></tr>
+    <tr><td>C · NATS JetStream and host-local KV</td><td>Use a durable local JetStream stream and KV bucket per host. Source streams and versioned, host-keyed cursor/coverage records into central replicated streams and a central JetStream KV projection. The durable consumer maintains a deduplicated SQL projection. LMDB is an alternative host-local cursor store with replication handled by the event stream. Fixed and arbitrary queries run against that projection. Offset and lag become part of every total.</td><td>Per-host server and identity plus central streams and SQL. An isolated host accepts writes to its own local stream. A replica separated from its quorum cannot continue writing to the quorum stream. Back up stream/consumer state and projection or replay from a known sequence. A second consumer can rebuild reads. Additional active producers need explicit partition and ownership policies. <a href="https://docs.nats.io/concepts/jetstream">JetStream delivery</a> · <a href="https://docs.nats.io/learn/topologies/jetstream-in-a-cluster">Replication</a></td></tr>
+    <tr><td>D · Apache Cassandra wide-column store</td><td>Partition time/project data and maintain query-specific tables plus keyed call detail. Five fixed shapes require five materializations and cross-partition merges. Arbitrary pivots need a scan engine or SQL projection. Reconcile deduplication and projection updates explicitly.</td><td>A useful redundant installation needs multiple nodes, replication and repair, snapshots plus recovery rehearsals. A partition obeys the chosen consistency and quorum rules; failed writes still go to the local outbox. A second Task Server can connect, while coordination semantics still need a separate contract. <a href="https://cassandra.apache.org/doc/4.1/cassandra/data_modeling/intro.html">Query-driven data model</a> · <a href="https://cassandra.apache.org/doc/stable/cassandra/developing/cql/dml.html">CQL limits</a></td></tr>
+    <tr><td>E · Versioned files</td><td>Partition immutable files by project/day. Strongest version uses sealed Parquet and an explicit manifest, read with DuckDB. JSONL alone needs parsing and scans. Deduplication, updates, correction and card lookup require a transactional manifest, side index or expensive scans.</td><td>Few dependencies, but snapshot/manifest consistency, compaction, backups and access control become application responsibilities. An isolated host seals local segments and replays them. A second Task Server needs one manifest publisher or a transactional catalog that restores the missing coordination. <a href="https://duckdb.org/docs/current/data/partitioning/hive_partitioning">Partition pruning</a></td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+  <h2>Recommendation</h2>
+  <div class="callout" data-tone="accent"><h3>Task Server SQLite with a host outbox</h3><p>Start with a separate Task Server-owned SQLite WAL file on the local data volume. Host-local capture is distributed. One reporting owner and one authoritative ingest endpoint give an installation-wide view without keeping database replicas on workers.</p></div>
+  <p>Treat this as a scoped persistence decision alongside ADR-0063. The historical file-first task storage rules in ADR-0023 and ADR-0024 continue to govern task folders. Record the new ledger boundary in an ADR during MC-1. <a href="../system/architecture/decisions/adr-archive.md#adr-0063---task-server-is-the-independently-deployed-durable-control-plane-2026-07-17">ADR-0063</a></p>
+  <p>Keep portable relations for <code>model_call</code>, price revisions, launch/prompt manifests, causal links, receipt coverage, import batches and rollups. Use opaque IDs, UTC milliseconds, fixed-scale integer USD with decimal arithmetic, and normalized references. Index project/time, task/time, scope plus stable call ID, and only hot drill-downs established in measurements. Apply one serialized writer, bounded read concurrency, query cancellation, prepared batch upserts and a short checkpoint budget. Use a dedicated volume budget and service health signal so a reporting fault remains separate from control-state storage. Archive a consistent encrypted snapshot daily and keep an independent backup copy. Target RPO ≤24 hours for loss of the server volume and RTO ≤4 hours, improved where intact outbox or sealed replay exports can recover acknowledged events. Verify restore with row counts, subtotals, schema version and deduplication checkpoints. Backup policy must expire copies with personal data and re-apply erasures on restore.</p>
+  <p>Replay 50,000 calls/day and a tenfold burst at 180-day scale on the one-machine profile. Targets are ACK p95 below 2 seconds after enqueue at the server, online producer lag below 30 seconds, 7-day pivots p95 below 2 seconds and 30-day pivots p95 below 5 seconds under four readers and ongoing ingest. Include restore and a one-host outage with replay. These are acceptance targets, pending measurement on target hardware. If indexed SQL and rollups miss query targets while ingestion stays healthy, test an embedded read-only DuckDB projection over consistent exports. If active cross-host writers, tighter failover/RPO, or sustained write/backup limits appear, promote PostgreSQL. Evaluate a stream when independent subscribers or alternate intake during Task Server outages become a product requirement. Evaluate wide-column storage when measured distributed write scale dominates and query shapes stabilize. Multi-node coordination state is a separate choice with fencing and consistency requirements.</p>
+  <p>Migration to a second Task Server starts with one authoritative writer. Export a consistent snapshot with a high-water mark, load PostgreSQL, catch up by revisioned batches, compare counts, pricing and all five results, briefly fence the old writer, then switch both instances to the same store. Preserve IDs, time semantics and unique constraints. Use a fenced report/rollup worker and stable ingest routing. The call ledger migration does not implement multi-node control-plane leases. Keep the old snapshot until rollback and restore drills pass. A second active writer never shares the SQLite WAL over a network filesystem.</p>
+</section>
+
+<section id="cost">
+  <h2>Cost and attribution</h2>
+  <p>Resolve the dated catalog entry in <code>ITokenPricing</code> using request start when recorded and response time as a flagged fallback. Preserve revision, evidence URL, effective interval, service tier, token semantics, native cache-write policy, prompt-size basis, component amounts, precise total and resolution status. Compare request prompt size, including applicable cached input, to the provider threshold. Apply the proper long-context rates only when supported by catalog and request evidence. Known request size can resolve some of the 358 ambiguous runs by replacing their complete usage with correctly priced child calls. Remaining gaps include unknown model, no price for date, unknown tier, absent cache split and ambiguous or unsupported long context. A report publishes the sum of priced rows, priced/observed coverage, unpriced rows and tokens, plus missing-usage counts. Explicit zero is reserved for known zero. Reasoning is counted within output. Keep USD and observed provider points in separate columns, with points grouped by comparable units. Quota-window percentages and modeled credit conversions are separate estimates.</p>
+  <p>Keep resolved price evidence as recorded. A dated catalog repair or corrected usage appends a pricing revision referenced by the published report. An unpriced row can become priced with new evidence. Rebuild affected rollups and version the Magazine issue when a late fact or correction changes its totals. Historical exports carry both the snapshot and current correction revision where relevant.</p>
+  <p><strong>Card cost.</strong> Sum each scope-authorized call once across creation, enrichment, all distinct attempts, follow-up rounds, review and integration. Include failed/aborted work where observed. Coverage receipts can add only a demonstrably disjoint scope or residual and are labeled as unsplit. When overlap is unresolved, show a separate reconciliation delta. Workspace-wide maintenance stays shared unless it has an explicit task link. Cross-card host or provider work is linked with one owning scope, so consulting multiple related cards cannot inflate project totals.</p>
+  <p><strong>Finding cost.</strong> Show discovery cost (shared aspect run), direct remediation cost (calls in triggered rounds), and subsequent review cost (linked verification). An explicitly primary finding can own the round while co-triggers show linked spend. Ambiguous multi-finding rounds land in a shared bucket for additive ranking. Per-finding detail can show the whole linked round as non-additive. Repeated distinct rounds count once each. Keep merge, operator continuations, concerns and technical retries distinct. Removal scenarios de-duplicate the union when rules overlap.</p>
+</section>
+
+<section id="retention">
+  <h2>Retention and privacy</h2>
+  <p>Keep 180 days of response records by default, with configurable 30–365 days, plus same-window detailed causal links. Keep daily privacy-minimized additive rollups indefinitely by project, card class, host role, model and level, step, cause, call kind and coverage. Keep per-card lifecycle cost summaries with archived cards under card retention and per-report top-card snapshots under report access and erasure policy. Strip person, prompt hash, exact timestamps, container IDs and call IDs from indefinite rollups. For older windows, expose only supported rollup dimensions. Fold and validate day partitions before deletion. Keep bounded deduplication tombstones through the replay window, plus sealed source intervals and watermarks to reject expired replays. Late data beyond retention goes through an audited rollup repair rather than recreating personal detail.</p>
+  <p>For 7.3–18.25 million calls per year at a planning footprint of 0.8–1.5 kB per event including indexes and shared dimensions, full-year detailed storage is about 5.8–27.4 GB. The 180-day hot set is about 2.9–13.5 GB, before WAL, backups or temporary rebuilds. A rollup example of 2,000 occupied tuples/day × 160 bytes uses about 0.12 GB/year before indexes and issue attachments. Measure tuple cardinality and SQLite page size on real data. Budget headroom for a restore copy and queued delivery.</p>
+  <p>Allowlist scalar metadata and opaque references. Keep prompt text, command/output text, tool arguments, credentials, environment values, absolute paths and account secrets out of ingestion, analytics and exports. Host classifiers emit a category, version and evidence pointer. Recheck access before resolving a pointer, allowing a visible expired/withheld state. Restrict operator and subscription dimensions to their existing privilege scope and audit detail/export access. Apply tenant/project ACLs before aggregates, comparisons and reports. Erase or unlink attributable data according to card and account policy, then rebuild affected summaries.</p>
+</section>
+
+<section id="reporting">
+  <h2>Reporting</h2>
+  <p>Schedule a daily issue at 08:00 workspace time for the previous calendar day and a weekly issue Monday at 08:00 for the previous ISO week in the workspace zone. Both report list USD, comparable observed points, requests, token classes, unpriced usage and coverage by project, card class, step, host, model and reasoning level, and run cause. Include waiting, status checks, resulting rounds by finding aspect, technical repeats, one-shots per card and the top ten expensive cards with their main cost drivers. Publish operationally identified hot spots with a saved query, denominator, coverage, evidence revision and threshold. Use deterministic generation from a common query result and the existing Magazine revision, auth and retention paths. Emit preliminary issues while sources lag, revise on replay and keep the original snapshot; run catch-up after restart with one issue ID per scope, period and kind. Use DST-aware half-open intervals and render the zone and both cutoffs. <a href="../../backend/Features/Magazine/MagazineEndpoints.cs">Magazine routes</a></p>
+  <div class="breakout"><table><thead><tr><th>Proposed routes</th><th>Contract</th></tr></thead><tbody>
+    <tr><td><code>POST /api/workspace/model-calls/query</code><br><code>GET /api/workspace/model-calls/{id}</code></td><td>Allowlisted dimensions, filters, measures, comparison, and opaque cursor for call rows. Detail returns context, per-class costs, provenance and ACL-checked source links. Snapshot revision and unavailable dimensions are explicit.</td></tr>
+    <tr><td><code>GET /api/workspace/model-calls/pipeline</code><br><code>GET /api/projects/{project}/model-calls/cards/{id}</code></td><td>Host × step rollup and control intervals; card lifecycle with causal roots and drill-downs. Both share filters and the same cost semantics.</td></tr>
+    <tr><td><code>GET /api/workspace/model-calls/reports?period=day|week&amp;date=…</code><br><code>GET /api/magazine/{scope}/{slug}?revision=…</code></td><td>Structured report snapshot and issue permalink. Workspace scope and optional project filter validated per caller. API results distinguish observed and unsplit units.</td></tr>
+    <tr><td><code>POST /api/workspace/model-calls/what-if</code></td><td>Call-level scenarios using the same pricing seam as the existing routing what-if. Return baseline, scenario, delta, excluded scope and assumptions. Bound scope, execution time and exports.</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="explorer">
+  <h2>Explorer</h2>
+  <p>Add Model Calls under Token Usage, with deep links from project and card views. The explorer provides a time-series overview and ranked breakdown over any supported dimension, then expands group → card → run → response. Breadcrumb, comparison columns and stable URLs carry filters, period, group, selected row and snapshot revision. Two periods use aligned time atoms and show absolute and relative deltas with coverage. Two models share dates and filters, with card-class/level cohort controls. Use shared grids and cost breakdowns with visible keyboard focus. At phone width prioritize the current scope, toggle filters, then show detail as a full-width view. Averages show denominator, while totals reconcile with displayed children including a bounded “Other” bucket.</p>
+  <p>The standing pipeline picture uses one row per host and one column per step or a stacked list on narrow screens. Show process timing separately from request counts, with a unit and source per cell. Clicking a cell starts the same scoped explorer. The card picture shows creation → work → findings/rounds → verification → integration on a timeline, with cumulative priced subtotal, recent coverage and a run outline. Select a response to see all available who/when/where/why/what/cost fields. Expired or unknown details remain explicitly labeled.</p>
+  <p>Derived insights require rule version, sample size, thresholds, attribution/coverage and evidence links. A waiting hotspot includes calls and token volume, classifier confidence and example run. Review amplification includes follow-up-to-discovery spend with matched rounds and a count of shared causes. Technical repeats use recorded failure reason and delivery identity. One-shot outliers rank calls per card by step while keeping project-only maintenance separate. Tests, commands and routing decisions remain separate when they lack provider requests. Suppress trend inference for inadequate coverage while keeping the underlying data visible.</p>
+  <p>Scenarios apply a different tariff to the same supported observed counters, or remove the union of selected wait/status calls or one selected remediation round and its explicitly linked verification. Show held-constant workload, quality and cache assumptions, and coverage exclusions. A different reasoning level requires observed comparable cohorts or a stated counter assumption, since level alone does not predict token counts. Keep quality outcomes and causal uncertainty visible beside the estimate. The prototype combines the measured night with the operator’s host-stage map and one card’s response detail. The AGT-4393 prototype adds full-export drill-down and richer comparison controls. Use the same API design for both the measured and live paths.</p>
+  <p><strong><a href="prototype.html">Open the three product views</a></strong> · <a href="visual-review.md">Visual verification</a></p>
+  <figure class="evidence-figure media-breakout">
+    <div class="evidence-captures">
+      <div class="evidence-capture"><img src="assets/prototype-explorer-light.png" alt="Hourly response chart with a waiting/status series, top-card ranking and cost composition, light theme."></div>
+      <div class="evidence-capture"><img src="assets/prototype-explorer-dark.png" alt="Hourly response chart with a waiting/status series, top-card ranking and cost composition, dark theme."></div>
+    </div>
+    <figcaption><span class="figure-claim"><b>Proposed view.</b> The Explorer shows 19,774 coding responses, an hourly split for waiting and status, and the estimated cost by token class.</span><span class="figure-as-of">Both captures dated <time datetime="2026-11-28">28 November 2026</time>, Chromium, Dossier prototype from AGT-4375 and the 28 November operator pages.</span></figcaption>
+  </figure>
+  <figure class="evidence-figure media-breakout">
+    <div class="evidence-captures">
+      <div class="evidence-capture"><img src="assets/prototype-pipeline-light.png" alt="Host and step rows with named runner, review and gate hosts and distinct evidence units, light theme."></div>
+      <div class="evidence-capture"><img src="assets/prototype-pipeline-dark.png" alt="Host and step rows with named runner, review and gate hosts and distinct evidence units, dark theme."></div>
+    </div>
+    <figcaption><span class="figure-claim"><b>Proposed view.</b> The host view places 541 card-tag executions on the Task Server, 19,774 coding responses on agent-runner-01 and 423 aspect executions on KORI review hosts.</span><span class="figure-as-of">Both captures dated <time datetime="2026-11-28">28 November 2026</time>, Chromium, Dossier prototype from AGT-4375 and the 28 November operator pages.</span></figcaption>
+  </figure>
+  <figure class="evidence-figure media-breakout">
+    <div class="evidence-captures">
+      <div class="evidence-capture"><img src="assets/prototype-card-light.png" alt="AGT-4249 measured coding subtotal, cost split and detail fields from response 1, light theme."></div>
+      <div class="evidence-capture"><img src="assets/prototype-card-dark.png" alt="AGT-4249 measured coding subtotal, cost split and detail fields from response 1, dark theme."></div>
+    </div>
+    <figcaption><span class="figure-claim"><b>Proposed view.</b> The card view shows the measured coding subtotal for AGT-4249 and response 1 with its normalized tokens, inferred price and unknown duration.</span><span class="figure-as-of">Both captures dated <time datetime="2026-11-28">28 November 2026</time>, Chromium, Dossier prototype from AGT-4375 and the 28 November operator pages.</span></figcaption>
+  </figure>
+</section>
+
+<section id="backfill">
+  <h2>Backfill</h2>
+  <div class="breakout"><table><thead><tr><th>Source and available window</th><th>Mapping and gaps</th></tr></thead><tbody>
+    <tr><td>AGT-4375 and original Codex sessions, 27–28 November first</td><td>Prefer host parsing from session frames using response IDs. Import the normalized export as a bounded, provisional dataset when the raw files are unavailable. Use verified card/run links and keep precise response time, token counters and versioned wait/status classification. CSV lacks response IDs; preserve dataset scope, original ordinal and join provenance. Historical unknowns include duration, prompts, true container, points and causality unless verified from dispatch or other authoritative artifacts. Expand from the night to 30 days only where retained sessions exist.</td></tr>
+    <tr><td>Historical token bus, task/one-shot/chat/persona receipts and pipeline logs</td><td>Start with the measured preceding 30 days, including archives. Extend backwards only after inventorying actual retention by project/source. Record totals at genuine run/turn/receipt granularity. Use receipt and run keys for precedence and preserve legacy cache/pricing gaps. A documented single-request wrapper can produce a call only when the historical unit is provable.</td></tr>
+    <tr><td>Review settlements on review hosts</td><td>First use the 105 rounds of the measured night, then the available preceding 30 days. Match review package, round and aspect with exact keys. Keep command times as process spans and unsplit aspect usage where only aggregate is available. Prompt details, response count and points stay unknown as needed.</td></tr>
+    <tr><td>Model selection ledger and operational journals</td><td>Start with the measured night and expand through retained 30-day events where available. Enrich exact matched routing, host, consumer, attempt and actor. Preserve selection/refusal/wait events independently. A nearest-time match supplies an inferred candidate with confidence and never changes the cost source. Record retention holes and inventory the actual earliest/latest time by host and source.</td></tr>
+  </tbody></table></div>
+  <p>Importers are opt-in, workspace-scoped and replayable by source fingerprint. Stage and reconcile by project, task, run and counter before promotion. Only a proven complete match suppresses a covering legacy receipt. A known partial match can contribute a nonnegative, component-valid residual with shared dimensions and unpriced status where required. Otherwise preserve source totals and overlap warnings in distinct panels. Keep existing admission and legacy reports on their current path until parity and gap checks pass. Use two traceable windows, a 30-day legacy comparison and the night at response granularity.</p>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+  <h2>Open decisions</h2>
+  <p>Recommended options serve as implementation defaults unless a recorded owner decision selects another option. The workbench descriptor carries the same options for Studio.</p>
+  <article id="MC-D1" data-decision-id="MC-D1" data-decision-kind="single" data-decision-status="pending">
+    <h3>Storage</h3>
+    <p>Which store should own the call ledger?</p>
+    <ul>
+      <li data-option-id="A">Task Server SQLite with a host outbox (recommended)</li>
+      <li data-option-id="B">PostgreSQL now</li>
+      <li data-option-id="C">JetStream plus SQL projection</li>
+      <li data-option-id="D">Cassandra</li>
+      <li data-option-id="E">Versioned files</li>
+    </ul>
+    <p><strong>Working default.</strong> One Task Server needs durable writes and arbitrary pivots at modest ingest rate. Use one local data volume and migrate when active multi-node writes or measured operational limits require it.</p>
+  </article>
+  <article id="MC-D2" data-decision-id="MC-D2" data-decision-kind="single" data-decision-status="pending">
+    <h3>Delivery durability</h3>
+    <p>How do hosts deliver usage during an outage?</p>
+    <ul>
+      <li data-option-id="A">Persistent outbox and durable ACK (recommended)</li>
+      <li data-option-id="B">Stream brokers on all hosts</li>
+      <li data-option-id="C">Best-effort upload</li>
+    </ul>
+    <p><strong>Working default.</strong> Persist before advancing the reader, replay after reconnect, and signal any coverage gaps.</p>
+  </article>
+  <article id="MC-D3" data-decision-id="MC-D3" data-decision-kind="single" data-decision-status="pending">
+    <h3>Cost display</h3>
+    <p>What values does the product store and display?</p>
+    <ul>
+      <li data-option-id="A">Dated list rates alongside attributable provider points (recommended)</li>
+      <li data-option-id="B">List price only</li>
+      <li data-option-id="C">Estimated credits</li>
+    </ul>
+    <p><strong>Working default.</strong> Store resolved components and basis. Store recorded comparable points only where a provider reports and attributes them.</p>
+  </article>
+  <article id="MC-D4" data-decision-id="MC-D4" data-decision-kind="single" data-decision-status="pending">
+    <h3>Retention</h3>
+    <p>How long are individual calls retained?</p>
+    <ul>
+      <li data-option-id="A">180 days plus durable privacy-minimized rollups (recommended)</li>
+      <li data-option-id="B">30 days plus durable rollups</li>
+      <li data-option-id="C">365 days plus durable rollups</li>
+    </ul>
+    <p><strong>Working default.</strong> Balances detail for comparisons and diagnostics against volume and personal data.</p>
+  </article>
+  <article id="MC-D5" data-decision-id="MC-D5" data-decision-kind="single" data-decision-status="pending">
+    <h3>Finding attribution</h3>
+    <p>How is the cost of a multi-finding round assigned?</p>
+    <ul>
+      <li data-option-id="A">Explicit primary plus a shared bucket (recommended)</li>
+      <li data-option-id="B">Even split across findings</li>
+      <li data-option-id="C">Full charge to every finding</li>
+    </ul>
+    <p><strong>Working default.</strong> Preserves additive rankings and links every co-trigger in detail.</p>
+  </article>
+  <article id="MC-D6" data-decision-id="MC-D6" data-decision-kind="single" data-decision-status="pending">
+    <h3>Presentation</h3>
+    <p>Which reporting surfaces are product defaults?</p>
+    <ul>
+      <li data-option-id="A">Explorer, fixed pipeline and lifecycle, and daily/weekly Magazine (recommended)</li>
+      <li data-option-id="B">Magazine only</li>
+      <li data-option-id="C">CSV only</li>
+    </ul>
+    <p><strong>Working default.</strong> Start with the measured night in product; promote interaction and issues on the same query contracts.</p>
+  </article>
+  <article id="MC-D7" data-decision-id="MC-D7" data-decision-kind="single" data-decision-status="pending">
+    <h3>Backfill</h3>
+    <p>How much history should be reconciled first?</p>
+    <ul>
+      <li data-option-id="A">Measured night then audited 30 days (recommended)</li>
+      <li data-option-id="B">Measured night then live only</li>
+      <li data-option-id="C">All retained history before rollout</li>
+    </ul>
+    <p><strong>Working default.</strong> Fast proof with exact coverage, then a bounded comparison against existing reports.</p>
+  </article>
+</section>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <ol class="implementation-log">
+    <li>Night import, Task Server persistence, query and in-product drill-down.</li>
+    <li>Live Codex capture, replay and coverage diagnostics.</li>
+    <li>Historical tariffs, pricing revisions and subscription evidence.</li>
+    <li>Remote review and conflict provenance.</li>
+    <li>One-shots and card creation attribution.</li>
+    <li>Chat, orchestrator, personas, decision jobs and remaining CLI adapters.</li>
+    <li>Reconciliation, retention and broader backfill.</li>
+    <li>Explorer, comparisons, insights and scenarios.</li>
+    <li>Host pipeline and card lifecycle.</li>
+    <li>Daily and weekly Magazine reports.</li>
+  </ol>
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  <p>The dependency chain in <a href="workbench.json">workbench.json</a> serializes shared APIs, attribution, pricing and frontend work. Every slice has a bounded acceptance scope.</p>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

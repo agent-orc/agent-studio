@@ -229,6 +229,7 @@ public static class V1ReviewPlaneEndpoints
             IModelEquivalenceCatalog equivalenceCatalogue,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
+            RemoteDispatchRejectionStore dispatchRejections,
             IConfiguration configuration,
             AgentStudio.Cli.CombinedOneShotJobs oneShotJobs,
             CancellationToken ct) =>
@@ -241,6 +242,10 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
+                request = Contract.HeartbeatPeer.Stamp(request, context.Connection.RemoteIpAddress,
+                    context.Request.Scheme, DateTime.UtcNow);
+                var codingTasks = request.Capabilities.Any(capability => capability.Key == Contract.CapabilityProtocol.CodingExecutor)
+                    ? scanner.ScanAllAutomationJobs() : [];
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
                 {
                     ConfiguredModelRoutes = (request.Capabilities.Any(capability =>
@@ -248,11 +253,12 @@ public static class V1ReviewPlaneEndpoints
                         ? ReviewConfiguredModelRoutes(authority.ListPendingReviewAttempts(), configuration,
                             quotaRoutes.GetAll().Values)
                         : CodingConfiguredModelRoutes(quotaRoutes.GetAll().Values,
-                            scanner.ScanAllAutomationJobs()))
+                            codingTasks))
                         .Concat(equivalenceCatalogue.Routes.Select(pair =>
                             new Contract.ConfiguredModelRouteDto(pair.ToCliType, pair.ToModel)))
                         .Distinct().ToArray(),
                 };
+                dispatchRejections.RefreshModelWaits(codingTasks, runnerId, request.InstanceId, registry);
                 // The monolith may already have a provider rejection or a
                 // health drain for this model. Mirror its accepted effective
                 // status, not the runner's unfiltered claim of readiness.
@@ -288,7 +294,8 @@ public static class V1ReviewPlaneEndpoints
                             hostTelemetry.SwapInBytesPerSecond, hostTelemetry.SwapOutBytesPerSecond,
                             hostTelemetry.CpuStealPercent, hostTelemetry.IoWaitPercent,
                             hostTelemetry.CpuCores, hostTelemetry.ActiveSlots,
-                            Filesystems: hostTelemetry.Filesystems));
+                            Filesystems: hostTelemetry.Filesystems,
+                            SwapUsedBytes: hostTelemetry.SwapUsedBytes, SwapTotalBytes: hostTelemetry.SwapTotalBytes));
                     }
                     catch (IOException error) when (AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(error))
                     {
@@ -521,6 +528,17 @@ public static class V1ReviewPlaneEndpoints
                             $"Legacy ReviewSubject was terminalized, but its Escalated lane write failed: {moved.Status} {moved.Message}"),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
                 }
+            }
+
+            foreach (var pending in authority.ListPendingReviewAttempts())
+            {
+                var recoveryTask = FindTask(scanner, pending.TaskKey);
+                if (recoveryTask is null || recoveryTask.State != TaskStates.AutoReview) continue;
+                if (!PreparePlanSkewReview(recoveryTask, pending, authority, projects, settings,
+                    remoteReviewPlans, timeline))
+                    return Results.Json(new Contract.ApiError("review-plan-skew-replan-pending",
+                        "The pinned recovery plan could not be prepared before claiming review."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
             // AGT-W57: park pending reviews that would run into an open cause
@@ -1350,15 +1368,22 @@ public static class V1ReviewPlaneEndpoints
                         currentReview, ReviewSubjectStore.Read(preparedTask.FolderPath), DateTime.UtcNow);
                     if (mergeBase is not null)
                     {
-                        var branch = currentReview.Subject.Plan?.IntegrationRef ?? "the target branch";
+                        var skewPlan = currentReview.Subject.Plan is { PlanCommitSha: { } planCommit } plan
+                            && ReviewSubjectStore.IsValidResultSha(planCommit)
+                            ? new ReviewPlanSkewPlan(planCommit, plan.BuildProfileFingerprint, plan.BriefSha256)
+                            : ReviewSubjectStore.IsValidResultSha(request.Workspace.IntegrationTipSha)
+                                ? new ReviewPlanSkewPlan(request.Workspace.IntegrationTipSha!,
+                                    currentReview.Subject.Plan?.BuildProfileFingerprint, currentReview.Subject.Plan?.BriefSha256)
+                                : null;
                         continuation = new RemoteReviewContinuation(
                             RemoteReviewContinuationKind.PlanMergeRound,
                             $"{request.Summary}\n\nStart from the full result ref `{mergeBase.Ref}` "
-                            + $"at `{mergeBase.CommitSha}`. Merge `{branch}` into that delivery, "
-                            + "resolve any conflicts, and submit the merged result for review. "
+                            + $"at `{mergeBase.CommitSha}`. Prepare the recovery against plan commit `{skewPlan?.CommitSha}`. "
+                            + "The platform owns Git and workspace mutations. Resolve any content conflicts on the assigned base, "
+                            + "and submit the prepared result for review. "
                             + "Do not treat the previous review as a product failure.",
                             [], settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
-                            cardBudget, Base: mergeBase);
+                            cardBudget, Base: mergeBase, SkewPlan: skewPlan);
                     }
                 }
                 else if (budgetDecision.Escalate)
@@ -1583,7 +1608,11 @@ public static class V1ReviewPlaneEndpoints
             try
             {
                 if (deliveredRound is not null)
+                {
                     ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed, deliveredRound);
+                    if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId == attemptId)
+                        ReviewPlanSkewAllowance.ReleasePlan(task.FolderPath);
+                }
                 if (shouldDegrade && CreateReviewBudgetFollowUpCard(
                         task, attemptId, originalVerdicts, roundBudget, mutations, scanner) is null)
                     return Results.Json(new Contract.ApiError(
@@ -1780,8 +1809,7 @@ public static class V1ReviewPlaneEndpoints
                     attemptId, settled.ReviewAttempt.Subject.SubjectId,
                     request.Outcome, request.FailureClassification, request.Summary,
                     reportHash, receivedAt, RetryScheduled: false,
-                    continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                        ? TaskStates.Ready : TaskStates.Escalated,
+                    (scanner.FindJob(task.Id, task.WatchPath) ?? task).State,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 
@@ -2740,6 +2768,42 @@ public static class V1ReviewPlaneEndpoints
         return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities, routePending: true);
     }
 
+    internal static bool PreparePlanSkewReview(
+        TaskInfo task, ReviewAttemptDto pending, AttemptAuthorityService authority,
+        ProjectRegistry projects, AgentStudio.Projects.ProjectSettingsService settings,
+        RemoteReviewPlanBuilder plans, TimelineLog timeline)
+    {
+        if (ReviewPlanSkewAllowance.ReadPlan(task.FolderPath) is null) return true;
+        var project = projects.FindByStorageLocation(task.WatchPath)
+            ?? projects.FindByIdOrDisplayName(task.ProjectName);
+        if (project?.RepositoryPath is not { } repository) return false;
+        return PreparePlanSkewReview(task, pending, authority, timeline, commit =>
+            plans.Build(task, repository, settings.Get(task.ProjectName), commit,
+                pending.Subject.ExpectedResultSha, immutableResultRef: pending.Subject.ResultRef)
+                with { IntegrationRef = pending.Subject.Plan?.IntegrationRef });
+    }
+
+    internal static bool PreparePlanSkewReview(
+        TaskInfo task, ReviewAttemptDto pending, AttemptAuthorityService authority,
+        TimelineLog timeline, Func<string, Contract.ReviewPlanDto> buildPlan)
+    {
+        var pin = ReviewPlanSkewAllowance.ReadPlan(task.FolderPath);
+        if (pin is null) return true;
+        var currentPlan = pending.Subject.Plan;
+        if (currentPlan is null) return false;
+        if (pin.BuildProfileFingerprint != currentPlan.BuildProfileFingerprint
+            || pin.BriefSha256 != currentPlan.BriefSha256)
+        {
+            if (!ReviewSubjectStore.IsValidResultSha(currentPlan.PlanCommitSha)) return false;
+            pin = new ReviewPlanSkewPlan(currentPlan.PlanCommitSha!, currentPlan.BuildProfileFingerprint,
+                currentPlan.BriefSha256);
+            if (!ReviewPlanSkewAllowance.ReplacePlan(task.FolderPath, pin, pending.AttemptId, timeline)) return false;
+        }
+        var plan = buildPlan(pin.CommitSha);
+        if (!string.Equals(plan.PlanCommitSha, pin.CommitSha, StringComparison.OrdinalIgnoreCase)) return false;
+        return authority.ReplanPendingReview(pending.AttemptId, plan).Accepted;
+    }
+
     private static Contract.ReviewSubjectDto ToSubject(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -3056,13 +3120,14 @@ public static class V1ReviewPlaneEndpoints
         BuildProfile? profile,
         string? integrationRef,
         IReadOnlyList<string>? changedFiles = null,
-        VerifyPlan? verifyOverride = null)
+        VerifyPlan? verifyOverride = null,
+        IReadOnlyList<string>? dotNetReviewReasons = null)
     {
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath ?? string.Empty,
             declared, changedFiles, "remote-review", TestExecutionLevels.WorkPackage);
         var fixedChecks = verifyOverride?.Commands.Any(command => command.TestScope
-            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope) == true;
+            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope or PerCardVerifyPlanner.DotNetReviewScope) == true;
         var verify = fixedChecks || shared is null
             ? VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
                 verifyOverride ?? declared, changedFiles)
@@ -3156,8 +3221,11 @@ public static class V1ReviewPlaneEndpoints
                     .Select(suite => suite.Key).ToArray(),
                 OmittedSuites = suiteAudit.SuiteCommands.Where(suite => !commands.Any(command => command.Arguments.Contains(suite.Value)))
                     .Select(suite => suite.Key).ToArray(),
-                Reasons = [.. suiteAudit.Reasons, "Fast review runs fixed checks; narrowed checks do not complete routine suites."],
+                Reasons = [.. suiteAudit.Reasons, .. dotNetReviewReasons ?? [],
+                    "Fast review runs fixed checks; narrowed checks do not complete routine suites."],
             };
+        else if (suiteAudit is not null && dotNetReviewReasons is { Count: > 0 })
+            suiteAudit = suiteAudit with { Reasons = [.. suiteAudit.Reasons, .. dotNetReviewReasons] };
         return new Contract.ReviewPlanDto(
             commands,
             commands.Select(command => command.Aspect)
@@ -3873,7 +3941,7 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             || state.InstanceId != instanceId) return false;
         return state.Capabilities.Any(capability => capability.Key == "provider-auth:" + provider
             && (!healthyOnly || registration.LastSeenAt > now.AddMinutes(-3)
-                && capability.FreshUntil > now && capability.AdvertisedStatus == "ready"
+                && capability.FreshUntil > now && capability.AdvertisedStatus is ("ready" or "limited")
                 && capability.HealthOutcome is not ("credential_invalid" or "provider_incident" or "indeterminate")));
     }
 

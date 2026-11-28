@@ -51,6 +51,11 @@ public sealed class PullGateStore
     {
         lock (_gate) return _hosts.Values.Select(SnapshotHost).OrderBy(host => host.Name).ToArray();
     }
+    public int QueuedCount
+    {
+        get { lock (_gate) return _jobs.Values.Count(job => job.State == "queued"); }
+    }
+
     public bool HasHealthyHost
     {
         get { lock (_gate) return _hosts.Values.Any(host => Now - host.LastHeartbeat < HealthyTime); }
@@ -77,6 +82,16 @@ public sealed class PullGateStore
     {
         lock (_gate) return _jobs.Values.Where(job => job.State == "queued" && job.EnqueuedAt is not null)
             .Select(job => (DateTime?)job.EnqueuedAt!.Value.UtcDateTime).OrderBy(value => value).FirstOrDefault();
+    }
+
+    internal (int Count, DateTime? OldestAt) QueueObservation()
+    {
+        lock (_gate)
+        {
+            var queued = _jobs.Values.Where(job => job.State == "queued").ToArray();
+            return (queued.Length, queued.All(job => job.EnqueuedAt is not null)
+                ? queued.Min(job => job.EnqueuedAt?.UtcDateTime) : null);
+        }
     }
 
     public IDisposable? TryFenceHostClaims(string hostId)

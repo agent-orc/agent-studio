@@ -14,7 +14,7 @@ public sealed record CapacityQuota(string CliType, QuotaSnapshot Snapshot, bool 
     DateTime? FreshUntil, bool Exhausted);
 public sealed record CapacityWaitPolicy(bool Enabled, int ThresholdMinutes, string Scope);
 public sealed record CapacityWait(string Project, string CardKey, string CliType, string Reason,
-    DateTime StartedAt, DateTime ResetAt, CapacityWaitPolicy WaitPolicy);
+    DateTime StartedAt, DateTime? ResetAt, CapacityWaitPolicy WaitPolicy);
 public sealed record CapacityFallback(string? Project, string? CardKey, string? SourceCli,
     string? SourceModel, string? TargetCli, string? TargetModel, string Reason,
     DateTimeOffset? ActivatedAt, string SettingKey, string SettingHref);
@@ -35,26 +35,30 @@ public sealed record OperatorCapacityResponse(IReadOnlyList<CapacityQuota> Quota
     IReadOnlyList<CapacityPin> ModelRoutingPins)
 {
     public IReadOnlyList<CapacityQueuedCard> QueuedCards { get; init; } = [];
+    public CapacityPressureSnapshot? Pressure { get; init; }
 }
 
 /// <summary>The configured route of a card and the admission plan its next pickup would get.</summary>
-public sealed record CapacityForecast(SelectionRoute Configured, QuotaAdmissionPlan Plan);
+public sealed record CapacityForecast(SelectionRoute Configured, QuotaAdmissionPlan Plan,
+    SelectionPinMode PinMode = SelectionPinMode.Preference, bool HasContinuation = false,
+    string? QuotaSubscriptionKey = null);
 
 /// <summary>Read-only capacity projection over the quota cache and existing card and selection records.</summary>
 public static class OperatorCapacityEndpoints
 {
     public static void MapOperatorCapacityEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/operator/capacity", (HttpContext context, QuotaService quota,
+        app.MapGet("/api/operator/capacity", async (HttpContext context, QuotaService quota,
             CliQuotaCapsService caps, TaskScannerService scanner, ProjectRegistry registry,
             TaskRunnerService runners, ModelSelectionLedger ledger, ModelSelectionPolicyStore policy,
             ProjectSettingsService settings, IModelSelectionService selection, TimeProvider clock,
-            CancellationToken ct) =>
+            OperatorPressureReader pressure, CancellationToken ct) =>
         {
             var scoped = context.Items[AccessSecurityMiddleware.RequestAccessItem]
                 is RequestAccess access
                 && !access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
-            var report = scoped ? ScopedQuotaProjection.Redact(quota.GetCached())
+            context.Response.Headers.CacheControl = "no-store";
+            var report = scoped ? new QuotaReport()
                 : quota.GetWithBackgroundRefresh(ct);
             var projects = scanner.GetWatchPaths().Select(entry => entry.Name)
                 .Where(project => ProjectAccessAuthorization.AllowsTasks(
@@ -69,12 +73,27 @@ public static class OperatorCapacityEndpoints
                 StringComparer.OrdinalIgnoreCase);
             var now = clock.GetUtcNow().UtcDateTime;
             var qualification = context.RequestServices.GetService<ModelQualificationService>();
-            return Results.Ok(Build(report, tasks, active, policy.Get(), projectSettings,
+            var routing = policy.Get();
+            var forecasts = tasks.Where(task => task.State == TaskStates.Ready)
+                .ToDictionary<TaskInfo, TaskInfo, CapacityForecast>(task => task,
+                    task => Forecast(selection, qualification, task, tasks, now),
+                    ReferenceEqualityComparer.Instance);
+            var response = Build(report, tasks, active, routing, projectSettings,
                 task => runners.GetQuotaFallbackForJob(task.Id, task.ProjectName) ?? task.QuotaFallback,
                 snapshot => caps.Evaluate(snapshot).Blocked, now,
-                task => Forecast(selection, qualification, task, tasks, now)));
+                task => forecasts[task]);
+            var evidence = await pressure.ReadAsync(now, scoped, report, routing, tasks, projectSettings,
+                task => forecasts[task], active, ct);
+            return Results.Ok((scoped ? Scope(response) : response) with { Pressure = evidence });
         }).RequirePermission(IamPermissions.ProjectRead);
     }
+
+    private static OperatorCapacityResponse Scope(OperatorCapacityResponse response) => response with
+    {
+        ActiveFallbacks = response.ActiveFallbacks.Select(row => row with { Reason = "Fallback active" }).ToArray(),
+        WaitingCards = response.WaitingCards.Select(row => row with { Reason = "Quota wait", ResetAt = null }).ToArray(),
+        QueuedCards = response.QueuedCards.Select(row => row with { Reason = row.Outcome, NextResetAt = null }).ToArray(),
+    };
 
     /// <summary>
     /// Asks the selection service the question the next local pickup asks, as a
@@ -90,7 +109,8 @@ public static class OperatorCapacityEndpoints
                 ProjectRunner.ReadPromptText(Path.Combine(task.FolderPath, "prompt.md"))),
             preview: true));
         return new CapacityForecast(decision.Result.Primary,
-            ProjectRunner.ApplyPendingModelRoute(decision.Admission, task.PendingIntent?.ModelFallback));
+            ProjectRunner.ApplyPendingModelRoute(decision.Admission, task.PendingIntent?.ModelFallback),
+            decision.PinMode, decision.HasContinuation, decision.QuotaSubscriptionKey);
     }
 
     internal static OperatorCapacityResponse Build(QuotaReport report, IReadOnlyList<TaskInfo> tasks,

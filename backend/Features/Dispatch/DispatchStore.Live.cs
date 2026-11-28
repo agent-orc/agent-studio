@@ -14,6 +14,11 @@ public sealed partial class DispatchStore
         lock (PersonaGate(project)) return Read<DispatchLiveRecordV1>(Path.Combine(Project(project), "live.json"));
     }
 
+    internal (DispatchLiveRecordV1? Plan, DispatchLeaseV1? Lease) ReadPlanAndLease(string project)
+    {
+        lock (PersonaGate(project)) return (ReadLive(project), ReadLease(project));
+    }
+
     public bool WriteLive(DispatchLiveRecordV1 record, DateTimeOffset now)
     {
         var project = record.Record.Plan.Project;

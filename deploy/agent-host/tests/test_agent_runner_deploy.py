@@ -7,6 +7,7 @@ import tempfile
 import textwrap
 import unittest
 import uuid
+from itertools import product
 from pathlib import Path
 
 
@@ -120,9 +121,12 @@ class ControlPlanePromotionTests(unittest.TestCase):
         runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
         commands = runbook.split("## 2. Build agent-host", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
         commands = commands.replace("<origin>", "fixture-origin")
-        steps = ["harden", "publish", "digest", "install-directory", "install-approval", "promote"]
-        for failure in ("harden", "publish", "digest", "none"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+        steps = [
+            "clone", "publish", "harden", "digest", "install-directory",
+            "install-approval", "inspect-incoming", "upload", "promote",
+        ]
+        for conditional, failure in product((False, True), (*steps, "none")):
+            with self.subTest(conditional=conditional, failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 (root / "agent-taskboard").mkdir()
                 log = root / "calls"
@@ -132,7 +136,11 @@ class ControlPlanePromotionTests(unittest.TestCase):
                       [[ "$1" != "$FAIL_STEP" ]] || return 19
                     }
                     git() {
-                      [[ "$1" != rev-parse ]] || printf '%s\\n' fixture-revision
+                      case "$1" in
+                        clone) record clone ;;
+                        rev-parse) printf '%s\\n' fixture-revision ;;
+                        *) return 90 ;;
+                      esac
                     }
                     dotnet() {
                       # A failed publish may leave an executable in its output.
@@ -144,23 +152,28 @@ class ControlPlanePromotionTests(unittest.TestCase):
                         ./scripts/harden-agent-runner-host.sh) record harden ;;
                         /usr/local/sbin/agent-runner-deploy)
                           if [[ "${2:-}" == --release-digest ]]; then
-                            record digest || return $?
                             printf '%s\\n' fixture-digest
+                            record digest
                           else
                             record promote
                           fi ;;
                         install)
                           if [[ "$2" == -d ]]; then record install-directory
                           else record install-approval; fi ;;
-                        find|test) return 0 ;;
+                        find) record inspect-incoming ;;
                         -u) cat >/dev/null ;;
                         *) return 90 ;;
                       esac
                     }
-                    tar() { printf '%s\\n' fixture-archive; }
+                    tar() {
+                      printf '%s\\n' fixture-archive
+                      record upload
+                    }
                 '''
+                # Bash suppresses errexit inside commands tested by a conditional.
+                script = f'if (\n{commands}\n); then exit 0; else exit "$?"; fi\n' if conditional else commands
                 result = subprocess.run(
-                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + commands],
+                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + script],
                     cwd=root,
                     env={**os.environ, "CALL_LOG": str(log), "FAIL_STEP": failure,
                          "TMPDIR": temporary, "SHELLOPTS": ""},
@@ -174,9 +187,10 @@ class ControlPlanePromotionTests(unittest.TestCase):
         runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
         migration = runbook.split("### Release approval migration", 1)[1]
         commands = migration.split("```bash\n")[2].split("```", 1)[0]
+        commands = commands.replace("<rollback-id>", "fixture-rollback")
         steps = ["resolve", "verify-active", "verify-rollback", "harden", "verify-installed"]
-        for failure in (*steps, "none"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+        for conditional, failure in product((False, True), (*steps, "none")):
+            with self.subTest(conditional=conditional, failure=failure), tempfile.TemporaryDirectory() as temporary:
                 log = Path(temporary) / "calls"
                 # Execute the documented block in a shell without errexit.
                 # These command boundaries never touch a live host or run sudo.
@@ -190,20 +204,21 @@ class ControlPlanePromotionTests(unittest.TestCase):
                       printf '%s\\n' /opt/agent-host/releases/fixture-active
                     }
                     sudo() {
-                      case "$1" in
-                        bash)
-                          case "$4" in
-                            */fixture-active) record verify-active ;;
-                            *) record verify-rollback ;;
-                          esac ;;
-                        ./scripts/harden-agent-runner-host.sh) record harden ;;
-                        /usr/local/sbin/agent-runner-deploy) record verify-installed ;;
+                      case "$*" in
+                        'bash ./deploy/agent-host/agent-runner-deploy --verify-release /opt/agent-host/releases/fixture-active')
+                          record verify-active ;;
+                        'bash ./deploy/agent-host/agent-runner-deploy --verify-release /opt/agent-host/releases/fixture-rollback')
+                          record verify-rollback ;;
+                        './scripts/harden-agent-runner-host.sh --apply') record harden ;;
+                        '/usr/local/sbin/agent-runner-deploy --verify-release /opt/agent-host/releases/fixture-active')
+                          record verify-installed ;;
                         *) return 90 ;;
                       esac
                     }
                 '''
+                script = f'if (\n{commands}\n); then exit 0; else exit "$?"; fi\n' if conditional else commands
                 result = subprocess.run(
-                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + commands],
+                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + script],
                     env={**os.environ, "CALL_LOG": str(log), "FAIL_STEP": failure, "SHELLOPTS": ""},
                     capture_output=True, text=True,
                 )
@@ -540,6 +555,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
         helper.parent.mkdir(parents=True)
         helper.write_text(self.helper.read_text().replace('[[ "$EUID" -eq 0 ]]', 'true'))
         commands = commands.replace("/absolute/trusted/publish", str(trusted_publish))
+        verify = ["bash", str(helper), "--verify-release", str(self.release)]
         for has_marker in (False, True):
             with self.subTest(publisher_has_release_id=has_marker):
                 marker = trusted_publish / "release-id"
@@ -551,7 +567,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
                 (self.approvals / f"{self.release_id}.sha256").write_text(result.stdout.strip() + "\n")
-                verification = self.verify()
+                verification = subprocess.run(verify, capture_output=True, text=True)
                 self.assertEqual(0, verification.returncode, verification.stderr)
                 self.assertEqual(has_marker, marker.exists())
                 if has_marker:
@@ -559,7 +575,9 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertFalse((self.release / "release-id").exists())
         # Layout conversion must not bless unexplained host content changes.
         (self.release / "agent-host.dll").write_bytes(b"changed legacy assembly")
-        self.assertNotEqual(0, self.verify().returncode)
+        verification = subprocess.run(verify, capture_output=True, text=True)
+        self.assertNotEqual(0, verification.returncode)
+        self.assertIn("release digest does not match the publisher approval", verification.stderr)
         self.assertEqual("", self.log.read_text())
 
     def test_approval_ownership_and_directory_ownership_are_enforced(self):

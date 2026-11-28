@@ -37,6 +37,12 @@ public static partial class ProviderRequestRejectionClassifier
                || rejection.Message.Contains(model, StringComparison.OrdinalIgnoreCase))
            && ModelOrFeatureUnavailableRegex().IsMatch(rejection.Message);
 
+    public static bool IsUsageWindowRefusal(string? text)
+        => text is not null && UsageWindowRefusalRegex().IsMatch(text);
+
+    [GeneratedRegex(@"\b(?:usage_limit_reached|(?:hit|reached|exceeded|exhausted) (?:your |the |its )?(?:(?:weekly|session|account) )?(?:usage )?limit|(?:weekly|session|usage) limit (?:has been |is )?(?:reached|exceeded|exhausted))\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UsageWindowRefusalRegex();
+
     private static bool TryClassifyCandidate(string providerTerminalEvent, out ProviderRequestRejection rejection)
     {
         rejection = null!;
@@ -53,6 +59,9 @@ public static partial class ProviderRequestRejectionClassifier
         var code = Clean(fields.Code);
         var type = Clean(fields.ErrorType);
         var parameter = Clean(fields.Parameter);
+        if (IsUsageWindowRefusal(code) || IsUsageWindowRefusal(type) || IsUsageWindowRefusal(message))
+            return false;
+
         var explicitRequestError = string.Equals(type, "invalid_request_error", StringComparison.OrdinalIgnoreCase)
                                    || string.Equals(code, "unsupported_parameter", StringComparison.OrdinalIgnoreCase);
         var unavailableModelOrFeature = ModelOrFeatureUnavailableRegex().IsMatch(message ?? string.Empty);
@@ -112,7 +121,7 @@ public static partial class ProviderRequestRejectionClassifier
                 }
                 else if ((name.Equals("status", StringComparison.OrdinalIgnoreCase)
                           || name.Equals("status_code", StringComparison.OrdinalIgnoreCase))
-                         && value.TryGetInt32(out var status))
+                         && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var status))
                 {
                     fields.Status ??= status;
                 }

@@ -4,7 +4,17 @@ using System.Globalization;
 namespace AgentStudio.Pipeline;
 
 /// <summary>One row of a project's delivery integration queue, in drain order.</summary>
-public sealed record DeliveryIntegrationQueueRow(string JobId, string Activity, DateTimeOffset? SinceUtc);
+public sealed record DeliveryIntegrationQueueRow(string JobId, string Activity, DateTimeOffset? SinceUtc)
+{
+    internal string? ReviewAttemptId { get; init; }
+    internal string? ResultSha { get; init; }
+    internal string? Target { get; init; }
+    internal DateTimeOffset? HoldsObservedAtUtc { get; init; }
+    internal IReadOnlyList<ObservedConflictHold> Holds { get; init; } = [];
+}
+
+internal sealed record DeliveryIntegrationQueueSnapshot(
+    IReadOnlyList<DeliveryIntegrationQueueRow> Rows, DateTimeOffset PublishedAtUtc);
 
 /// <summary>Where one card stands in its project's delivery integration queue.</summary>
 public sealed record DeliveryIntegrationQueuePosition(
@@ -51,24 +61,38 @@ public sealed record DeliveryIntegrationQueuePosition(
 /// live status. Before AGT-4020 a waiting card said only "waiting for delivery
 /// integration", so six accepted cards behind one 55-minute gate looked idle.
 /// </summary>
-public sealed class DeliveryIntegrationQueueBoard
+public sealed class DeliveryIntegrationQueueBoard(TimeProvider? time = null)
 {
     public const string Waiting = "waiting";
     public const string Integrating = "integrating";
 
     public static string CompilingTrain(int cards) => $"compiling the combined tree of {cards} cards";
 
-    private readonly ConcurrentDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>> _queues =
+    private readonly ConcurrentDictionary<string, DeliveryIntegrationQueueSnapshot> _queues =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _failures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _completions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    internal DateTimeOffset ObservationTime => _time.GetUtcNow();
+
+    public int WaitingCount => _queues.Values.Sum(snapshot => snapshot.Rows.Count(row => row.Activity == Waiting));
 
     public void Publish(string project, IReadOnlyList<DeliveryIntegrationQueueRow> rows)
-        => _queues[project] = rows.ToArray();
+        => _queues[project] = new(rows.ToArray(), ObservationTime);
+
+    internal DeliveryIntegrationQueueSnapshot? ReadProject(string project)
+        => _queues.GetValueOrDefault(project);
+
+    internal void RecordCompletion(string project) => _completions[project] = ObservationTime;
+
+    internal DateTimeOffset? LastCompletion(string project)
+        => _completions.TryGetValue(project, out var completed) ? completed : null;
 
     /// <summary>A detached fleet snapshot, including current work and pending deliveries.</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>> Read()
         => _queues.ToDictionary(item => item.Key,
-            item => (IReadOnlyList<DeliveryIntegrationQueueRow>)item.Value.ToArray(),
+            item => (IReadOnlyList<DeliveryIntegrationQueueRow>)item.Value.Rows.ToArray(),
             StringComparer.OrdinalIgnoreCase);
 
     public void Clear(string project) => _queues.TryRemove(project, out _);
@@ -83,7 +107,8 @@ public sealed class DeliveryIntegrationQueueBoard
 
     public DeliveryIntegrationQueuePosition? PositionOf(string project, string jobId)
     {
-        if (!_queues.TryGetValue(project, out var rows)) return null;
+        if (!_queues.TryGetValue(project, out var snapshot)) return null;
+        var rows = snapshot.Rows;
         var index = -1;
         for (var i = 0; i < rows.Count; i++)
         {

@@ -93,6 +93,22 @@ public sealed class WorkContainerExecutor(
     public async Task<WorkContainerReceipt> RunAsync(
         WorkContainerAttempt attempt, string image, WorkContainerGrant grant, CancellationToken ct)
     {
+        using var session = new WorkContainerLauncherSession(settings.Launcher);
+        try { return await RunCoreAsync(attempt, image, grant, session, ct); }
+        finally
+        {
+            try { await session.RevokeAsync(); }
+            catch (Exception ex) when (ex is InvalidDataException or OperationCanceledException)
+            {
+                _log($"work-container launcher reservation release pending reconciliation attempt={attempt.AttemptId}");
+            }
+        }
+    }
+
+    private async Task<WorkContainerReceipt> RunCoreAsync(
+        WorkContainerAttempt attempt, string image, WorkContainerGrant grant,
+        WorkContainerLauncherSession session, CancellationToken ct)
+    {
         var started = _clock.GetUtcNow();
         WorkContainerLaunchPlanner.Validate(attempt, image);
 
@@ -100,21 +116,24 @@ public sealed class WorkContainerExecutor(
         var precheck = WorkContainerAdmissionPolicy.Decide(grant, Budget(0), settings);
         if (!precheck.Admitted) return Denied(attempt, image, precheck.Reason, started);
 
-        // 2. Image presence, timed separately from the grant.
         double? pullMs = null;
-        if (!await runtime.ImagePresentAsync(image, ct))
+        async Task<WorkContainerReceipt?> EnsureImageAsync()
         {
+            if (await runtime.ImagePresentAsync(image, ct)) return null;
             var pullStart = _clock.GetTimestamp();
             var pulled = await runtime.PullAsync(image, ct);
             pullMs = _clock.GetElapsedTime(pullStart).TotalMilliseconds;
-            if (!pulled.Ok) return Finish(attempt, image, "", "image-unavailable", pulled.Output, null, null,
+            return pulled.Ok ? null : Finish(attempt, image, "", "image-unavailable", pulled.Output, null, null,
                 new(pullMs, null, null, null, Elapsed(started)), Empty, false, null, true, [], started);
         }
 
-        // 3. Admission against live grants, then creation, under one host-wide lock
-        //    shared by every role adapter process on this host.
+        // The direct runtime keeps the original preflight. A socket pull
+        // needs the privileged reservation before any image download.
+        if (settings.Launcher is null && await EnsureImageAsync() is { } missingImage) return missingImage;
+
         WorkContainerLaunchPlan plan;
         DateTimeOffset grantedAt;
+        WorkContainerReceipt? launchFailure = null;
         Directory.CreateDirectory(settings.StateDirectory);
         await using (var _ = await HostFileOperationLock.AcquireAsync(Path.Combine(settings.StateDirectory, "grants.lock"), ct))
         {
@@ -123,22 +142,46 @@ public sealed class WorkContainerExecutor(
                 return Denied(attempt, image, "attempt-already-running: one container per attempt.", started);
             var admission = WorkContainerAdmissionPolicy.Decide(grant, Budget(inventory.ReservedHalfCores), settings);
             if (!admission.Admitted) return Denied(attempt, image, admission.Reason, started);
-            // SM-11: an attempt UID no live container on this host holds.
             var uidsInUse = inventory.Containers.Where(item => item.HoldsGrant && item.Uid > 0)
                 .Select(item => item.Uid).ToHashSet();
             plan = WorkContainerLaunchPlanner.Plan(attempt, image, admission.Limits!, settings,
                 credentialRequired: credentials is not null,
                 uid: WorkContainerIdentity.Allocate(attempt.AttemptId, attempt.Fence, uidsInUse));
-            grantedAt = _clock.GetUtcNow();
-            var volume = await runtime.CreateVolumeAsync(plan.AttemptVolume, plan.Labels, ct);
-            var prepared = volume.Ok ? await runtime.PrepareAsync(plan.PrepareArguments, ct) : volume;
-            var created = prepared.Ok ? await runtime.CreateContainerAsync(plan.CreateArguments, ct) : prepared;
-            if (!created.Ok)
+            try { await session.AuthorizeAsync(attempt, plan, settings.CacheVersion, grant, ct); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                var residue = await CleanupAsync(plan, attempt, CancellationToken.None);
-                return Finish(attempt, image, plan.ContainerName, "launch-failed", created.Output, null, plan.Limits,
-                    new(pullMs, null, null, null, Elapsed(started)), Empty, false, null, residue.Count == 0, residue, started);
+                return Denied(attempt, image, "launcher-attempt-capability-unavailable: " + ex.Message, started);
             }
+            grantedAt = _clock.GetUtcNow();
+            if (settings.Launcher is null) launchFailure = await MaterializeAsync(plan);
+        }
+        if (settings.Launcher is not null)
+        {
+            if (await EnsureImageAsync() is { } missingReservedImage) return missingReservedImage;
+            grantedAt = _clock.GetUtcNow();
+            launchFailure = await MaterializeAsync(plan);
+        }
+        if (launchFailure is not null) return launchFailure;
+
+        async Task<WorkContainerReceipt?> MaterializeAsync(WorkContainerLaunchPlan launch)
+        {
+            WorkRuntimeResult outcome;
+            try
+            {
+                var volume = await runtime.CreateVolumeAsync(launch.AttemptVolume, launch.Labels, ct);
+                var prepared = volume.Ok ? await runtime.PrepareAsync(launch.PrepareArguments, ct) : volume;
+                outcome = prepared.Ok ? await runtime.CreateContainerAsync(launch.CreateArguments, ct) : prepared;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                var remaining = await CleanupAsync(launch, attempt, CancellationToken.None);
+                return Finish(attempt, image, launch.ContainerName, "stopped", "lease lost or host stopping.", null, launch.Limits,
+                    new(pullMs, null, null, null, Elapsed(started)), Empty, false, null, remaining.Count == 0, remaining, started);
+            }
+            if (outcome.Ok) return null;
+            var residue = await CleanupAsync(launch, attempt, CancellationToken.None);
+            return Finish(attempt, image, launch.ContainerName, "launch-failed", outcome.Output, null, launch.Limits,
+                new(pullMs, null, null, null, Elapsed(started)), Empty, false, null, residue.Count == 0, residue, started);
         }
 
         // 4. Run. Cancellation means lease loss or host stop: the container is
@@ -260,6 +303,7 @@ public sealed class WorkContainerExecutor(
     public async Task<IReadOnlyList<WorkReconciliationAction>> ReconcileAsync(
         string hostId, IReadOnlyList<WorkAttemptAuthority> authority, CancellationToken ct)
     {
+        await WorkContainerLauncherSession.ReconcileAuthorityAsync(settings.Launcher, hostId, authority, ct);
         var byAttempt = authority.GroupBy(item => item.AttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Fence).First(), StringComparer.Ordinal);
         var inventory = await runtime.ListManagedAsync(hostId, null, ct);
@@ -296,6 +340,7 @@ public sealed class WorkContainerExecutor(
             actions.Add(new("volume", volume.Name, volume.AttemptId, volume.Fence, verdict.Action.ToString(), verdict.Reason));
             _log($"work-container reconcile volume={volume.Name} attempt={volume.AttemptId} fence={volume.Fence} action={verdict.Action} reason={verdict.Reason}");
         }
+        await WorkContainerLauncherSession.ReconcileAuthorityAsync(settings.Launcher, hostId, authority, ct, sweep: true);
         WriteDurably(Path.Combine(settings.StateDirectory, "reconcile-latest.json"), JsonSerializer.Serialize(actions, Json));
         return actions;
     }

@@ -264,6 +264,9 @@ public sealed class WikiAgentReadService
     /// </summary>
     internal TimeSpan LiveReadRefreshDelay { get; init; } = TimeSpan.FromSeconds(2);
 
+    /// <summary>Clock of <see cref="LiveReadRefreshDelay"/>; tests inject a fake one (AGT-4360).</summary>
+    internal TimeProvider RefreshClock { get; init; } = TimeProvider.System;
+
     /// <summary>
     /// Rebuilds the read project's Wiki snapshot once per burst. Before
     /// AGT-3793 every applied CLI line rebuilt the snapshot of every project
@@ -275,7 +278,7 @@ public sealed class WikiAgentReadService
         if (string.IsNullOrWhiteSpace(projectName) || !_pendingRefreshes.TryAdd(projectName, 0)) return;
         using (ExecutionContext.SuppressFlow())
         {
-            _ = Task.Delay(LiveReadRefreshDelay).ContinueWith(delay =>
+            _ = Task.Delay(LiveReadRefreshDelay, RefreshClock).ContinueWith(delay =>
             {
                 _pendingRefreshes.TryRemove(projectName, out _);
                 try

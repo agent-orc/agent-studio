@@ -55,20 +55,11 @@ internal static class RunnerCapabilityProbe
         // A server-supplied primary list otherwise hides the built-in routes.
         var fallbackCandidates = options.Role == "coding" ? baseline.SelectMany(route => route switch
         {
-            (CliSelection.CodexCli, "gpt-6-sol") => new[]
-            {
-                (CliSelection.CodexCli, "gpt-5.6-sol"),
-                (CliSelection.ClaudeCli, "claude-sonnet-5"),
-                (CliSelection.ClaudeCli, "claude-opus-5"),
-            },
-            (CliSelection.CodexCli, "gpt-5.6-sol") => new[]
+            (CliSelection.CodexCli, CodexRoutingPolicy.StandardModel or CodexRoutingPolicy.StrongModel
+                or "gpt-6-sol" or "gpt-6.1-sol" or "gpt-5.6-sol") => new[]
             {
                 (CliSelection.ClaudeCli, "claude-sonnet-5"),
                 (CliSelection.ClaudeCli, "claude-opus-5"),
-            },
-            (CliSelection.CodexCli, "gpt-6-luna") => new[]
-            {
-                (CliSelection.CodexCli, "gpt-5.6-luna"),
             },
             _ => Array.Empty<(string, string)>(),
         }).Where(route => providers.Contains(route.Item1))
@@ -78,10 +69,9 @@ internal static class RunnerCapabilityProbe
         // switches to them. Old CLIs cannot serve them, so skip the paid calls.
         var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
         var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
-        if (configured is null && installation is not null && CodexModels(installation) is not null
-            && CodexModelCatalogs.TryGetValue($"{installation.Path}\0{installation.Version}", out var catalogue))
+        if (configured is null && installation is not null && CodexModels(installation) is { } catalogue)
             RunnerModelAcceptanceProbe.Shared.NoteCatalogueRefresh(
-                CliSelection.CodexCli, $"{installation.Version}:{catalogue.ObservedAt.Ticks}");
+                CliSelection.CodexCli, $"{installation.Version}:{string.Join(',', catalogue.Order(StringComparer.Ordinal))}");
         var offered = CodexCliRelease.VersionGatedModels
             .Where(model => installation is not null && CodexCliRelease.Offers(model, installation.Version))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -98,7 +88,8 @@ internal static class RunnerCapabilityProbe
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
-                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-sol",
+                string[] routes = [CodexRoutingPolicy.StandardModel, CodexRoutingPolicy.StrongModel,
+                    "gpt-6-sol", CodexCliRelease.Gpt61Sol, "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);
@@ -422,7 +413,8 @@ internal static class RunnerCapabilityProbe
                 Filesystems: sample.Filesystems,
                 Placement: sample.Placement,
                 NetworkReceiveBytesPerSecond: sample.NetworkReceiveBytesPerSecond,
-                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond);
+                NetworkTransmitBytesPerSecond: sample.NetworkTransmitBytesPerSecond,
+                SwapUsedBytes: sample.SwapUsedBytes, SwapTotalBytes: sample.SwapTotalBytes);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
@@ -1163,6 +1155,18 @@ public sealed class ProviderAuthProbe
         return status with { StatusSessionActive = true, IndeterminateSince = since };
     }
 
+    internal void UsageWindowChanged(string binary, DateTime observedAt)
+    {
+        lock (_sync)
+        {
+            if (!_observed.TryGetValue(binary, out var entry) || entry.Status.Status != Limited
+                || entry.Status.ObservedAt > observedAt) return;
+            _observed[binary] = entry with { Status = entry.Status with { LimitedUntil = _clock() } };
+            _realPacing.Remove(binary);
+            _runEvidenceVersions[binary] = _runEvidenceVersions.GetValueOrDefault(binary) + 1;
+        }
+    }
+
     private ProviderAuthStatus CurrentCore(string cliBinary)
     {
         lock (_sync)
@@ -1681,7 +1685,8 @@ public sealed class ProviderAuthProbe
         bool operatorStopped = false,
         int? signal = null,
         bool hostShutdown = false,
-        string? credentialGeneration = null)
+        string? credentialGeneration = null,
+        DateTimeOffset? usageRetry = null)
     {
         // A run that exited 0 reached the provider. Its output is agent content
         // (files and docs it read, rate_limit_event warnings), which can contain
@@ -1746,7 +1751,7 @@ public sealed class ProviderAuthProbe
                 ProviderAuthObservationKind.Limited,
                 $"'{RunnerCapabilityProbe.Provider(cliBinary)}' is rate-limited: {Excerpt(evidence.Detail)}",
                 SignalLimited,
-                LimitedUntil: evidence.ResetTimeReported ? evidence.LimitedUntil : null,
+                LimitedUntil: usageRetry ?? (evidence.ResetTimeReported ? evidence.LimitedUntil : null),
                 EvidenceId: SafeEvidenceId(evidenceId),
                 EvidenceExcerpt: Excerpt(evidence.Detail)),
             ProviderAccessEvidenceKind.TransientFailure => new ProviderAuthObservation(
@@ -1763,7 +1768,11 @@ public sealed class ProviderAuthProbe
         lock (_sync)
         {
             _observed.TryGetValue(cliBinary, out previous);
-            if (observation.Kind == ProviderAuthObservationKind.Limited
+            // Earlier requests can still be running when the provider refuses a new
+            // launch at the usage window. Keep the counter-evidence rule for ambiguous limits.
+            var windowRefused = usageRetry.HasValue
+                && ProviderRequestRejectionClassifier.IsUsageWindowRefusal(evidence.Detail);
+            if (observation.Kind == ProviderAuthObservationKind.Limited && !windowRefused
                 && _activeRuns.GetValueOrDefault(cliBinary) > 0)
             {
                 hasActiveCounterEvidence = true;

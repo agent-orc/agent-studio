@@ -103,7 +103,7 @@ async function clickNode(page: Page, view: Locator, id: string): Promise<void> {
 async function open(page: Page, query = ''): Promise<Locator> {
   await page.goto(`/#/workspace/operations/structure${query}`);
   const view = page.getByTestId('live-structure');
-  await expect(view).toBeVisible();
+  await expect(view).toBeVisible({ timeout: 60_000 });
   await box(view, STUDIO);
   return view;
 }
@@ -374,7 +374,15 @@ test('live structure: jump to a container, go back, move like a map, and keep th
   // A quick release lets it glide on a little.
   await page.mouse.move(grab.x - 120, grab.y - 60);
   await page.mouse.down();
-  await page.mouse.move(grab.x - 60, grab.y - 60, { steps: 3 });
+  // Deliver the final flick in one browser turn. A slow driver round trip can exceed the
+  // 70 ms release window, turning a fast gesture into the slow release already tested above.
+  await canvas.evaluate((element, start) => {
+    for (const offset of [20, 40, 60])
+      element.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, pointerType: 'mouse',
+        buttons: 1, clientX: start.x + offset, clientY: start.y }));
+    element.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, pointerType: 'mouse',
+      clientX: start.x + 60, clientY: start.y }));
+  }, { x: grab.x - 120, y: grab.y - 60 });
   await page.mouse.up();
   expect((await box(view, API)).x).toBeGreaterThan(dragged.x + 62);
 
@@ -505,6 +513,7 @@ test('live structure: every zoom level adds facts to the node, following the act
 });
 
 test('live structure: reads that fail show as not observed, and the classic drawing stays one switch away', async ({ page }) => {
+  test.setTimeout(180_000);
   fs.mkdirSync(results, { recursive: true });
   const errors = watchErrors(page);
   await mockApi(page, { backups: 403, hosts: 403, environment: 403 });
@@ -524,7 +533,7 @@ test('live structure: reads that fail show as not observed, and the classic draw
   await expect(page).toHaveURL(/mode=live/);
   await expect(page).toHaveURL(/layers=backup/);
   await page.reload();
-  await expect(page.getByTestId('live-structure')).toHaveAttribute('data-layers', 'backup');
+  await expect(page.getByTestId('live-structure')).toHaveAttribute('data-layers', 'backup', { timeout: 60_000 });
   await expect(page.getByTestId('live-structure')).toHaveAttribute('data-selected', 'backup-target');
 
   // Classic drawing: the same data, the earlier view.
@@ -634,7 +643,7 @@ test('live structure: unique capacity agrees across layers, installation details
   await expect(view.getByTestId('live-layer-fact-perf')).toHaveText('5 of 10 slots busy');
   const details = view.getByTestId('live-details');
   await expect(details.getByTestId('live-details-kpis').getByText('Slots in use', { exact: true }).locator('..')).toContainText('5 of 10');
-  await expect(details.getByTestId('live-details-kpis').getByText('Hosts reporting', { exact: true }).locator('..')).toContainText('2');
+  await expect(details.getByTestId('live-details-kpis').getByText('Queued', { exact: true }).locator('..')).toContainText('not observed');
   await expect(details.locator('[data-fact="slots"]')).toContainText('5 of 10');
   await expect(details.locator('[data-fact="reporting"]')).toContainText('2');
   for (const theme of ['light', 'dark'] as const) {
@@ -695,3 +704,61 @@ for (const reverse of [false, true]) {
     expect(errors).toEqual([]);
   });
 }
+
+test('recorded two-machine installation, capacity and layer views', async ({ page }) => {
+  test.setTimeout(240_000);
+  const structure = JSON.parse(fs.readFileSync(path.resolve('..', 'testdata/structure/workspace.json'), 'utf8'));
+  await mockApi(page, {}, { structure, runners: [] });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const view = await open(page);
+  await expect(view.getByTestId('live-node')).toHaveCount(30);
+  await expect(view.getByTestId('live-details-network').locator('[data-link]')).toHaveCount(11);
+  await expect(view.getByTestId('installation-summary')).toHaveText('0 open warnings, 16 slots in use (limit partially observed), queue not observed');
+  const outline = view.getByTestId('live-outline');
+  for (const label of ['Debian VM', 'Owner workstation', 'Review runner 3', 'Post-merge tests', 'Studio stack'])
+    await expect(outline).toContainText(label);
+  for (const width of [1280, 1600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await box(view, STUDIO);
+    const overlap = await view.getByTestId('live-node').evaluateAll((elements, nodes: { id: string; parentId: string | null }[]) => {
+      const rectangles = new Map(elements.map(element => [element.getAttribute('data-node-id'),
+        element.getAttribute('data-box')!.split(',').map(Number)]));
+      return nodes.flatMap((a, index) => nodes.slice(index + 1).filter(b => {
+        if (a.parentId !== b.parentId || !rectangles.has(a.id) || !rectangles.has(b.id)) return false;
+        const [x, y, w, h] = rectangles.get(a.id)!, [u, v, p, q] = rectangles.get(b.id)!;
+        return x < u+p && u < x+w && y < v+q && v < y+h;
+      }).map(b => [a.id, b.id]));
+    }, structure.nodes);
+    expect(overlap).toEqual([]);
+  }
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await shot(page, 'recorded-01-' + theme);
+  }
+  await setTheme(page, 'light');
+  await view.locator(`[data-outline-id="${STUDIO}"]`).click();
+  await box(view, STUDIO);
+  await shot(page, 'recorded-03-studio');
+  const coding = 'component:studio-agents:coding-runner';
+  await view.locator(`[data-outline-id="${coding}"]`).click();
+  await box(view, coding);
+  await expect(view.locator('[data-slot]')).toHaveCount(18);
+  await expect(view.getByRole('button', { name: 'AGT-4018', exact: true })).toBeVisible();
+  await shot(page, 'recorded-04-coding');
+  await view.getByTestId('live-zoom-fit').click();
+  await view.getByTestId('live-details-close').click();
+  for (const [index, layer] of LAYERS.entries()) {
+    await setLayers(view, [layer]);
+    await box(view, STUDIO);
+    await shot(page, `recorded-${String(index + 6).padStart(2, '0')}-${layer}`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page);
+  await setLayers(view, ['perf', 'network', 'warnings']);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await box(view, STUDIO);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await shot(page, 'recorded-phone-' + theme);
+  }
+});

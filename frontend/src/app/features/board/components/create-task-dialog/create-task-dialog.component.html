@@ -60,6 +60,7 @@
           [model]="newModel()"
           [thinkingLevel]="newThinkingLevel()"
           [availableModels]="availableModels()"
+          [preserveUnavailableModel]="modelSelectionExplicit()"
           [emptyModelLabel]="defaultsPending() ? 'Resolving model…' : defaultsError() ? 'Model defaults unavailable' : 'Policy default'"
           eyebrow="Agent for new task"
           triggerTestid="create-agent"

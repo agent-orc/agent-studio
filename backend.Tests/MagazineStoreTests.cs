@@ -66,10 +66,16 @@ public sealed class MagazineStoreTests : IDisposable
                 foreach (var author in authors) { author!.AsObject().Remove("personaId"); author.AsObject().Remove("roleId"); }
             if (json["author"] is JsonObject revisionAuthor)
             { revisionAuthor.Remove("personaId"); revisionAuthor.Remove("roleId"); }
+            json.AsObject().Remove("items");
+            json.AsObject().Remove("leadImportance");
             File.WriteAllText(file, json.ToJsonString());
         }
         Assert.Null(first.Author.PersonaId);
-        Assert.Null(store.Get(Project, "people")!.Author.RoleId);
+        var legacy = store.Get(Project, "people")!;
+        Assert.Null(legacy.Author.RoleId);
+        Assert.Empty(legacy.Items);
+        Assert.Null(legacy.LeadImportance);
+        Assert.Null(Assert.Single(store.List(Project)).LeadImportance);
 
         var second = store.Upsert(Project, "people", Article("two") with
         {
@@ -81,6 +87,26 @@ public sealed class MagazineStoreTests : IDisposable
         Assert.Equal(2, second.Authors.Count);
         Assert.Null(store.Get(Project, "people", 1)!.Author.PersonaId);
         Assert.Equal("editor", store.Get(Project, "people")!.Author.RoleId);
+    }
+
+    [Fact]
+    public void A_full_write_without_items_clears_the_lead_only_for_the_new_revision()
+    {
+        var store = Store();
+        var request = Article("Reviewed report") with
+        {
+            Items = [new("routine-check", "Routine check", 0, "No change in risk.", ["Synthetic check record."],
+                "Keep the current schedule.", false)],
+        };
+        store.Upsert(Project, "report", request, "human:owner", null);
+        Assert.Equal(0, Assert.Single(store.List(Project)).LeadImportance);
+
+        var updated = store.Upsert(Project, "report", request with { Items = null }, "human:owner", 1).Article;
+
+        Assert.Null(updated.LeadImportance);
+        Assert.Empty(updated.Items);
+        Assert.Null(Assert.Single(store.List(Project)).LeadImportance);
+        Assert.Equal(0, Assert.Single(store.Get(Project, "report", 1)!.Items).Importance);
     }
 
     [Fact]

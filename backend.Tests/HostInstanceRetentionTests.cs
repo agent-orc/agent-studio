@@ -217,6 +217,7 @@ public sealed class HostInstanceRetentionTests
     [InlineData("agentstudio")]
     [InlineData("instances")]
     [InlineData("candidate")]
+    [InlineData("candidate-directory")]
     [InlineData("child")]
     public void Concurrent_path_replacement_cannot_redirect_deletion(string replacement)
     {
@@ -237,7 +238,7 @@ public sealed class HostInstanceRetentionTests
             "state" => LocalStateRoot.Resolve(),
             "agentstudio" => LocalStateRoot.Combine("agentstudio"),
             "instances" => state.Root,
-            "candidate" => abandoned,
+            "candidate" or "candidate-directory" => abandoned,
             _ => Path.Combine(abandoned, "empty"),
         };
         var foreign = Path.Combine(temp.Path, "foreign");
@@ -255,11 +256,25 @@ public sealed class HostInstanceRetentionTests
             {
                 if (candidate != abandoned) return;
                 Directory.Move(swapped, backup);
-                Directory.CreateSymbolicLink(swapped, foreign);
+                if (replacement == "candidate-directory")
+                    Directory.CreateDirectory(swapped);
+                else
+                    Directory.CreateSymbolicLink(swapped, foreign);
                 didSwap = true;
             });
 
             Assert.True(didSwap);
+            var movedCandidate = replacement == "child"
+                ? backup
+                : Path.Combine(backup, Path.GetRelativePath(swapped, abandoned));
+            var movedChild = replacement == "child"
+                ? Path.Combine(movedCandidate, "nested")
+                : Path.Combine(movedCandidate, "empty", "nested");
+            Assert.True(Directory.Exists(movedChild), "Retention modified the moved directory outside local state.");
+            if (replacement != "child")
+                Assert.Equal("owned", File.ReadAllText(Path.Combine(movedCandidate, "batch-state-origin")));
+            if (replacement == "candidate-directory")
+                Assert.True(Directory.Exists(swapped), "Retention removed a replacement before it qualified.");
             Assert.True(Directory.Exists(foreignChild), "Deletion followed the substituted path outside local state.");
             if (replacement != "child")
                 Assert.Equal("foreign", File.ReadAllText(Path.Combine(foreignCandidate, "batch-state-origin")));
@@ -268,10 +283,52 @@ public sealed class HostInstanceRetentionTests
         {
             if (didSwap)
             {
-                if (new DirectoryInfo(swapped).LinkTarget is not null) Directory.Delete(swapped);
+                if (Directory.Exists(swapped)) Directory.Delete(swapped);
                 Directory.CreateDirectory(Path.GetDirectoryName(swapped)!);
                 Directory.Move(backup, swapped);
             }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Linux_kernel_denies_mutation_through_handles_moved_outside_the_authorized_ancestors(bool moveAnchor)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempWorkspace("instance-kernel-confinement");
+        using var state = new InstanceState();
+        var abandoned = state.PathFor("abandoned");
+        Directory.CreateDirectory(Path.Combine(abandoned, "empty", "nested"));
+        File.WriteAllText(Path.Combine(abandoned, "batch-state-origin"), "owned");
+        using var anchor = HostStorageRetention.PinnedRetentionDirectory.OpenRoot(state.Root);
+        using var candidate = anchor.OpenChild(Path.GetFileName(abandoned));
+        using var worker = new HostStorageRetention.InstanceDeletionWorker(anchor.AncestorDescriptors.ToArray());
+        Assert.True(worker.Available, "The retention verification host needs enabled Landlock support.");
+        var moved = Path.Combine(temp.Path, "moved");
+        Directory.Move(moveAnchor ? state.Root : abandoned, moved);
+        var movedCandidate = moveAnchor ? Path.Combine(moved, Path.GetFileName(abandoned)) : moved;
+        try
+        {
+            // Deliberately bypass VerifyLocation: these operations exercise the
+            // kernel boundary even if a rename occurs after the last managed check.
+            Assert.Throws<UnauthorizedAccessException>(() => worker.Run(() =>
+                File.Delete(Path.Combine(candidate.IoPath, "batch-state-origin"))));
+            // Unix rmdir access denial is surfaced as IOException by Directory.Delete.
+            Assert.Throws<IOException>(() => worker.Run(() =>
+                Directory.Delete(Path.Combine(candidate.IoPath, "empty", "nested"))));
+            Assert.True(Directory.Exists(Path.Combine(movedCandidate, "empty", "nested")));
+            Assert.Equal("owned", File.ReadAllText(Path.Combine(movedCandidate, "batch-state-origin")));
+
+            // The caller retains its normal permissions after confined work.
+            var sentinel = Path.Combine(temp.Path, "caller-owned");
+            File.WriteAllText(sentinel, "keep caller permissions");
+            File.Delete(sentinel);
+            Assert.False(File.Exists(sentinel));
+        }
+        finally
+        {
+            Directory.Move(moved, moveAnchor ? state.Root : abandoned);
         }
     }
 

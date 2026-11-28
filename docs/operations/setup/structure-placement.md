@@ -16,12 +16,12 @@ Source: `backend/Features/Management/Connectivity/` (`StructureProjection`,
 | Node | Id | Source |
 |---|---|---|
 | Reporting host (coding, review, gate) | `machine:{hostId}` | The host's capability advertisement, or the gate host registration |
-| Runner role on a host | `component:{hostId}:{runnerId}` | The same advertisement; `role` is `coding`, `review` or `gate` |
+| Runner role on a host | `component:{hostId}:{runnerId}` | The capability advertisement. A structure reading can report the role as `coding`, `review`, `post` or `gate`. |
 | Enclosing machine a host names | `machine:{id}` from `RUNNER_PARENT_MACHINE` | Host placement report |
 | Studio server | `machine:{Structure:MachineId}`, default `machine:studio-server` | What the API observes about its own machine |
 | API, web, edge, engine | `component:{machineId}:api`, `:web`, `:edge`, `:engine` | The API itself, engine readiness, forwarded requests, and a host container report |
 | Container a host's container runtime lists | `observed-container:{hostId}:{name}` | Host container report |
-| Control connection of a host | `link:machine:{hostId}>component:{machineId}:api:control` | Host telemetry |
+| Control connection of a host | `link:machine:{hostId}>component:{machineId}:api:control` | Host telemetry. A receiver-observed peer can update its kind to `runner-to-server`. |
 | Supervised runner link | `link:machine:{machineId}>machine:{hostId}:{kind}` | `RunnerLinks` state |
 
 A node that reports and is not declared has `provenance: "observed"` and the
@@ -123,7 +123,7 @@ most every 15 minutes; `sizeComplete` is false when the walk stopped early.
 never offered the capability in `reason`, and `parked` when the capability is
 held back for now (stale, not ready, probe undecided).
 
-Links carry `id` (`link:{from}>{to}:{kind}`), `kind` and `facts`: `state`
+A link has a stable `id`, its current `kind` and `facts`. Link facts include `state`
 (`up`, `down`, `stale`, `not observed`), `latencyMs` where the link is probed
 (the round trip of the host's capability advertisement), `probedAt` and
 `transport`.
@@ -132,11 +132,98 @@ Host telemetry gained `placement`, `networkReceiveBytesPerSecond`,
 `networkTransmitBytesPerSecond` and `taskServerRoundTripMs`, and each listed
 container its short `id`. All are optional on the wire.
 
+## Host and API readings in schema 3
+
+Each Linux runner includes a `structure` reading with its capability advertisement.
+The reading names the enrolled observer and gives `observedAt` and `freshUntil`
+(90 seconds). Collectors use their service account. Block devices come from
+sysfs, RAID membership from the MD driver, and mount usage joins on the kernel
+device number. The service and each delegated worker report cumulative CPU
+microseconds, mean cores used since the preceding sample, and current memory
+bytes. Slot records associate card keys with workers.
+
+When several observers report machine performance, the newest performance
+measurement wins. Its `facts.performance.sample` gives the observer, measurement
+time and 90-second expiry. A later structure collection has its own
+`facts.sample` and does not extend the lifetime of the performance measurement.
+A container's `detectedContainer` reports the result of its own
+`systemd-detect-virt --container` check. Its DMI product and VM detector can
+describe the enclosing machine. When that machine also reports directly, its
+own structure reading supplies its placement fields and their timestamp.
+
+Disk usage from an independent SSH gate probe carries its own `disks[].sample`.
+It fills a missing disk reading or replaces one of the same age or older.
+
+On the Studio machine the collector reads Docker scopes directly under
+`studio.slice`. The namespace init process identifies the API and engine
+assemblies, or the frontend and edge Caddyfile mounts. The init start tick
+gives uptime. Image and restart count require readable container metadata.
+Missing files leave individual values null. The collector uses no Docker
+socket for this slice. Systemd post-merge window units report independently.
+
+The API measures requests in flight and arrivals per second. Queue counts cover
+waiting integration rows, pending reviews, pending post-merge windows and
+the published coding Ready lane. The last two count windows and cards,
+respectively. The review queue is shared among review runners. A missing board or
+authority reading leaves the corresponding count null. The queued-tasks trend sums the coding, review
+and pull-gate queues, matching the prototype.
+A five-second sampler retains at most 180 points for 15 minutes in memory.
+An API restart or disconnected copy reads the last Linux host observations from
+`telemetry/structure/last-reports.json` under the task repository. They retain
+their original observation times and expire from the cache 14 days after the
+last heartbeat. During a Task Server outage, repeated reads respect the same
+deadline. Legacy reports from the last successful read remain available in
+memory until that deadline.
+The activity feed holds the 20 most recent distinct observed events, newest
+first. The API also exposes weekly subscription windows from its quota cache
+with the original fetch time and cache expiry.
+
+A receiver records the address class and scheme of the runner advertisement.
+The public route follows `Security:PublicCloudflareEdge` and the Studio proxy
+configuration. `RemoteGate:SshHost` declares an SSH route. Where the gate uses
+an overlay, set `Structure:GateNetwork` to `overlay` or declare the specific
+overlay links in the placement file. Declare operator workstation membership
+there if the workstation sends no reports. Declared routes have unknown
+health until a probe or supervisor supplies evidence.
+
+### Migrating workspace consumers from schema 2 to 3
+
+The original six-node Studio view (installation, server and four components)
+is still valid. As hosts supply structure readings, an existing node ID can
+acquire a different `kind` or `parentId`.
+
+| Existing node | Schema 2 or legacy report | With a schema 3 structure reading |
+|---|---|---|
+| Runner component, normally `component:{hostId}:{runnerId}` | An observed runner is a `process` under its reporting host. A declared runner uses its declared kind and parent. | The same component becomes a `service` when the runner reports container placement, or a `host-service` otherwise. Its parent stays the same. |
+| Studio API, web, edge or engine, normally `component:{machineId}:{role}` | A direct child of `machine:{machineId}`, with kind `process`, `container` or its declared kind. | When the Studio slice reports a unique container for that role and it matches the component, the component keeps its ID, has kind `container` and moves under `stack:machine:{machineId}:studio`. This new `container-stack` is itself a child of `machine:{machineId}`. |
+
+A runner without a structure reading keeps its earlier representation. The
+stack appears when the slice reports containers. A Studio component without a
+matching slice container stays under the machine. A slice container with no
+match gets its own ID under the stack.
+
+For snapshots and `structureDelta.nodes`, match nodes by `id`, classify each
+by its current `kind` and use `parentId` to place it in the tree. For example,
+`component:studio-server:api` moves under `stack:machine:studio-server:studio`.
+Links still refer to that API by its component ID.
+[Recorded workspace response](../../../testdata/structure/workspace.json)
+
+In schema 2 a reported runner control connection has kind `control`. Schema 3
+keeps that kind for legacy reports. When a heartbeat includes receiver-observed
+peer information, the same link has kind `runner-to-server` and keeps its
+existing `link:{from}>{to}:control` ID. A peer observation with no existing
+control link creates a `runner-to-server` link with that kind in its ID.
+For several runners on one host, the newest receiver timestamp supplies the
+shared link's health, address class, transport and accompanying round trip.
+The heartbeat expires after 90 seconds. A matching declared connection keeps
+its ID and label when the receiver supplies these measurements.
+Consumers should join snapshots and deltas by the returned `id` and use
+`kind` to classify the connection.
+
 ## Reading and live updates
 
 `GET /api/v1/operations/structure?scope=workspace|project:{id}&environment={id}`
-returns `nodes`, `links`, `revision`, `generatedAt` and `schemaVersion` (2).
-Fields are only ever added; existing fields keep their meaning.
+returns `nodes`, `links`, `revision`, `generatedAt` and `schemaVersion` (3). The workspace scope also returns `history`.
 
 - The projection is cached per scope and refreshed every 5 seconds in the
   background while a view reads or subscribes. A request reads the cache. It
@@ -148,7 +235,7 @@ Fields are only ever added; existing fields keep their meaning.
 - The Studio hub pushes `structureDelta` to views that called
   `SubscribeToStructure(scope, environment)` (`UnsubscribeFromStructure` to
   leave). A delta has `scope`, `environment`, `baseRevision`, `revision`,
-  `generatedAt`, `nodes`, `removedNodes`, `links` and `removedLinks`, and
+  `generatedAt`, `nodes`, `removedNodes`, `links` and `removedLinks`, plus `history` when the recorded series or events changed, and
   holds only what changed. A view whose revision differs from `baseRevision`
   reads the structure again.
 - The view applies fact updates in place, reads again when nodes or links

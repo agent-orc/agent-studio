@@ -11,6 +11,27 @@ public sealed record CapacitySubscription(string CliType, string? SubscriptionKe
     double? UsedPercent, double? ElapsedPercent, double? LeftAtResetPercent, DateTime? ResetAt, string Status);
 public sealed record CapacityAllocation(string RunnerId, int? BootstrapSlots, int? ConfiguredSlots,
     int? AdoptedSlots, string State);
+public sealed record CapacityDeliveryGeneration(string? ReviewAttemptId, string? ResultSha);
+public sealed record CapacityWaitHolder(string CardKey, IReadOnlyList<string> Files,
+    DateTimeOffset SinceUtc, DateTimeOffset? ExpiresAtUtc, int DependentCount, bool FilesTruncated);
+public sealed record CapacityDeliveryWait(string CardKey, string Lane, CapacityDeliveryGeneration? Generation,
+    string QueuePhase, DateTimeOffset? QueueSinceUtc, double? QueueAgeSeconds, string Status, string Reason,
+    IReadOnlyList<CapacityWaitHolder> Reservations, DateTimeOffset? ReservationObservedAtUtc,
+    DateTimeOffset? NextCheckAtUtc);
+public sealed record CapacityWaitOwner(string Kind, string? Id, DateTimeOffset SinceUtc);
+public sealed record CapacityWaitPlan(string DecisionId, string Persona, DateTimeOffset RecordedAtUtc);
+public sealed record CapacityWaitLease(string Persona, long Fence, DateTimeOffset ExpiresAtUtc);
+public sealed record CapacityWaitSources(DateTimeOffset ReadAtUtc, DateTimeOffset? QueuePublishedAtUtc,
+    DateTimeOffset? GateFinishedAtUtc, DateTimeOffset? GateAcquiredAtUtc,
+    DateTimeOffset? IntegrationStartedAtUtc, DateTimeOffset? IntegrationFinishedAtUtc);
+public sealed record CapacityProjectWait(string DispatchMode, CapacityWaitPlan? ActivePlan, CapacityWaitLease? DispatchLease,
+    CapacityWaitOwner? GateOwner, CapacityWaitOwner? IntegrationOwner, DateTimeOffset? LastProgressAtUtc,
+    CapacityWaitSources Sources, IReadOnlyList<CapacityDeliveryWait> Deliveries, bool Truncated)
+{
+    // Delivery ownership evidence cannot establish that restarting the API will help.
+    public bool RestartAdvised => false;
+}
+
 public sealed record CodingCapacityFact(string? Project, int TotalSlots, int UsedSlots, int FreeSlots,
     int Ready, int ClaimableNow, int DependencyWidth, int MaxConcurrentCards,
     IReadOnlyList<CapacityCard> Cards, IReadOnlyList<CapacityChainHead> Heads, string Cause)
@@ -19,6 +40,8 @@ public sealed record CodingCapacityFact(string? Project, int TotalSlots, int Use
     public int RunnableNow { get; init; } = ClaimableNow;
     public DateTime? LastProgressAt { get; init; }
     public IReadOnlyList<CapacityAllocation> Allocations { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CapacityProjectWait? Wait { get; init; }
 }
 public sealed record CodingCapacityResponse(CodingCapacityFact Fleet, IReadOnlyList<CodingCapacityFact> Projects,
     IReadOnlyList<CapacitySubscription> Subscriptions);

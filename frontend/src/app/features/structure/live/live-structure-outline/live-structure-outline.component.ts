@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, output } from '@angular/core';
 import { StatusIndicatorComponent } from '@studio/ui/components/status-indicator/status-indicator.component';
 import { LiveGlyphComponent } from '../live-glyph/live-glyph.component';
-import { LIVE_KIND_LABEL, type LiveNode, type LiveScene } from '../live-structure.model';
+import { LIVE_KIND_LABEL, gib, type LiveNode, type LiveScene } from '../live-structure.model';
 
 interface OutlineRow { node: LiveNode; depth: number; warnings: number; value: string; }
 
@@ -31,7 +31,8 @@ export class LiveStructureOutlineComponent {
     const rows: OutlineRow[] = [];
     const visit = (node: LiveNode, depth: number): void => {
       rows.push({ node, depth, warnings: node.warnings.length, value: node.slots ? `${node.slots.busy}/${node.slots.total ?? '?'}`
-        : node.perf?.cpu != null ? `cpu ${Math.round(node.perf.cpu * 100)}%` : '' });
+        : node.perf?.cpu != null ? `cpu ${Math.round(node.perf.cpu * 100)}%` : node.perf?.memUsed != null ? gib(node.perf.memUsed) : node.source?.facts?.device?.sizeBytes ? gib(node.source.facts.device.sizeBytes)
+        : node.children.length ? `${node.children.length} inside` : node.health.word });
       for (const child of node.children) visit(child, depth + 1);
     };
     const scene = this.scene();

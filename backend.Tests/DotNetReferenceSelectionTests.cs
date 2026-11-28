@@ -46,6 +46,84 @@ public sealed class DotNetReferenceSelectionTests : IDisposable
         Assert.Equal(TestExecutionLevels.WorkPackage, result.Audit.Level);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Fast_review_reads_the_old_type_after_source_deletion_or_rename(bool rename)
+    {
+        BackendRepository();
+        const string original = "backend/OriginalStore.cs";
+        const string renamed = "backend/RenamedStore.cs";
+        Unrelated("OriginalStoreTests", "RenamedStoreTests");
+        Write("backend.Tests/IntegrationProbe.cs",
+            "public class IntegrationProbe { [Fact] public void Reads() => _ = typeof(OriginalStore); }");
+        var paths = rename ? new[] { original, renamed } : [original];
+        var selection = FastScope(paths, Overlay(new Dictionary<string, string?>
+        {
+            [original] = null,
+            [renamed] = rename ? "public class RenamedStore { }" : null,
+        }) with
+        {
+            BeforeOverlay = removed =>
+            {
+                Assert.Equal([original], removed);
+                return new(new Dictionary<string, string?> { [original] = "public class OriginalStore { }" });
+            },
+        });
+
+        Assert.Contains("OriginalStoreTests", selection.Audit.SelectedTestClasses);
+        Assert.Contains("IntegrationProbe", selection.Audit.SelectedTestClasses);
+        Assert.Equal(rename, selection.Audit.SelectedTestClasses.Contains("RenamedStoreTests"));
+    }
+
+    [Fact]
+    public void Fast_review_counts_distinct_sources_and_merges_partial_class_traits_and_references()
+    {
+        BackendRepository();
+        const string production = "backend/ChangedStore.cs";
+        const string part = "backend.Tests/Probe.Helper.cs";
+        Write(production, "public class ChangedStore { }");
+        Write("backend.Tests/Probe.cs", "public partial class Probe { [Fact] public void Runs() { } }");
+        Write(part, "public partial class Probe { private ChangedStore? _store; }");
+        Write("backend.Tests/TimingProbe.cs", "public partial class TimingProbe { [Fact] public void Runs() { } }");
+        Write("backend.Tests/TimingProbe.Traits.cs", """
+            [Trait("Category", "MachineBound")]
+            public partial class TimingProbe { private ChangedStore? _store; }
+            """);
+        for (var index = 0; index < 31; index++)
+            Write($"backend.Tests/Others{index}.cs",
+                $"public class Probe{index} {{ [Fact] public void Runs() => _ = typeof(ChangedStore); }}\n"
+                + $"public class Alternate{index} {{ [Fact] public void Runs() => _ = typeof(ChangedStore); }}\n");
+
+        var narrow = FastScope([production]);
+        Assert.Equal(63, narrow.Audit.SelectedTestClasses.Count);
+        Assert.Contains("Probe", narrow.Audit.SelectedTestClasses);
+        Assert.DoesNotContain("TimingProbe", narrow.Audit.SelectedTestClasses);
+
+        Write("backend.Tests/Probe.Extra.cs", "public partial class Probe { [Fact] public void Extra() { } }");
+        var broad = FastScope([production, part]);
+        // A changed helper-only part makes its runnable class mandatory and
+        // frees both parts from the optional source-file budget.
+        Assert.Equal(narrow.Audit.SelectedTestClasses, broad.Audit.SelectedTestClasses);
+        var clipped = FastScope([production]);
+        Assert.Empty(clipped.Audit.SelectedTestClasses);
+        Assert.Contains(clipped.Audit.Reasons, reason => reason.Contains("33 test-source files", StringComparison.Ordinal)
+            && reason.Contains("backend.Tests/Probe.Extra.cs", StringComparison.Ordinal));
+
+        Write("backend.Tests/Probe.cs", "public partial class Probe { [Fact] public void Runs() => _ = typeof(ChangedStore); }");
+        var oneDirectPart = FastScope([production]);
+        Assert.Equal(narrow.Audit.SelectedTestClasses, oneDirectPart.Audit.SelectedTestClasses);
+    }
+
+    private StagedVerifyPlan FastScope(IReadOnlyList<string> paths, DotNetReferenceSelection? reference = null)
+    {
+        var declared = BackendVerifyPlan();
+        var existing = TestSelectionPlanner.Plan(_root, declared, paths, null,
+            PerCardVerifyPlanner.Lane, TestExecutionLevels.BuildOnly);
+        return PerCardVerifyPlanner.WithDotNetReviewSelection(_root, declared, existing, paths,
+            reference ?? new DotNetReferenceSelection { Time = _clock }, useBudgetedScope: true);
+    }
+
     [Fact]
     public void Closure_CarriesAFixtureToTheTestClassThatUsesIt()
     {

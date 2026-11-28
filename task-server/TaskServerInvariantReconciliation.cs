@@ -79,20 +79,18 @@ public sealed partial class TaskServerStore
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var now = UtcNow;
-            var cutoff = now.AddSeconds(-Math.Max(30, _options.InventoryGraceSeconds));
+            var cutoff = InventoryCutoff(now);
             var inventories = await ReadFreshInventoriesAsync(connection, transaction, cutoff, ct);
-            var leases = await ReadActiveLeaseFactsAsync(connection, transaction, ct);
-            var leaseRuns = leases.Select(lease => lease.RunId).ToHashSet(StringComparer.Ordinal);
+            var leases = await ReadOwnedLeaseFactsAsync(connection, transaction, ct);
+            var ownedRuns = leases.Select(lease => lease.RunId).ToHashSet(StringComparer.Ordinal);
 
             foreach (var inventory in inventories)
             {
                 foreach (var process in inventory.Snapshot.Processes.Where(process =>
                              process.Pid > 0 && process.StartedAt <= cutoff))
                 {
-                    if (leaseRuns.Contains(process.RunId)) continue;
-                    var actionId = StableInvariantId(
-                        "orphan", inventory.RunnerId, inventory.InstanceId,
-                        process.RunId, process.Pid.ToString(CultureInfo.InvariantCulture));
+                    if (ownedRuns.Contains(process.RunId)) continue;
+                    var actionId = OrphanActionId(inventory.RunnerId, inventory.InstanceId, process);
                     var inserted = await ExecuteAsync(connection, """
                         INSERT INTO runner_reconciliation_actions(
                             action_id, runner_id, instance_id, category, action,
@@ -104,7 +102,7 @@ public sealed partial class TaskServerStore
                         ("$id", actionId),
                         ("$runner", inventory.RunnerId),
                         ("$instance", inventory.InstanceId),
-                        ("$detail", $"Process {process.Pid} for run '{process.RunId}' has no active lease."),
+                        ("$detail", $"Process {process.Pid} for run '{process.RunId}' has no owning lease."),
                         ("$pid", process.Pid),
                         ("$run", process.RunId),
                         ("$task", process.TaskKey),
@@ -114,7 +112,7 @@ public sealed partial class TaskServerStore
                         connection, transaction, actionId, process.RunId,
                         process.TaskKey, "invariant.orphan-process",
                         "run-inventory", "terminate-process",
-                        $"Process {process.Pid} had no active lease and was scheduled for termination.",
+                        $"Process {process.Pid} had no owning lease and was scheduled for termination.",
                         ct);
                     await AuditAsync(
                         connection, transaction, "invariant-reconciler",
@@ -133,7 +131,7 @@ public sealed partial class TaskServerStore
                 }
             }
 
-            foreach (var lease in leases)
+            foreach (var lease in leases.Where(lease => lease.IsActive))
             {
                 var inventory = inventories.FirstOrDefault(item =>
                     string.Equals(item.RunnerId, lease.RunnerId, StringComparison.Ordinal)
@@ -313,7 +311,7 @@ public sealed partial class TaskServerStore
         }
     }
 
-    private static async Task<IReadOnlyList<RunnerReconciliationAction>> ReadPendingReconciliationActionsAsync(
+    private async Task<IReadOnlyList<RunnerReconciliationAction>> ReadPendingReconciliationActionsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string runnerId,
@@ -321,24 +319,61 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         var actions = new List<RunnerReconciliationAction>();
-        await using var command = Command(connection, """
-            SELECT action_id, category, action, detail, pid, run_id, task_key
-              FROM runner_reconciliation_actions
-             WHERE runner_id = $runner AND instance_id = $instance
-             ORDER BY created_at, action_id;
+        var retired = new List<string>();
+        var cutoff = InventoryCutoff(UtcNow);
+        RunnerProcessInventory? inventory = null;
+        await using (var command = Command(connection, """
+            SELECT a.action_id, a.category, a.action, a.detail, a.pid, a.run_id, a.task_key,
+                   CASE WHEN a.action = 'terminate-process' AND NOT EXISTS (
+                       SELECT 1 FROM leases l
+                        WHERE l.run_id = a.run_id AND l.status IN ('active', 'process-unknown')
+                   ) THEN i.snapshot_json END AS orphan_snapshot
+              FROM runner_reconciliation_actions a
+              LEFT JOIN runner_inventories i
+                ON i.runner_id = a.runner_id AND i.instance_id = a.instance_id AND i.observed_at >= $cutoff
+             WHERE a.runner_id = $runner AND a.instance_id = $instance
+             ORDER BY a.created_at, a.action_id;
             """, transaction,
             ("$runner", runnerId),
-            ("$instance", instanceId));
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            actions.Add(new RunnerReconciliationAction(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6)));
+            ("$instance", instanceId),
+            ("$cutoff", Iso(cutoff))))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var action = new RunnerReconciliationAction(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6));
+                if (action.Action == "terminate-process")
+                {
+                    if (reader.IsDBNull(7))
+                    {
+                        retired.Add(action.ActionId);
+                        continue;
+                    }
+
+                    inventory ??= JsonSerializer.Deserialize<RunnerProcessInventory>(reader.GetString(7));
+                    if (inventory?.Processes.Any(process => process.Pid > 0 && process.Pid == action.Pid
+                            && process.RunId == action.RunId && process.TaskKey == action.TaskKey
+                            && process.StartedAt <= cutoff
+                            && OrphanActionId(runnerId, instanceId, process) == action.ActionId) != true)
+                    {
+                        retired.Add(action.ActionId);
+                        continue;
+                    }
+                }
+                actions.Add(action);
+            }
+        }
+
+        foreach (var actionId in retired)
+            await ExecuteAsync(connection, "DELETE FROM runner_reconciliation_actions WHERE action_id = $id;",
+                ct, transaction, ("$id", actionId));
         return actions;
     }
 
@@ -414,25 +449,33 @@ public sealed partial class TaskServerStore
         return result;
     }
 
-    private static async Task<IReadOnlyList<LeaseFact>> ReadActiveLeaseFactsAsync(
+    private static async Task<IReadOnlyList<LeaseFact>> ReadOwnedLeaseFactsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         CancellationToken ct)
     {
         var result = new List<LeaseFact>();
         await using var command = Command(connection, """
-            SELECT l.run_id, l.task_id, t.task_key, l.runner_id, l.instance_id, l.acquired_at
+            SELECT l.run_id, l.task_id, t.task_key, l.runner_id, l.instance_id, l.acquired_at, l.status = 'active'
               FROM leases l
               JOIN tasks t ON t.id = l.task_id
-             WHERE l.status = 'active';
+             WHERE l.status IN ('active', 'process-unknown');
             """, transaction);
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             result.Add(new LeaseFact(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetString(4), Parse(reader.GetString(5))));
+                reader.GetString(3), reader.GetString(4), Parse(reader.GetString(5)), reader.GetBoolean(6)));
         return result;
     }
+
+    private DateTime InventoryCutoff(DateTime now)
+        => now.AddSeconds(-Math.Max(30, _options.InventoryGraceSeconds));
+
+    // A reused PID needs a new directive and must not inherit an earlier acknowledgment.
+    private static string OrphanActionId(string runnerId, string instanceId, RunnerProcessInfo process)
+        => StableInvariantId("orphan", runnerId, instanceId, process.RunId,
+            process.Pid.ToString(CultureInfo.InvariantCulture), Iso(process.StartedAt));
 
     private static string StableInvariantId(string category, params object[] identities)
     {
@@ -454,7 +497,8 @@ public sealed partial class TaskServerStore
         string TaskKey,
         string RunnerId,
         string InstanceId,
-        DateTime AcquiredAt);
+        DateTime AcquiredAt,
+        bool IsActive);
 }
 
 public sealed class TaskServerInvariantReconciliationService(

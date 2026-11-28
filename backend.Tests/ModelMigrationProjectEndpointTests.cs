@@ -37,17 +37,17 @@ public sealed class ModelMigrationProjectEndpointTests : IDisposable
         var result = await response.Content.ReadFromJsonAsync<ApplyProjectModelMigrationResult>();
         Assert.NotNull(result);
         Assert.Equal(ModelIds.Gpt56Sol, result.From);
-        Assert.Equal(ModelIds.Gpt6Sol, result.To);
+        Assert.Equal(ModelIds.Gpt62Sol, result.To);
         Assert.Equal(["AGT-eligible"], result.UpdatedTaskIds);
         Assert.Empty(result.FailedTaskIds);
-        Assert.Equal(ModelIds.Gpt6Sol, ModelIn("AGT-eligible", TaskStates.Ready));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelIn("AGT-eligible", TaskStates.Ready));
         Assert.Equal(ModelIds.Gpt56Luna, ModelIn("AGT-other-model", TaskStates.Ready));
         Assert.Equal(ModelIds.Gpt56Sol, ModelIn("AGT-implicit", TaskStates.Ready));
         Assert.Equal(ModelIds.Gpt56Sol, ModelIn("AGT-reviewing", TaskStates.AutoReview));
 
         using var unknownMigration = await client.PostAsJsonAsync(
             $"/api/projects/{project.Id}/model-migrations/apply",
-            new ApplyProjectModelMigrationRequest("gpt-6.1-sol"));
+            new ApplyProjectModelMigrationRequest(ModelIds.Gpt62Sol));
         Assert.Equal(HttpStatusCode.BadRequest, unknownMigration.StatusCode);
 
         using var unknownProject = await client.PostAsJsonAsync(

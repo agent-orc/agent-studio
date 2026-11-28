@@ -420,7 +420,19 @@ built-in catalogue is used only when the server supplies no route. Each verdict 
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
 When a CLI authenticates through a store without readable generation metadata,
 the probe uses the daemon session as its generation and rechecks accepted models
-every 6 hours. Inconclusive verdicts retry after 10 minutes. The daemon starts
+every 6 hours. Inconclusive verdicts retry after 10 minutes. A launch refusal
+without an explicit account restriction expires after 15 minutes, the same
+backoff as temporary model capacity. A successful request for the same model
+and login replaces the refusal. Explicit account restrictions survive until a
+credential or catalogue change, or successful use of the model.
+
+An explicit usage-window refusal holds the provider login until reset, including
+when earlier requests are still running.
+When the refusal omits its deadline, the runner uses the exhausted window in
+the subscription reading, then a ten-minute retry if neither supplies a time.
+The quota lease shares fresh readings with other polling daemons on that
+subscription. A changed reset time or lower used share releases the quota
+wait and schedules temporary model refusals for the next probe refresh. The daemon starts
 the probe after receiving server routes in its first capability response.
 A completed host device login invalidates that provider's cached model verdicts
 before the next advertisement; an in-flight probe from the old login cannot
@@ -442,6 +454,10 @@ fallback does not hold the card once quota admission can use its primary route.
 The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
+Coding advertisements reconcile recorded Ready-card model waits even when
+slots are full. The board dates a dispatch wait from the first matching
+refusal. The operator decision feed groups recorded waits for a configured
+model on the only coding host into one item with the held-card count.
 
 The deploy contract for backend features that require an agent-host release is
 [`runner-release-requirements.json`](../../../contracts/TaskServer.Contracts/runner-release-requirements.json).
@@ -1317,8 +1333,18 @@ unreported claim expires with its lease and is queued again.
   AGT-2985 the slot used the lease id, so Stable 0.9.3 rejected every
   production completion with continuation evidence. The legacy-plane contract
   test (`backend.Tests/LegacyRunnerCompletionContractTests.cs`) and the
-  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 seconds or the
-  1,211,213-token observation threshold. Semantic conflicts and invalid
+  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 charged seconds or the
+  1,211,213-token observation threshold. On a worker with cgroup v2 CPU pressure
+  accounting, charged duration excludes that worker group's `cpu.pressure` full
+  stall intervals. It includes provider, I/O and tool waits. Logs name the measure
+  and report wall seconds and excluded CPU wait. Without that counter, the log
+  explicitly records the existing wall-clock fallback. A pressure-observation fault
+  switches subsequent intervals to wall-clock charging without resetting the budget.
+  Diagnostic write failures cannot expire the watchdog or stop the live CLI.
+  Lower card limits and caller cancellation still apply. A claim carrying a
+  mechanical recovery delta or a mechanical fallback reason requires a pinned
+  base. The runner prepares the exact ref and SHA with the current integration
+  tip before starting the CLI. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
   Both automatic integration recovery (`IntegrationAgentRoundService`, including

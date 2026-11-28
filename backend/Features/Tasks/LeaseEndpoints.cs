@@ -3,6 +3,7 @@ using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using System.Text;
+using CodexRoutingPolicy = AgentStudio.TaskServer.Contracts.CodexRoutingPolicy;
 using CapabilityProtocol = AgentStudio.TaskServer.Contracts.CapabilityProtocol;
 
 namespace AgentStudio.Tasks;
@@ -118,18 +119,20 @@ public static class LeaseEndpoints
             provider == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
         AgentStudio.TaskServer.Contracts.ProviderModelFallback? policyEquivalent = null;
         if (provider == CliTypes.Codex
-            && model is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
-            && string.Equals(thinking, "xhigh", StringComparison.OrdinalIgnoreCase)
-            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
+            && (model == ModelIds.Gpt56Sol || CodexRoutingPolicy.IsSupersededSolPreference(model)
+                || CodexRoutingPolicy.IsGpt62(model))
+            && thinking is "high" or "xhigh" or "max" or "ultra"
+            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-high")
                 ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)
             policyEquivalent = new(model!, highEquivalent.Model,
-                continuation ? "The declared same-tier Opus xhigh route after Sol capacity."
+                continuation ? "The declared same-tier Opus route after Sol capacity."
                     : unauthorized ? "provider-unauthorized-policy-equivalent" : "model-capacity-policy-equivalent",
                 CliTypes.Claude, highEquivalent.ThinkingLevel);
         return AgentStudio.TaskServer.Contracts.ProviderRejectionFallbackRoutes.Candidates(
             provider, unauthorized,
             sibling is null ? null : new(model!, sibling.ToModel,
-                continuation ? sibling.Reason : "model-capacity-sibling", provider, thinking),
+                continuation ? sibling.Reason : "model-capacity-sibling", provider,
+                CodexRoutingPolicy.IsGpt62(sibling.ToModel) ? CodexRoutingPolicy.ResolveThinkingLevel(thinking) : thinking),
             equivalent is null ? null : new(model!, equivalent.ToModel,
                 continuation ? "The catalogue equivalent after a provider model refusal."
                     : unauthorized ? "provider-unauthorized-equivalent" : "model-capacity-equivalent",
@@ -2921,7 +2924,7 @@ public static class LeaseEndpoints
                         attemptId, "health-marked", "model-unavailable",
                         req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
                         providerRejectionModel!,
-                        $"{providerRejectionModel} is unavailable on this host until the next catalogue refresh.");
+                        $"{providerRejectionModel} is unavailable on this host pending fresh model acceptance.");
                     var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                         task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
                         "remote-model-rejection",
@@ -3221,6 +3224,36 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
+            // Persist recovery custody before either authority can publish Ready.
+            // Engine completion returns below without running the monolith lane path.
+            if (outcome is "mechanicalfallback" or "transientfailure"
+                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
+                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                var recoveryBase = new ContinuationBaseRecord(
+                    req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
+                    req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
+                    outcome == "transientfailure" ? "transient-model-capacity" :
+                        req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
+                    attemptId, DateTime.UtcNow);
+                var saved = outcome == "mechanicalfallback"
+                    ? IntegrationConflictRecovery.SaveMechanicalFallbackBase(
+                        git, git.ResolveRepoRootForWatchPath(task.WatchPath), ready.FolderPath, recoveryBase, req.BaseSha)
+                    : ContinuationBaseStore.SaveAttemptResult(ready.FolderPath, recoveryBase);
+                if (!saved)
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Continuation base persistence failed",
+                        detail: $"Run {attemptId} settled, but its fresh-attempt base was not saved. Retry completion.");
+            }
+            if (outcome == "mechanicalfallback")
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                AgentStudio.Runner.SessionContinuationLedgerStore.SaveFreshReason(
+                    ready.FolderPath,
+                    req.SessionContinuation?.FallbackReason ?? "resumed-round-failed");
+            }
+
             var codingMode = MonolithTransitionSwitch.For(configuration, "CodingCompletion");
             var codingModelActive = codingMode == OrchestrationExecutionMode.Engine
                 && configuration.GetValue("Orchestration:DecisionModel:ActiveCodingCompletion", false);
@@ -3367,31 +3400,6 @@ public static class LeaseEndpoints
                         position);
                 }
             }
-            if (outcome is "mechanicalfallback" or "transientfailure"
-                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
-                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
-            {
-                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-                if (!AgentStudio.Runner.ContinuationBaseStore.Save(
-                    ready.FolderPath,
-                    new AgentStudio.Runner.ContinuationBaseRecord(
-                        req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
-                        req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
-                        outcome == "transientfailure" ? "transient-model-capacity" :
-                            req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
-                        attemptId, DateTime.UtcNow)))
-                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
-                        "transient-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
-                        req.TaskKey, attemptId);
-            }
-            if (outcome == "mechanicalfallback")
-            {
-                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-                AgentStudio.Runner.SessionContinuationLedgerStore.SaveFreshReason(
-                    ready.FolderPath,
-                    req.SessionContinuation?.FallbackReason ?? "resumed-round-failed");
-            }
-
             // The claim guard and this mint share ReviewAttemptTaskLifecycleService's
             // lifecycle lock. The persisted lane transition above therefore closes
             // the former Progress-window race: a poll sees either no attempt or an

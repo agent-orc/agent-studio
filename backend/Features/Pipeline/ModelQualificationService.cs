@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Pipeline;
 
 public enum TaskComplexity
@@ -155,18 +156,21 @@ public sealed class ModelQualificationService
         };
         var surface = recommendation.CorrectnessFloorTier switch
         {
-            "sol-xhigh" => "correctness-critical",
+            "sol-high" => "correctness-critical",
             "sol-medium" => "cross-subsystem contract",
             _ => "task-type convention",
         };
 
         var modelExplicit = task.ModelExplicit;
         var thinkingExplicit = task.ThinkingLevelExplicit;
-        var selectedModel = modelExplicit && !string.IsNullOrWhiteSpace(task.Model)
-            ? task.Model!
+        var pin = CodexRoutingPolicy.UpgradePreference(new SelectionPins(task.CliType, task.Model, task.ThinkingLevel,
+            task.PinMode is "hard" or "strict" ? SelectionPinMode.Hard : SelectionPinMode.Preference));
+        var selectedModel = modelExplicit && !string.IsNullOrWhiteSpace(pin.Model)
+            ? pin.Model
             : recommendation.Model;
         var selectedThinking = thinkingExplicit
-            ? task.ThinkingLevel
+            ? CodexRoutingPolicy.IsGpt62(selectedModel)
+                ? CodexRoutingPolicy.ResolveThinkingLevel(pin.ThinkingLevel) : pin.ThinkingLevel
             : string.Equals(selectedModel, recommendation.Model, StringComparison.OrdinalIgnoreCase)
                 ? recommendation.ThinkingLevel
                 : ModelMetadataRegistry.ResolveThinkingLevel(task.CliType, selectedModel, recommendation.ThinkingLevel);

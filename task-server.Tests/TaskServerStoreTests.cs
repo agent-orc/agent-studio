@@ -51,8 +51,8 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await CompleteCapacityAsync(first, "gpt-6-sol", 0);
         var sibling = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", sibling.Status);
-        Assert.Equal("gpt-5.6-sol", sibling.ModelFallback?.To);
-        await CompleteCapacityAsync(sibling, "gpt-5.6-sol", 1);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, sibling.ModelFallback?.To);
+        await CompleteCapacityAsync(sibling, CodexRoutingPolicy.StandardModel, 1);
         var equivalent = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", equivalent.Status);
         Assert.Equal("claude", equivalent.ModelFallback?.CliType);
@@ -894,7 +894,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Equal(delta.DeliverySha, next.MechanicalDelta?.DeliverySha);
         Assert.Equal(delta.ConflictPaths, next.MechanicalDelta?.ConflictPaths);
         Assert.Equal("pending-mechanical-continuation", next.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-5.6-terra", next.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, next.MechanicalFreshRoute?.Model);
         await restarted.CompleteRunAsync(next.Run!.RunId, new CompleteRunRequest(
             "runner-a", "instance-a", next.Lease!.LeaseId, next.Lease.Fence,
             ExecutionOutcomeKind.LaunchFailure.ToString(),
@@ -965,7 +965,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var fresh = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Null(fresh.MechanicalDelta);
         Assert.Equal("semantic-conflict", fresh.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-6-sol", fresh.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, fresh.MechanicalFreshRoute?.Model);
         Assert.Equal("medium", fresh.MechanicalFreshRoute?.ThinkingLevel);
         Assert.Equal("semantic-conflict", fresh.PreviousSession?.FallbackReason);
         Assert.Equal("refs/heads/result", fresh.ContinuationBaseRef);
@@ -991,7 +991,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
 
     [Theory]
     [InlineData("Resolve a public protocol conflict.", "medium")]
-    [InlineData("Resolve a security boundary conflict.", "xhigh")]
+    [InlineData("Resolve a security boundary conflict.", "high")]
     public async Task Mechanical_claim_respects_the_task_text_correctness_floor(
         string body, string expectedThinking)
     {
@@ -1008,7 +1008,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(store, task.CreatedAt);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        Assert.Equal("gpt-6-sol", claim.MechanicalFreshRoute?.Model);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, claim.MechanicalFreshRoute?.Model);
         Assert.Equal(expectedThinking, claim.MechanicalFreshRoute?.ThinkingLevel);
     }
 
@@ -2641,7 +2641,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var continuation = await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("gpt-6-astra", continuation.ModelFallback!.From);
-        Assert.Equal("gpt-5.6-sol", continuation.ModelFallback.To);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, continuation.ModelFallback.To);
         Assert.Equal("high", continuation.ModelFallback.ThinkingLevel);
         Assert.False(continuation.ModelFallback.CardPinned);
         Assert.Equal(salvageRef, continuation.ContinuationBaseRef);
@@ -2661,7 +2661,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var (_, project, task) = await SeedReadyTaskAsync(store);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        var decision = ProviderRefusalDecision(claim.Run!.RunId, "gpt-5.5");
+        var decision = ProviderRefusalDecision(claim.Run!.RunId, CodexRoutingPolicy.StandardModel);
 
         await store.CompleteRunAsync(
             claim.Run.RunId,
@@ -3110,7 +3110,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         await store.RegisterRunnerAsync("runner-b", Runner("instance-b") with { HostId = "host-b" }, "test", default);
         await AdvertiseModelsAsync(store, clock, 1, 1,
-            ("codex", "gpt-6-astra", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+            ("codex", "gpt-6-astra", "ready"), ("codex", CodexRoutingPolicy.StandardModel, "ready"));
         await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
             "runner-b", "instance-b", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
             [new AdvertisedCapabilityDto(
@@ -3135,7 +3135,7 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
 
         Assert.Equal("claimed", claim.Status);
-        Assert.Equal("gpt-5.6-sol", claim.ModelFallback?.To);
+        Assert.Equal(CodexRoutingPolicy.StandardModel, claim.ModelFallback?.To);
     }
 
     [Fact]
@@ -3658,6 +3658,73 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
             retained!.RetainUntil);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Restart_reconciliation_preserves_a_worker_until_exact_adoption(bool queuedBeforeUpgrade)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var clock = new ManualTimeProvider(
+            new DateTimeOffset(2026, 11, 28, 10, 0, 0, TimeSpan.Zero));
+        var first = Store(temp.Path, clock);
+        await first.InitializeAsync();
+        var (_, _, task) = await SeedReadyTaskAsync(first);
+        await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await first.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a", RequestedTtlSeconds: 300), "runner-a", default);
+        var lease = claim.Lease!;
+        var process = new RunnerProcessInfo(
+            lease.RunId, task.TaskKey, 4242, "/worktrees/TS-1", clock.GetUtcNow().UtcDateTime);
+        var renewal = new LeaseRenewRequest("runner-a", "instance-a", lease.LeaseId, lease.Fence);
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await first.RenewLeaseAsync(lease.RunId, renewal with
+        {
+            Inventory = new RunnerProcessInventory(clock.GetUtcNow().UtcDateTime, [process]),
+        }, "runner-a", default);
+
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await restarted.ReconcileInvariantsAsync(default);
+        var pendingBeforeAdoption = (await restarted.GetInvariantRegistryAsync(default)).PendingRunnerActions;
+
+        if (queuedBeforeUpgrade)
+        {
+            // Model an action persisted by the older reconciler during the restart window.
+            await using var database = new SqliteConnection($"Data Source={restarted.DatabasePath}");
+            await database.OpenAsync();
+            await using var insert = database.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO runner_reconciliation_actions(
+                    action_id, runner_id, instance_id, category, action, detail, pid, run_id, task_key, created_at)
+                VALUES ('previously-queued', 'runner-a', 'instance-a', 'run-inventory', 'terminate-process',
+                        'Orphan action queued before upgrade', $pid, $run, $task, $at);
+                """;
+            insert.Parameters.AddWithValue("$pid", process.Pid);
+            insert.Parameters.AddWithValue("$run", lease.RunId);
+            insert.Parameters.AddWithValue("$task", task.TaskKey);
+            insert.Parameters.AddWithValue("$at", clock.GetUtcNow().UtcDateTime.ToString("O"));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var registration = await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a") with
+        {
+            ActiveAttempts =
+            [
+                new RunnerActiveAttempt(
+                    RunnerAttemptKinds.Coding, lease.RunId, task.TaskKey, lease.LeaseId, lease.Fence,
+                    LeaseInstanceId: lease.InstanceId),
+            ],
+        }, "runner-a", default);
+        Assert.Equal("adopted", Assert.Single(registration.AttemptAdoptions!).Status);
+        var pendingAfterAdoption = (await restarted.GetInvariantRegistryAsync(default)).PendingRunnerActions;
+
+        var renewed = await restarted.RenewLeaseAsync(lease.RunId, renewal, "runner-a", default);
+        Assert.Empty(renewed.ReconciliationActions!);
+        Assert.Equal(0, pendingBeforeAdoption);
+        Assert.Equal(0, pendingAfterAdoption);
+    }
+
     [Fact]
     public async Task Invariant_reconciliation_schedules_orphan_process_termination()
     {
@@ -3711,6 +3778,27 @@ public sealed partial class TaskServerStoreTests(InitializedStoreFixture fixture
         Assert.Contains(
             registry.RecentViolations,
             record => record.Action == "invariant.orphan-process");
+
+        var retry = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a", AvailableSlots: 0), "runner-a", default);
+        Assert.Equal(action, Assert.Single(retry.ReconciliationActions!));
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default);
+        var otherRunner = await store.ClaimAsync(
+            new ClaimRequest("runner-b", "instance-b", AvailableSlots: 0), "runner-b", default);
+        Assert.Empty(otherRunner.ReconciliationActions!);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var replacement = new RunnerProcessInfo(
+            "run-without-lease", "TS-404", 4242, "/worktrees/TS-404", started.AddSeconds(1));
+        var refreshed = new ClaimRequest("runner-a", "instance-a", AvailableSlots: 0,
+            Inventory: new RunnerProcessInventory(clock.GetUtcNow().UtcDateTime, [replacement]));
+        var reusedPid = await store.ClaimAsync(refreshed, "runner-a", default);
+        Assert.Empty(reusedPid.ReconciliationActions!);
+        Assert.Equal(0, (await store.GetInvariantRegistryAsync(default)).PendingRunnerActions);
+
+        Assert.Equal(1, await store.ReconcileInvariantsAsync(default));
+        var newAction = Assert.Single((await store.ClaimAsync(refreshed, "runner-a", default)).ReconciliationActions!);
+        Assert.NotEqual(action.ActionId, newAction.ActionId);
     }
 
     [Fact]

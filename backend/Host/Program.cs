@@ -726,6 +726,9 @@ builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();
 builder.Services.AddSingleton<AgentStudio.Management.StructurePlacementSource>();
 builder.Services.AddSingleton<AgentStudio.Management.StudioSelfObserver>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureDataLocationService>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureHistoryBuffer>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureRuntimeSampler>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureReportCache>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureSnapshotService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Management.StructureSnapshotService>());
 builder.Services.AddSingleton<AgentStudio.Host.StructureHubBroadcaster>();
@@ -1296,7 +1299,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(service
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
-    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
+    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>(),
+    structure: sp.GetRequiredService<AgentStudio.Management.StructureHistoryBuffer>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 // AGT-3856: while a batch gate runs, at most one other full suite starts.
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchLaneAdmission>(sp =>
@@ -1568,8 +1572,10 @@ builder.Services.AddSingleton(sp => new WatcherLeaseService(
     sp.GetRequiredService<OperatorDecisionOptions>(), sp.GetRequiredService<OperatorDecisionLog>(),
     sp.GetRequiredService<ControlPlaneAuditLog>(), sp.GetRequiredService<TimeProvider>(),
     sp.GetService<ILogger<WatcherLeaseService>>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostModelFactSource>();
 builder.Services.AddSingleton<CapacityIdleTracker>();
 builder.Services.AddSingleton<CodingCapacityService>();
+builder.Services.AddSingleton<CodingCapacityWaitReader>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => sp.GetRequiredService<CodingCapacityService>());
 builder.Services.AddSingleton<OverlapPredictionLedger>();
 builder.Services.AddSingleton<OverlapDispatchGuard>();
@@ -1601,12 +1607,14 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlo
     task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
         .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
-    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
+    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>(),
+    sp.GetRequiredService<AgentStudio.Cli.QuotaService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorReviewHostDriftFactSource>();
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorHostDiskFactSource>();
+builder.Services.AddSingleton<OperatorPressureReader>();
 // Resolved per read: the deploy fact titles a job by the Deploy area's names (AGT-3987).
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorDeployFactSource(
     sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(), sp.GetRequiredService<ProjectRegistry>(),
@@ -1630,6 +1638,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnv
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),
     (project, cardId) => sp.GetRequiredService<EnvironmentHealthService>().CardKey(project, cardId)));
+builder.Services.AddSingleton<OperatorAttentionDismissals>();
+builder.Services.AddSingleton<OperatorAttentionReadModel>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
@@ -1967,10 +1977,11 @@ app.UseOperatorListener();
 // AGT-3954: note that a proxy forwarded the request before the headers are consumed;
 // the structure view reads it as the observation of the edge.
 var structureSelf = app.Services.GetRequiredService<AgentStudio.Management.StudioSelfObserver>();
-app.Use((context, next) =>
+app.Use(async (context, next) =>
 {
     structureSelf.ObserveRequest(context.Request.Headers);
-    return next(context);
+    try { await next(context); }
+    finally { structureSelf.FinishRequest(); }
 });
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy
@@ -2615,14 +2626,8 @@ workbenchHubBroadcaster.InitializeSnapshotsAfterBoot(jobIndexCache);
     }
 }
 
-// Best-effort Codex model-catalog warm-up (AGT-2025). Publishing the detected
-// default (gpt-5.6-* when the installed CLI advertises it) into
-// ModelMetadataRegistry makes new-task creation resolve the current default
-// before the first UI catalog fetch. Fire-and-forget so a slow or absent codex
-// CLI never delays boot; discovery's own disk-cache TTL means a warm cache
-// skips the PTY spawn, and any failure just leaves the gpt-5.5 baseline in
-// place. Skipped under the test host and when explicitly opted out so the
-// integration suite never spawns a real codex process.
+// Warm the local Codex catalogue for local execution diagnostics. The standard
+// route and the execution-host catalogue are independent of this probe.
 if (!app.Environment.IsEnvironment("Test")
     && !app.Environment.IsEnvironment("Testing")
     && !publicDemoExecutionProfile

@@ -60,7 +60,7 @@
           <app-live-structure-outline [scene]="scene()" [selected]="selected()" (jump)="jumpTo($event)" />
         } @else {
           <app-live-structure-details [scene]="scene()" [node]="selectedNode()" [link]="selectedLinkModel()" [layers]="layers()" [level]="selectedLevel()"
-                                      (choose)="choose($event)" (chooseLink)="chooseLink($event)" (zoom)="jumpTo($event)" (closed)="clear(); focusCanvas()" />
+                                      (openCard)="openCard($event)" (choose)="choose($event)" (chooseLink)="chooseLink($event)" (zoom)="jumpTo($event)" (closed)="clear(); focusCanvas()" />
         }
       </div>
     </aside>

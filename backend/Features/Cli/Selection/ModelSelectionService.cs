@@ -61,7 +61,12 @@ public sealed record ModelSelectionCall(
 }
 
 /// <summary>The shared planner result and its legacy admission view, which the existing launch code applies.</summary>
-public sealed record ModelSelectionDecision(SelectionResult Result, QuotaAdmissionPlan Admission);
+public sealed record ModelSelectionDecision(SelectionResult Result, QuotaAdmissionPlan Admission)
+{
+    public SelectionPinMode PinMode { get; init; }
+    public bool HasContinuation { get; init; }
+    public string? QuotaSubscriptionKey { get; init; }
+}
 
 /// <summary>
 /// The selection boundary every CLI launch path asks before it starts a
@@ -261,6 +266,7 @@ public sealed class ModelSelectionService : IModelSelectionService
             && pair.FromThinkingLevel == result.Primary.ThinkingLevel
             && (!request.Required.SameClassOnly || routing.Equivalence.SameCapabilityClass(pair.FromModel, pair.ToModel)))
             .Select(pair => new SelectionRoute(pair.ToCliType, pair.ToModel, pair.ToThinkingLevel)).Distinct().ToArray() ?? [] };
+        var subscriptionKey = facts.SnapshotFor(result.Primary.CliType)?.SubscriptionKey;
         var entry = result.Outcome == SelectionOutcome.Primary && active is not null
             && (request.Continuation is null || active.From == result.Route)
             ? new SelectionLedgerEntry(
@@ -293,6 +299,8 @@ public sealed class ModelSelectionService : IModelSelectionService
             {
                 FromPricePerMTok = facts.PricePerMTok(entry.From.Model),
                 ToPricePerMTok = facts.PricePerMTok(entry.To.Model),
+                AdmissionOutcome = result.Outcome,
+                QuotaSubscriptionKey = subscriptionKey,
             };
             try
             {
@@ -306,7 +314,7 @@ public sealed class ModelSelectionService : IModelSelectionService
                     // Preflight and dispatch can select the same remote claim twice.
                     var key = string.Join("|", call.ExecutionPath, call.DecisionKey,
                         request.Project, request.TaskKey, request.Host?.HostId,
-                        result.Outcome, result.Rule, result.Primary, result.Route,
+                        result.Outcome, result.Rule, result.Primary, result.Route, subscriptionKey,
                         System.Text.Json.JsonSerializer.Serialize(result.Quota?.WindowPaces));
                     lock (_receiptSync)
                     {
@@ -340,6 +348,11 @@ public sealed class ModelSelectionService : IModelSelectionService
                 result.Route.ThinkingLevel,
                 project?.BenchmarkCapabilityClass),
         };
-        return new ModelSelectionDecision(result, admission);
+        return new ModelSelectionDecision(result, admission)
+        {
+            PinMode = request.Pins.Mode,
+            HasContinuation = request.Continuation is not null,
+            QuotaSubscriptionKey = subscriptionKey,
+        };
     }
 }

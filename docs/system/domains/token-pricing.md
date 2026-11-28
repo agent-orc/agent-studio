@@ -27,6 +27,13 @@ Standard API list-price estimate and does not infer fast mode from a model ID.
 Fable 5.2 has a 1M context window and 128K maximum output.
 [Provider pricing](https://platform.claude.com/docs/en/about-claude/pricing).
 
+The Studio owner selected GPT-6.2 Sol at medium as the standard Codex route
+on 28 November 2026 (AGT-4379). Hard cards use high. GPT-6.2 Astra is the
+strong tier for explicit selection. Their default Codex context windows are
+500,000 and 272,000 tokens, respectively. GPT-6.2 Sol matches GPT-6.1 Sol's
+base input, cached input and output rates. Astra costs four times Sol at
+the same tariff. See the [model routing policy](model-routing-policy.md).
+
 GPT-6.2 uses the published catalogue entry when present. TokenEconomy 0.3.7
 (and the newer 0.3.8 and 0.3.9) carry none, so `TokenEconomyPriceProvider`
 adds one local listing per model effective 2026-11-17, verified 2026-11-18

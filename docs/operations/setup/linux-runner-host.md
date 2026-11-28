@@ -932,38 +932,43 @@ or runner service. An `unknown` badge never produces sign-in guidance.
 Run this procedure from an independently trusted, operator-controlled checkout
 and build environment. The checkout, publish output, and approval source must
 not be writable by the `agent` service account. On an existing host, complete
-[Release approval migration](#release-approval-migration) before the hardening
-step, which installs and enables the privileged work launcher.
+[Release approval migration](#release-approval-migration) first. The source
+promotion block installs and enables the privileged work launcher only after
+publishing succeeds.
 
 ```bash
-git clone <origin> agent-taskboard && cd agent-taskboard
-(
-  set -euo pipefail
+git clone <origin> agent-taskboard && cd agent-taskboard && (
+  set -uo pipefail
+  release_time="$(date -u +%Y%m%dT%H%M%SZ)" || exit
+  release_revision="$(git rev-parse --short=12 HEAD)" || exit
+  release_id="$release_time-$release_revision"
+  staging_root="$(mktemp -d)" || exit
+  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root" || exit
+  printf '%s\n' "$release_id" >"$staging_root/release-id" || exit
   # Run this from the trusted operator checkout before every promotion.
-  sudo ./scripts/harden-agent-runner-host.sh --apply
-  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
-  staging_root="$(mktemp -d)"
-  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
-  printf '%s\n' "$release_id" >"$staging_root/release-id"
+  sudo ./scripts/harden-agent-runner-host.sh --apply || exit
 
   # Approve the complete trusted publisher output, before copying to incoming.
-  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")"
-  approval_file="$(mktemp)"
-  printf '%s\n' "$release_digest" >"$approval_file"
-  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals
+  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")" || exit
+  approval_file="$(mktemp)" || exit
+  printf '%s\n' "$release_digest" >"$approval_file" || exit
+  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals || exit
   sudo install -o root -g root -m 0644 "$approval_file" \
-    "/etc/agent-host/release-approvals/$release_id.sha256"
+    "/etc/agent-host/release-approvals/$release_id.sha256" || exit
 
   incoming_root=/var/lib/agent-runner/deploy/incoming
-  sudo test -z "$(sudo find "$incoming_root" -mindepth 1 -print -quit)"
+  incoming_entry="$(sudo find "$incoming_root" -mindepth 1 -print -quit)" || exit
+  [[ -z "$incoming_entry" ]] || exit
   # Read trusted output as the operator; write the upload as the service user.
-  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf -
+  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf - || exit
   sudo /usr/local/sbin/agent-runner-deploy
 )
 ```
 
-Run this block together. The subshell stops if publishing or digest generation
-fails, before an approval can be installed or a release promoted.
+Run this block together. Each step checks its exit status explicitly, so the
+block also stops on failure when used in a shell conditional. A publish failure
+stops before hardening or approval installation. A digest failure stops before
+approval installation.
 
 The approval is one lowercase SHA-256 digest line, in
 `/etc/agent-host/release-approvals/<release-id>.sha256`, owned by `root:root`
@@ -1093,23 +1098,24 @@ being promoted.
 
    ```bash
    (
-     set -euo pipefail
-     active_release="$(readlink -f /opt/agent-host/current)"
-     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "$active_release"
+     set -uo pipefail
+     active_release="$(readlink -f /opt/agent-host/current)" || exit
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "$active_release" || exit
      # Repeat for each real, retained rollback release directory.
-     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "/opt/agent-host/releases/<rollback-id>"
-     sudo ./scripts/harden-agent-runner-host.sh --apply
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "/opt/agent-host/releases/<rollback-id>" || exit
+     sudo ./scripts/harden-agent-runner-host.sh --apply || exit
      sudo /usr/local/sbin/agent-runner-deploy --verify-release "$active_release"
    )
    ```
 
-   Run this block together. The subshell stops at the first failed command,
-   including release-path resolution or verification, before launcher
-   installation can proceed. Verification is silent on success and exits
-   nonzero on refusal. A refused tree needs investigation or restoration from
-   trusted publisher output; do not edit its approval to match unexplained host
-   changes. If installation or the final installed-verifier check fails, keep
-   admission paused and resolve that failure before continuing.
+   Run this block together. Explicit exit checks preserve the verification
+   precondition even inside a shell conditional. Both release verifications
+   must succeed before launcher installation can proceed. Verification is
+   silent on success and exits nonzero on refusal. Investigate a refused tree
+   or restore it from trusted publisher output. Keep its existing approval
+   while investigating unexplained changes. If installation or the final
+   installed-verifier check fails, keep admission paused and resolve that
+   failure before continuing.
 4. Resume admission only after the installed verifier succeeds and the existing
    work-container canary verifies launcher admission. Keep approval files for
    every active, detached-worker, or rollback release as long as that release is

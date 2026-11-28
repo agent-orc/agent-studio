@@ -497,7 +497,8 @@ internal sealed class DurableAgentProcess
         var contextFallback = MechanicalContextFallback.None;
         try
         {
-            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append,
+            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
+                spec, directory, Append, unattendedCoding: true,
                 onContextFallback: fallback => contextFallback = fallback);
         }
         catch (Exception ex)

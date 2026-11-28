@@ -681,6 +681,51 @@ public sealed class DeliveryFailureDiagnosisTests
     }
 
     [Theory]
+    [InlineData(false, false, DeliveryFailureDiagnosis.Environment, "Pass")]
+    [InlineData(false, true, DeliveryFailureDiagnosis.Environment, "Pass")]
+    [InlineData(true, false, DeliveryFailureDiagnosis.Environment, "Pass")]
+    [InlineData(true, true, DeliveryFailureDiagnosis.Environment, "Pass")]
+    [InlineData(false, false, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
+    [InlineData(false, true, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
+    [InlineData(true, false, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
+    [InlineData(true, true, DeliveryFailureDiagnosis.Product, "ReviewInfra")]
+    public void Repeat_only_new_failure_is_not_a_reproduced_candidate_assertion(
+        bool candidateOnlyFailure, bool sharedRepeatFailure, string classification, string expected)
+    {
+        var candidate = FailedCommand("verify-repeat-only", classification, false) with
+        {
+            FileName = "dotnet", Arguments = ["test", "runner.Tests/Synthetic.csproj"],
+            BaselineSha = "base", BaselineExitCode = 1,
+            InitialFailures = candidateOnlyFailure ? ["Product.Tests.A", "Product.Tests.B"] : ["Product.Tests.B"],
+            NewFailures = ["Product.Tests.C"], PreExistingFailures = ["Product.Tests.B"],
+            Diagnosis = new(classification, 0.9,
+                [ReviewUnattributedTestFailurePolicy.EvidencePrefix + "failure sets vary"]),
+        };
+        var clean = candidate with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
+            InitialFailures = sharedRepeatFailure ? ["Product.Tests.B", "Product.Tests.C"] : ["Product.Tests.C"],
+        };
+        var productClaim = classification == DeliveryFailureDiagnosis.Product;
+        Assert.Equal(productClaim, ReviewRepeatFilterPolicy.RequiresAssertionProof(candidate, clean));
+        var report = EmptyReport("Pass") with
+        {
+            Commands = [candidate, clean],
+            Verdicts = [new("build-tests", productClaim ? "block" : "concerns", classification,
+                "failure sets vary", "command:verify-repeat-only", Diagnosis: candidate.Diagnosis)],
+        };
+        var plan = new ReviewPlanDto([new("verify-repeat-only", "build-tests", "dotnet", candidate.Arguments,
+            CompareToBaseline: true)], []);
+
+        var settled = AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, plan);
+
+        Assert.Equal(expected, settled.Outcome);
+        Assert.Equal(productClaim ? DeliveryFailureDiagnosis.FirstOccurrence : classification,
+            Assert.Single(settled.Verdicts).Diagnosis?.Classification);
+        Assert.Equal(expected, AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(settled, plan).Outcome);
+    }
+
+    [Theory]
     [InlineData(ReviewBaselineModes.ExitStatus, false, "IntegrationBranchDefect")]
     [InlineData(ReviewBaselineModes.TestFailures, false, "Pass")]
     [InlineData(ReviewBaselineModes.TestFailures, true, "ReviewInfra")]

@@ -51,9 +51,13 @@ public sealed class OperatorBatchTriageTests : IDisposable
         using var response = await client.GetAsync("/api/operator/capacity");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Contains(body.RootElement.GetProperty("quota").EnumerateArray(), row =>
-            row.GetProperty("cliType").GetString() == "codex"
-            && row.GetProperty("snapshot").GetProperty("rawSample").ValueKind == JsonValueKind.Null);
+        Assert.Empty(body.RootElement.GetProperty("quota").EnumerateArray());
+        var pressure = body.RootElement.GetProperty("pressure");
+        Assert.Equal("restricted", pressure.GetProperty("hostInventory").GetString());
+        Assert.Empty(pressure.GetProperty("hosts").EnumerateArray());
+        Assert.Empty(pressure.GetProperty("quota").EnumerateArray());
+        Assert.DoesNotContain("test-subscription", body.RootElement.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-host", body.RootElement.GetRawText(), StringComparison.Ordinal);
         Assert.DoesNotContain("BETA-1", body.RootElement.GetRawText(), StringComparison.Ordinal);
     }
 
@@ -93,13 +97,19 @@ public sealed class OperatorBatchTriageTests : IDisposable
             (runningFact.ProjectName, runningFact.State, runningFact.QuotaFallback?.Model));
         Assert.Contains(resident, task => task.Key == "ALPHA-2" && task.QuotaWait?.ThresholdMinutes == 20);
         var scans = scanner.RawScanCalls;
-        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["alpha"]));
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["*"]));
         using var response = await client.GetAsync("/api/operator/capacity");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(scans, scanner.RawScanCalls);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Contains(body.RootElement.GetProperty("quota").EnumerateArray(), row =>
             row.GetProperty("cliType").GetString() == "claude" && row.GetProperty("exhausted").GetBoolean());
+        var pressure = body.RootElement.GetProperty("pressure");
+        Assert.Contains(pressure.GetProperty("hosts").EnumerateArray(), row =>
+            row.GetProperty("hostId").GetString() == "api-host");
+        Assert.Contains(pressure.GetProperty("quota").EnumerateArray(), row =>
+            row.GetProperty("subscriptionKey").GetString() == "test-subscription"
+            && row.GetProperty("usedPercent").GetDouble() == 99);
         Assert.Contains(body.RootElement.GetProperty("waitingCards").EnumerateArray(),
             row => row.GetProperty("cardKey").GetString() == "ALPHA-2");
         var fallback = Assert.Single(body.RootElement.GetProperty("activeFallbacks").EnumerateArray(),

@@ -3615,6 +3615,67 @@
           <td>The worker cleared the stale session ID after eviction while retaining the prompt meant for that session.</td>
           <td>The worker now checks the session under its lease. The regression fixture launches a fresh session with the full prompt and reaches <code>[[TASK_DONE]]</code>.</td>
         </tr>
+        <tr id="case-integration-fresh-empty-checkout">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353 / AGT-4018</code><br><span class="small">integration-fresh-empty-checkout</span></td>
+          <td>A resumed conflict round hit its 300-second watchdog under CPU contention.
+            Its fresh successor started without the reviewed delivery or preparation record.</td>
+          <td>The Engine completion return skipped fallback-base persistence. Claims consumed
+            the recovery pin, and later result discovery selected an empty NeedsInput result.</td>
+          <td>Recovery pins now survive until integration. Both authorities receive persisted
+            fallback custody before Ready; failed writes hold Progress. Failed or commitless
+            attempts cannot replace the delivery. CPU full stall is excluded when available.
+            The original run escalated as missing-integration-preparation.</td>
+        </tr>
+        <tr id="case-integration-recovery-review-follow-up">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-recovery-review-follow-up</span></td>
+          <td>Review found that historical passes could hide newer salvage and watchdog
+            observation faults could be mistaken for duration expiry, stopping a live CLI.</td>
+          <td>Base discovery treated any historical passing review as outstanding delivery.
+            The watchdog continuation discarded fault status as if its deadline had elapsed.</td>
+          <td>Only a retained integration pin protects delivery discovery. Pressure faults
+            fall back to wall-clock charging; diagnostic failures leave the monitor alive.
+            Cancellation remains distinct from an unexpected deadline fault.</td>
+        </tr>
+        <tr id="case-integration-resolved-merge-lost-on-fallback">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-resolved-merge-lost-on-fallback</span></td>
+          <td>The resumed CLI resolved the case-log conflict and reached its duration limit during
+            verification. The next CLI started on the target and ended <code>NeedsInput</code>.</td>
+          <td>Completion published the resolved merge but the fresh claim received no base.</td>
+          <td>A mechanical fallback advances the retained base to verified descendant salvage.
+            A fresh conflict claim with no base fails preparation before launch. The operator
+            restored the incident's saved merge as a single delivery commit.</td>
+        </tr>
+        <tr id="case-post-merge-temp-budget">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-temp-budget</span></td>
+          <td>The post-merge base suite failed its temp ownership canary and its registry hotspot guard.</td>
+          <td>The checkout-local journal temp path exceeded the test bootstrap's length budget. Repair-card additions also took the incident test file past the weekly contention limit.</td>
+          <td>New runs use a short, owned temp root that participates in checkpoint validation and terminal cleanup. Repair-card tests have their own file. Both checks continue through the normal review and integration gates.</td>
+        </tr>
+        <tr id="case-post-merge-checkpoint-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-checkpoint-metadata</span></td>
+          <td>After a simulated host restart, checkpoint validation missed a changed temp repository ref. An unchanged workspace could also settle as inconclusive when host load fluctuated.</td>
+          <td>The workspace digest skipped every .git directory, and the command hash included live load measurements.</td>
+          <td>Recovery settles as inconclusive on a changed temp ref and can resume completed work across load changes. Receipts retain the load measurements.</td>
+        </tr>
+        <tr id="case-post-merge-linked-worktree-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-linked-worktree-metadata</span></td>
+          <td>After a simulated restart, a linked worktree could reuse a completed command after a ref changed.</td>
+          <td>The digest covered the <code>.git</code> pointer file but did not check that its per-worktree and common Git directories were also covered.</td>
+          <td>Recovery resumes when the referenced metadata is covered and unchanged. A ref change or an uncovered directory settles as inconclusive and retains finished command evidence.</td>
+        </tr>
+        <tr id="case-clean-context-integration-recovery">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">clean-context-integration-recovery</span></td>
+          <td>Delivery <code>4140a1a87839</code> stopped at <code>merge-into-develop</code> after all three strategies conflicted. No CLI crash was reported.</td>
+          <td>The platform handed off an active merge with five conflicts against <code>6ae6b4acbf69</code>.</td>
+          <td>The resolution keeps the case log, unattended Codex launch settings, CPU-stall accounting, and host telemetry from both sides. A legacy worker that loses its session requests a fresh claim with a required prepared checkout.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
@@ -3719,6 +3780,18 @@
           <td>Fingerprint extraction discarded message content and assertion locations. Grading required the control proof only for a product diagnosis and checked integration-branch debt earlier.</td>
           <td>Complete diagnostic blocks retain message content and assertion source locations; ambiguous blocks remain incomplete. The proof check runs before disposition shortcuts and removes unsupported product verdicts. Missing or invalid controls reach <code>ReviewInfra</code>, while matching assertions retain <code>ProductFailure</code>. Repeat bounds, per-tree envelopes and lane transitions are unchanged.</td>
         </tr>
+        <tr id="case-codex-usage-window-model-wait">
+          <td>2026-11-28</td>
+          <td><code>AGT-4373</code><br><span class="small">codex-usage-window-model-wait</span></td>
+          <td>Ready cards waiting for gpt-6.1-sol recovered after the coding host restarted.
+            The journal records AGT-4057 ending Stopped at 08:26 UTC after an operator request.
+            Its retained Codex session has no terminal provider refusal.</td>
+          <td>A structured request error could mask an explicit usage limit. Launch refusals also
+            lacked a retry deadline, and a full host left recorded card waits untouched.</td>
+          <td>Usage-window replay reaches <code>QuotaExceeded</code> and
+            <code>WaitForCapabilityRecovery</code>. A new subscription window reopens model probing.
+            The next ready advertisement clears the recorded dispatch wait.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3790,7 +3863,7 @@
       is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
       receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
 
-    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
+    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 charged seconds. On Linux workers with cgroup CPU pressure accounting, the duration excludes the worker group's full CPU stall intervals; unavailable counters retain a logged wall-clock fallback. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
        session is genuinely gone. That fallback consumes one attempt; it does not reset the budget. The current defect is the

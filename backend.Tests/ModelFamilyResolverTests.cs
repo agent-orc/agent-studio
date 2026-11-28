@@ -87,26 +87,23 @@ public sealed class ModelFamilyResolverTests : IDisposable
     }
 
     [Fact]
-    public void GptMiniCompatibilityFamily_ResolvesToLunaReplacement()
+    public void GptMiniCompatibilityFamily_ResolvesToStandardCodex()
     {
-        Assert.Equal(ModelIds.Gpt56Luna, ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
     }
 
     [Fact]
-    public void GptFlagship_FallsBackToGpt55_WhenNothingDetected()
+    public void GptFlagship_UsesGpt62Sol_WhenNothingDetected()
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(null);
-        Assert.Equal(ModelIds.Gpt55, ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship));
     }
 
     [Fact]
-    public void GptFlagship_FollowsLiveCodexDetection_SameAsDefaultForCli()
+    public void GptFlagship_UsesStandardCodexDespiteLocalDiscovery()
     {
-        // gpt-flagship is a thin alias over the already-live Codex detection
-        // layer, so it must stay in lockstep with DefaultForCli rather than
-        // duplicating the mechanism.
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
-        Assert.Equal(ModelIds.Gpt56Sol, ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship));
+        Assert.Equal(ModelIds.Gpt62Sol, ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship));
         Assert.Equal(
             ModelMetadataRegistry.DefaultForCli(CliTypes.Codex),
             ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship));
@@ -127,7 +124,7 @@ public sealed class ModelFamilyResolverTests : IDisposable
         Assert.Equal(ModelIds.ClaudeHaiku45, OrchestratorRunner.DefaultModel);
         Assert.Equal(ModelIds.ClaudeSonnet5, AgentStudio.Docs.WikiMaintenanceModelService.DefaultModel);
         Assert.Equal(ModelIds.ClaudeOpus5, AgentStudio.Cli.GenericCliExecutionService.DefaultOpusModel);
-        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
-        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Drift.DriftPostStepRunner.DefaultModel);
+        Assert.Equal(ModelIds.Gpt62Sol, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+        Assert.Equal(ModelIds.Gpt62Sol, AgentStudio.Drift.DriftPostStepRunner.DefaultModel);
     }
 }

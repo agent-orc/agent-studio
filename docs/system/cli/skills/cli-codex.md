@@ -206,131 +206,25 @@ Codex has a stronger structured-protocol story than Claude: the cloned `openai-c
 
 Next stale-session probes for Codex should mirror Claude's: fresh run, short resume, backend-restart resume, deliberately missing session id, and accepted stale resume with an observable edit or protocol update.
 
-## Model handling: live discovery + detection-driven default (ADR-0060)
+## Model handling
 
-[`CodexModelDiscovery`](../../../../backend/Features/Cli/Pty/CodexModelDiscovery.cs)
-spawns the CLI in a PTY (`codex debug models`), parses the `visibility: list`
-models in priority order, and caches the catalog on disk + in memory with a TTL
-(`CodexModelsCacheMinutes`, default 60). `GetModelCatalogAsync` is the thin
-wrapper. To refresh, the user clicks the side-sheet refresh button, which calls
-`/api/cli/codex/models?forceRefresh=true`.
+The Studio picker uses the [execution-host model catalogue](../../contracts/model-selection-api.md#execution-host-model-catalogue).
+Its refresh action reads the latest host advertisements. The
+[model routing policy](../../domains/model-routing-policy.md#codex-defaults-since-28-november-2026)
+sets the Studio default and explains how preference pins and reasoning levels map.
 
-**The catalog follows the installed CLI, not a hardcoded list.** This is the
-house rule (convention/derivation over settings). The flagship
-`gpt-5.6-sol` is deliberately **not** a static `ModelMetadataRegistry` entry:
-it appears only when the live CLI advertises it (AGT-2025). Its lower cost
-tiers, `gpt-5.6-terra` and `gpt-5.6-luna`, **are** registry entries (AGT-2707
-round 2) so a codex-cli that does not offer one renders it disabled with a
-reason instead of leaving it invisible, but their registry `Available`
-baseline is false, so `FallbackCatalog` (the total-probe-failure path) still
-never assumes a gpt-5.6 model is offered without a live CLI answer; live
-discovery overrides that baseline to available whenever the installed CLI
-actually lists one.
+[CodexModelDiscovery](../../../../backend/Features/Cli/Pty/CodexModelDiscovery.cs)
+uses `codex debug models` in a PTY for local diagnostics. It caches the result in
+memory and on disk for `CodexModelsCacheMinutes` (60 by default). On probe
+failure it reuses a cached result when possible, or falls back to registry
+metadata. A best-effort boot warm-up can be disabled with
+`CodexModels:WarmupOnBoot=false`. The local probe can publish ladder details for
+allowlisted models and records the detected Sol offering for diagnostics.
 
-**Merged catalog: registry union live discovery (AGT-2707).** `Publish` runs
-`WithKnownButUnavailableModels`, which appends every OpenAI registry entry the
-live catalog does not list as `Available=false` with
-`AvailabilityNote = "Not offered by the installed codex-cli <version>."` (the
-version comes from `CliVersionTracker`; it is omitted when no probe has seen
-one). The picker renders those entries as **disabled pills with the note**,
-never hides them, so an onboarded model such as `gpt-6-astra` is visibly
-"known but your CLI is too old" instead of silently missing. The merge is
-recomputed on every read, so it follows both the current registry and the
-currently installed CLI; the disk cache stores only what the CLI reported.
-A model the CLI lists but the registry does not know stays selectable and
-carries `"Discovered from CLI; missing registry metadata."`.
-`ClaudeModelDiscovery.Reconcile` applies the same rule through the shared
-`ModelMetadataRegistry.AppendUnavailableRegistryEntries`.
-
-**`gpt-6-astra` is registry-onboarded but not tiered.** It has a registry entry
-(label, vendor, 272k context, pricing left null) so the disabled-not-hidden
-rule can fire, but it is not the product default and is not a routing tier -
-see the "not yet tiered" note in
-[model-routing-policy.md](../../domains/model-routing-policy.md).
-
-**`gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.4-mini` are registry-onboarded
-existing tiers (AGT-2707 round 2).** Unlike astra these already had a routing
-tier in model-routing-policy.md; the registry entry only fixes their catalog
-visibility (disabled-not-hidden on a CLI that does not offer one) and changes
-nothing about which tier or default they resolve to. `gpt-5.6-terra`/
-`gpt-5.6-luna` carry `Available:false` in the registry so `FallbackCatalog`
-still never assumes a gpt-5.6 model without a live CLI answer; `gpt-5.6-sol`
-keeps no registry entry at all.
-
-**Detection-driven product default.** Every catalog path (`fresh`, `mem-cache`,
-`disk-cache`, and the fallback below) runs through `Publish`, which calls
-`PickDetectedDefault` and writes the result to
-`ModelMetadataRegistry.SetDetectedCodexDefault`:
-
-- `PickDetectedDefault` returns the CLI's own active model when it is already a
-  `gpt-5.6-*`, else the highest-priority `gpt-5.6-*` the CLI lists, else `null`.
-- `ModelMetadataRegistry.DefaultForCli("codex")` then returns the detected
-  `gpt-5.6` when present, otherwise the account-valid `gpt-5.5` baseline
-  (AGT-1941: a ChatGPT-account spawn rejects `gpt-5-codex` with a 400). A `null`
-  detection correctly clears back to `gpt-5.5` (the baseline never sticks to a
-  stale detection).
-- This is the single lever every default site already routes through: task
-  creation, `PUT /cli-type` / `PUT /model` (`SetJobCliType`/`SetJobModel`),
-  owner/client-default materialization (`BackfillAgentDefaults`,
-  `AgentDefaultsMaterialization`), and the invocation-time floor in
-  `BuiltInCliBehaviors.DefaultCodexModel`.
-
-**Reasoning ladders come from the CLI, but only for onboarded models
-(AGT-2707).** `ParseDebugModelsJson` reads a model's
-`supported_reasoning_levels[].effort` (in CLI order) and
-`default_reasoning_level` **only when
-`ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(id)` is true** — today
-that allowlist holds exactly `gpt-6-astra`. Every other codex model, the
-`gpt-5.6-*` family included, always resolves through the static
-`CliThinkingLevels.For` table regardless of what the same `debug models`
-response reports for it. This scoping exists because the static table drifts
-with every CLI release — codex-cli 0.153.4 lists `gpt-6-astra` as
-`low, medium, high, xhigh, max, ultra` while the static `gpt-6` branch still
-answers `minimal ... xhigh` — but a 2026-09-07 21:03 review blocked an earlier,
-unscoped version of this feature: letting every model's CLI-reported
-`default_reasoning_level` win changed `gpt-5.6-sol`'s product default from
-`ultra` to the CLI's own `low`, an unrelated regression the astra onboarding
-must not carry. `ModelMetadataRegistry.DetectedLadder` enforces the same
-allowlist on the read side, so `ThinkingLevelsFor`, `DefaultThinkingLevelForCli`,
-and `ResolveThinkingLevel` only ever consult a CLI-reported ladder for an
-onboarded model; a rung such as `max` on `gpt-6-astra` is accepted, but the
-5.6 family's ladder and default stay exactly what the static table says,
-byte-for-byte. Regression coverage:
-`CodexDetectedDefaultTests.Gpt56Ladder_And_Default_StayByteForByte_WhenCliReportsADifferentOne`.
-Whether to extend the allowlist to the gpt-5.6 family (so the static table's
-drift gets fixed there too) is the separate operator decision noted in
-[model-routing-policy.md](../../domains/model-routing-policy.md); add ids to
-`LiveDiscoveredLadderModelIds` only when that decision is made.
-
-- `WithCurrentCodexCapabilities` fills in a ladder only when an entry has none.
-  Overwriting a CLI-reported ladder with the static one is exactly the drift
-  this replaced. The disk cache is versioned (`codex-model-catalog.v2.json`)
-  because a pre-AGT-2707 file cannot be told apart from a CLI-reported one.
-- An explicit or owner-supplied level still wins and is normalized to the
-  selected model's ladder (`ResolveThinkingLevel`); an out-of-ladder request
-  lands on the model's own default rather than escalating to the top rung.
-
-**Cache / TTL / fallback.** When the CLI cannot be queried and no cache exists,
-discovery returns a registry-backed `FallbackCatalog` (the static OpenAI models,
-`gpt-5.5` default, **no** `gpt-5.6`) rather than emptying the model surface,
-mirroring `ClaudeModelDiscovery.FallbackCatalog`. Because that catalog also runs
-through `Publish`, the fallback keeps the default on the `gpt-5.5` baseline.
-
-**Boot warm-up.** A best-effort, fire-and-forget warm-up in
-[`Program.cs`](../../../../backend/Host/Program.cs) triggers one discovery on start
-so new-task defaults resolve to the current model before the first UI fetch. It
-is gated off under the Test host and via `CodexModels:WarmupOnBoot`, honors the
-disk-cache TTL (a warm cache skips the PTY spawn), and emits
-`codex-model-warmup-complete` / `codex-model-warmup-skipped` structured logs;
-`Publish` logs `Codex detected default published`.
-
-When a CLI version bump changes the output format, the regression shows up as an
-empty parse (discovery falls back to cache, then `FallbackCatalog`) and the
-dropdown shows only the static list. Tests in
-[`CodexModelDiscoveryTests.cs`](../../../../backend.Tests/CodexModelDiscoveryTests.cs)
-lock the parser shape (5.6 reported / not reported, priority ordering, fallback)
-and [`CodexDetectedDefaultTests.cs`](../../../../backend.Tests/CodexDetectedDefaultTests.cs)
-locks default resolution in both cases plus vendor isolation.
+[CodexModelDiscoveryTests](../../../../backend.Tests/CodexModelDiscoveryTests.cs)
+cover the local parser and merge.
+[CodexExecutionModelCatalogueTests](../../../../backend.Tests/CodexExecutionModelCatalogueTests.cs)
+cover how the picker catalogue uses host evidence.
 
 ## Quirks (and what to do about them)
 

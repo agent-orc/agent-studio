@@ -1517,6 +1517,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     }
 
     private double? _advertisementRoundTripMs;
+    private readonly LinuxStructureCollector? _structureCollector = OperatingSystem.IsLinux() ? LinuxStructureCollector.Local() : null;
 
     public async Task AdvertiseCapabilitiesAsync(
         IReadOnlyList<Contract.AdvertisedCapabilityDto> capabilities,
@@ -1529,7 +1530,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (telemetry is not null)
             telemetry = telemetry with
             {
-                Containers = await RunnerCapabilityProbe.ContainersAsync(ct),
+                Structure = _structureCollector?.Sample(options, telemetry, HostMaxParallelism),
+                Containers = Directory.Exists("/sys/fs/cgroup/studio.slice") ? null : await RunnerCapabilityProbe.ContainersAsync(ct),
                 // AGT-3954: the previous advertisement's round trip is the probed latency of this link.
                 TaskServerRoundTripMs = _advertisementRoundTripMs,
             };
@@ -1570,6 +1572,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ct);
         _advertisementRoundTripMs = Math.Round(roundTrip.Elapsed.TotalMilliseconds, 1);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot is not null)
+        {
+            foreach (var sent in capabilities.Where(item => item.Category == "model-acceptance"))
+            {
+                var received = snapshot.Capabilities.FirstOrDefault(item => item.Key == sent.Key);
+                if (received is not null)
+                    RunnerModelAcceptanceProbe.Shared.AcknowledgeAdvertisement(sent, received.AdvertisedStatus);
+            }
+        }
         if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
             RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }

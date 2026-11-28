@@ -1,0 +1,764 @@
+{
+  "at": "2026-11-28T02:05:09.990714Z",
+  "declared": {
+    "nodes": [
+      {
+        "id": "installation",
+        "kind": "boundary",
+        "label": "Installation",
+        "parentId": null,
+        "role": null,
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:workstation",
+        "kind": "physical",
+        "label": "Owner workstation",
+        "parentId": "installation",
+        "role": null,
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:debian",
+        "kind": "vm",
+        "label": "Debian VM",
+        "parentId": "machine:workstation",
+        "role": null,
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:gate",
+        "kind": "container",
+        "label": "Gate host",
+        "parentId": "machine:debian",
+        "role": "gate",
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:review-1",
+        "kind": "container",
+        "label": "Review runner 1",
+        "parentId": "machine:debian",
+        "role": "review",
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:review-2",
+        "kind": "container",
+        "label": "Review runner 2",
+        "parentId": "machine:debian",
+        "role": "review",
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      },
+      {
+        "id": "machine:review-3",
+        "kind": "container",
+        "label": "Review runner 3",
+        "parentId": "machine:debian",
+        "role": "review",
+        "provenance": "declared",
+        "sourceRef": "Owner placement record, 2026-11-27"
+      }
+    ],
+    "links": [
+      {
+        "to": "external:overlay",
+        "kind": "overlay",
+        "label": "overlay",
+        "sourceRef": "Owner placement record, 2026-11-27",
+        "from": "machine:workstation"
+      },
+      {
+        "to": "component:studio-server:api",
+        "kind": "runner-to-server",
+        "label": "runner-to-server",
+        "sourceRef": "Owner placement record, 2026-11-27",
+        "from": "machine:review-1"
+      },
+      {
+        "to": "component:studio-server:api",
+        "kind": "runner-to-server",
+        "label": "runner-to-server",
+        "sourceRef": "Owner placement record, 2026-11-27",
+        "from": "machine:review-2"
+      },
+      {
+        "to": "component:studio-server:api",
+        "kind": "runner-to-server",
+        "label": "runner-to-server",
+        "sourceRef": "Owner placement record, 2026-11-27",
+        "from": "machine:review-3"
+      }
+    ]
+  },
+  "hosts": [
+    {
+      "runnerId": "coding-runner",
+      "hostId": "studio-agents",
+      "name": "Coding runner",
+      "instanceId": "coding-runner",
+      "runnerVersion": "",
+      "protocolVersion": 1,
+      "status": "active",
+      "lastSeenAt": "2026-11-28T02:04:46.1971739Z",
+      "hostAdmission": {
+        "hostId": "studio-agents",
+        "admissionState": "open"
+      },
+      "roleMaxParallelism": 18,
+      "capabilities": [
+        {
+          "key": "executor:coding",
+          "category": "executor",
+          "advertisedStatus": "ready",
+          "healthState": "healthy",
+          "affectedClaims": [],
+          "recoveryHistory": []
+        }
+      ],
+      "telemetry": {
+        "cpuPercent": 99.59,
+        "cpuCores": 12,
+        "memoryTotalBytes": 67290382336,
+        "memoryUsedBytes": 26861281280,
+        "load1": 105.65,
+        "load5": 96.94,
+        "load15": 104.47,
+        "activeSlots": 14,
+        "observedAt": "2026-11-28T02:04:46.1971739Z",
+        "placement": {
+          "kind": "physical",
+          "kernelId": "studio"
+        },
+        "structure": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "coding-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z",
+          "displayName": "Coding runner",
+          "role": "coding",
+          "dmiProduct": "MS-7B61",
+          "devices": [
+            {
+              "device": "md0",
+              "sizeBytes": 1071644672,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p1",
+                "nvme1n1p1"
+              ],
+              "filesystems": []
+            },
+            {
+              "device": "md1",
+              "sizeBytes": 8580497408,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p2",
+                "nvme1n1p2"
+              ],
+              "filesystems": []
+            },
+            {
+              "device": "md2",
+              "sizeBytes": 502309126144,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p3",
+                "nvme1n1p3"
+              ],
+              "filesystems": [
+                {
+                  "purpose": "runner work",
+                  "path": "/",
+                  "freeBytes": 76437344256,
+                  "totalBytes": 493275160576
+                }
+              ]
+            },
+            {
+              "device": "nvme0n1",
+              "sizeBytes": 512110190592,
+              "raidLevel": null,
+              "members": [],
+              "filesystems": []
+            },
+            {
+              "device": "nvme1n1",
+              "sizeBytes": 512110190592,
+              "raidLevel": null,
+              "members": [],
+              "filesystems": []
+            }
+          ],
+          "service": {
+            "memoryBytes": 42906812416,
+            "cpuUsageMicroseconds": 127927193927
+          },
+          "workers": [
+            {
+              "cardKey": "AGT-4018",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 5911012859
+              }
+            },
+            {
+              "cardKey": "AGT-4108",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 2159721521
+              }
+            },
+            {
+              "cardKey": "AGT-4182",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 4212960
+              }
+            },
+            {
+              "cardKey": "AGT-4195",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 783368675
+              }
+            },
+            {
+              "cardKey": "AGT-4198",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 907916275
+              }
+            },
+            {
+              "cardKey": "AGT-4249",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 4004017119
+              }
+            },
+            {
+              "cardKey": "AGT-4251",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 95561564
+              }
+            },
+            {
+              "cardKey": "AGT-4253",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 2769004209
+              }
+            },
+            {
+              "cardKey": "AGT-4254",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 1336216691
+              }
+            },
+            {
+              "cardKey": "AGT-4256",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 2386360419
+              }
+            },
+            {
+              "cardKey": "AGT-4271",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 1163806385
+              }
+            },
+            {
+              "cardKey": "AGT-4276",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 1371238611
+              }
+            },
+            {
+              "cardKey": "AGT-4326",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 377298727
+              }
+            },
+            {
+              "cardKey": "AGT-4327",
+              "resources": {
+                "memoryBytes": null,
+                "cpuUsageMicroseconds": 8009603
+              }
+            }
+          ],
+          "studioContainers": [
+            {
+              "id": "api",
+              "role": "api",
+              "resources": {
+                "memoryBytes": 10036854784,
+                "cpuUsageMicroseconds": 22968471643
+              },
+              "uptimeSeconds": 6675.13,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "edge",
+              "role": "edge",
+              "resources": {
+                "memoryBytes": 36622336,
+                "cpuUsageMicroseconds": 59433431662
+              },
+              "uptimeSeconds": 2264274.22,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "web",
+              "role": "web",
+              "resources": {
+                "memoryBytes": 35753984,
+                "cpuUsageMicroseconds": 184211198
+              },
+              "uptimeSeconds": 6633.88,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "engine",
+              "role": "engine",
+              "resources": {
+                "memoryBytes": 89063424,
+                "cpuUsageMicroseconds": 184346421
+              },
+              "uptimeSeconds": 6631.7,
+              "imageTag": null,
+              "restarts": null
+            }
+          ],
+          "postMergeUnits": [
+            {
+              "unit": "post-merge-window",
+              "resources": {
+                "memoryBytes": 1273856,
+                "cpuUsageMicroseconds": 12077030972
+              }
+            }
+          ],
+          "slotLimit": 18
+        },
+        "filesystems": [
+          {
+            "path": "/",
+            "purpose": "review work",
+            "freeBytes": 76746133504,
+            "totalBytes": 493275160576
+          }
+        ]
+      }
+    },
+    {
+      "runnerId": "host-review-runner",
+      "hostId": "studio-agents",
+      "name": "Host review runner",
+      "instanceId": "host-review-runner",
+      "runnerVersion": "",
+      "protocolVersion": 1,
+      "status": "active",
+      "lastSeenAt": "2026-11-28T02:04:31.7324444Z",
+      "hostAdmission": {
+        "hostId": "studio-agents",
+        "admissionState": "open"
+      },
+      "roleMaxParallelism": 8,
+      "capabilities": [
+        {
+          "key": "executor:review",
+          "category": "executor",
+          "advertisedStatus": "ready",
+          "healthState": "healthy",
+          "affectedClaims": [],
+          "recoveryHistory": []
+        }
+      ],
+      "telemetry": {
+        "cpuPercent": 99.93,
+        "cpuCores": 12,
+        "memoryTotalBytes": 67290382336,
+        "memoryUsedBytes": 30266519552,
+        "load1": 108.46,
+        "load5": 96.98,
+        "load15": 104.6,
+        "activeSlots": 0,
+        "observedAt": "2026-11-28T02:04:31.7324444Z",
+        "placement": {
+          "kind": "physical",
+          "kernelId": "studio"
+        },
+        "structure": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "host-review-runner",
+          "freshUntil": "2026-11-28T02:06:39.990714Z",
+          "displayName": "Host review runner",
+          "role": "review",
+          "dmiProduct": "MS-7B61",
+          "devices": [
+            {
+              "device": "md0",
+              "sizeBytes": 1071644672,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p1",
+                "nvme1n1p1"
+              ],
+              "filesystems": []
+            },
+            {
+              "device": "md1",
+              "sizeBytes": 8580497408,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p2",
+                "nvme1n1p2"
+              ],
+              "filesystems": []
+            },
+            {
+              "device": "md2",
+              "sizeBytes": 502309126144,
+              "raidLevel": "raid1",
+              "members": [
+                "nvme0n1p3",
+                "nvme1n1p3"
+              ],
+              "filesystems": [
+                {
+                  "purpose": "runner work",
+                  "path": "/",
+                  "freeBytes": 76437344256,
+                  "totalBytes": 493275160576
+                }
+              ]
+            },
+            {
+              "device": "nvme0n1",
+              "sizeBytes": 512110190592,
+              "raidLevel": null,
+              "members": [],
+              "filesystems": []
+            },
+            {
+              "device": "nvme1n1",
+              "sizeBytes": 512110190592,
+              "raidLevel": null,
+              "members": [],
+              "filesystems": []
+            }
+          ],
+          "service": {
+            "memoryBytes": 522346496,
+            "cpuUsageMicroseconds": 148680680036
+          },
+          "workers": [],
+          "studioContainers": [
+            {
+              "id": "api",
+              "role": "api",
+              "resources": {
+                "memoryBytes": 10036854784,
+                "cpuUsageMicroseconds": 22968471643
+              },
+              "uptimeSeconds": 6675.13,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "edge",
+              "role": "edge",
+              "resources": {
+                "memoryBytes": 36622336,
+                "cpuUsageMicroseconds": 59433431662
+              },
+              "uptimeSeconds": 2264274.22,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "web",
+              "role": "web",
+              "resources": {
+                "memoryBytes": 35753984,
+                "cpuUsageMicroseconds": 184211198
+              },
+              "uptimeSeconds": 6633.88,
+              "imageTag": null,
+              "restarts": null
+            },
+            {
+              "id": "engine",
+              "role": "engine",
+              "resources": {
+                "memoryBytes": 89063424,
+                "cpuUsageMicroseconds": 184346421
+              },
+              "uptimeSeconds": 6631.7,
+              "imageTag": null,
+              "restarts": null
+            }
+          ],
+          "postMergeUnits": [
+            {
+              "unit": "post-merge-window",
+              "resources": {
+                "memoryBytes": 1273856,
+                "cpuUsageMicroseconds": 12077030972
+              }
+            }
+          ],
+          "slotLimit": 8
+        },
+        "filesystems": [
+          {
+            "path": "/",
+            "purpose": "container storage",
+            "freeBytes": 76960575488,
+            "totalBytes": 493275160576
+          }
+        ]
+      }
+    },
+    {
+      "runnerId": "review-runner-1",
+      "hostId": "review-1",
+      "name": "Review runner 1",
+      "instanceId": "review-runner-1",
+      "runnerVersion": "",
+      "protocolVersion": 1,
+      "status": "active",
+      "lastSeenAt": "2026-11-28T02:04:10.5568144Z",
+      "hostAdmission": {
+        "hostId": "review-1",
+        "admissionState": "open"
+      },
+      "roleMaxParallelism": null,
+      "capabilities": [
+        {
+          "key": "executor:review",
+          "category": "executor",
+          "advertisedStatus": "ready",
+          "healthState": "healthy",
+          "affectedClaims": [],
+          "recoveryHistory": []
+        }
+      ],
+      "telemetry": {
+        "cpuPercent": 50.15,
+        "cpuCores": 24,
+        "memoryTotalBytes": 52637257728,
+        "memoryUsedBytes": 13541609472,
+        "load1": 15.83,
+        "load5": 9.09,
+        "load15": 7.58,
+        "activeSlots": 0,
+        "observedAt": "2026-11-28T02:04:10.5568144Z",
+        "placement": null,
+        "structure": null,
+        "filesystems": []
+      }
+    },
+    {
+      "runnerId": "review-runner-2",
+      "hostId": "review-2",
+      "name": "Review runner 2",
+      "instanceId": "review-runner-2",
+      "runnerVersion": "",
+      "protocolVersion": 1,
+      "status": "active",
+      "lastSeenAt": "2026-11-28T02:04:30.7584512Z",
+      "hostAdmission": {
+        "hostId": "review-2",
+        "admissionState": "open"
+      },
+      "roleMaxParallelism": null,
+      "capabilities": [
+        {
+          "key": "executor:review",
+          "category": "executor",
+          "advertisedStatus": "ready",
+          "healthState": "healthy",
+          "affectedClaims": [],
+          "recoveryHistory": []
+        }
+      ],
+      "telemetry": {
+        "cpuPercent": 57.58,
+        "cpuCores": 24,
+        "memoryTotalBytes": 52637257728,
+        "memoryUsedBytes": 12016951296,
+        "load1": 14.59,
+        "load5": 9.28,
+        "load15": 7.67,
+        "activeSlots": 0,
+        "observedAt": "2026-11-28T02:04:30.7584512Z",
+        "placement": null,
+        "structure": null,
+        "filesystems": []
+      }
+    },
+    {
+      "runnerId": "review-runner-3",
+      "hostId": "review-3",
+      "name": "Review runner 3",
+      "instanceId": "review-runner-3",
+      "runnerVersion": "",
+      "protocolVersion": 1,
+      "status": "active",
+      "lastSeenAt": "2026-11-28T02:04:15.565426Z",
+      "hostAdmission": {
+        "hostId": "review-3",
+        "admissionState": "open"
+      },
+      "roleMaxParallelism": null,
+      "capabilities": [
+        {
+          "key": "executor:review",
+          "category": "executor",
+          "advertisedStatus": "ready",
+          "healthState": "healthy",
+          "affectedClaims": [],
+          "recoveryHistory": []
+        }
+      ],
+      "telemetry": {
+        "cpuPercent": 48.72,
+        "cpuCores": 24,
+        "memoryTotalBytes": 52637257728,
+        "memoryUsedBytes": 14342885376,
+        "load1": 16.89,
+        "load5": 9.43,
+        "load15": 7.69,
+        "activeSlots": 2,
+        "observedAt": "2026-11-28T02:04:15.565426Z",
+        "placement": null,
+        "structure": null,
+        "filesystems": []
+      }
+    }
+  ],
+  "context": {
+    "includeObservedHosts": true,
+    "studio": {
+      "machineId": "studio-server",
+      "machineLabel": "Studio server",
+      "placement": {
+        "kind": "container",
+        "kernelId": "studio"
+      },
+      "observedAt": "2026-11-28T02:05:09.990714Z"
+    },
+    "installation": {
+      "api": {
+        "sample": {
+          "observedAt": "2026-11-28T02:05:09.990714Z",
+          "observedBy": "capture: rates and queue sources unavailable",
+          "freshUntil": "2026-11-28T02:06:39.990714Z"
+        },
+        "requestsPerSecond": null,
+        "requestsInFlight": null,
+        "queues": {}
+      },
+      "publicCdn": true,
+      "gateSshHost": "gate",
+      "gateNetwork": "overlay",
+      "sourceHosting": true,
+      "windows": [],
+      "history": {
+        "trends": [
+          {
+            "sample": {
+              "observedAt": "2026-11-28T02:04:00Z",
+              "observedBy": "retained runner telemetry",
+              "freshUntil": "2026-11-28T02:04:05Z"
+            },
+            "busySlots": 16,
+            "queuedTasks": null
+          },
+          {
+            "sample": {
+              "observedAt": "2026-11-28T02:04:05Z",
+              "observedBy": "retained runner telemetry",
+              "freshUntil": "2026-11-28T02:04:10Z"
+            },
+            "busySlots": 16,
+            "queuedTasks": null
+          },
+          {
+            "sample": {
+              "observedAt": "2026-11-28T02:04:10Z",
+              "observedBy": "retained runner telemetry",
+              "freshUntil": "2026-11-28T02:04:15Z"
+            },
+            "busySlots": 16,
+            "queuedTasks": null
+          }
+        ],
+        "events": [
+          {
+            "observedAt": "2026-11-27T23:48:15.5202277Z",
+            "observedBy": "task timeline",
+            "kind": "delivery-integrated",
+            "subject": "AGT-4248"
+          },
+          {
+            "observedAt": "2026-11-27T23:48:15.0013667+00:00",
+            "observedBy": "integration verification receipt",
+            "kind": "gate-verified",
+            "subject": "AGT-4248"
+          },
+          {
+            "observedAt": "2026-11-26T13:38:04.109898Z",
+            "observedBy": "task timeline",
+            "kind": "delivery-integrated",
+            "subject": "AGT-4024"
+          },
+          {
+            "observedAt": "2026-11-26T13:38:03.5678639+00:00",
+            "observedBy": "integration verification receipt",
+            "kind": "gate-verified",
+            "subject": "AGT-4024"
+          }
+        ],
+        "stepSeconds": 5,
+        "windowSeconds": 900
+      },
+      "providers": [
+        "claude",
+        "codex"
+      ],
+      "gateDisk": {
+        "id": "gate-ssh:gate",
+        "host": "gate",
+        "observedAt": "2026-11-28T02:04:34.9187597Z",
+        "filesystems": [
+          {
+            "purpose": "gate work",
+            "path": "/var/tmp/agentstudio-remote-gates",
+            "freeBytes": 110036619264,
+            "totalBytes": 264002854912,
+            "ownedBytes": null
+          }
+        ]
+      }
+    }
+  }
+}

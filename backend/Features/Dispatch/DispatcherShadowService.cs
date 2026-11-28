@@ -168,20 +168,49 @@ public sealed class DispatcherShadowService(DispatchStore store, PersonaActivati
     {
         var lease = store.ReadLease(card.ProjectName);
         var live = store.ReadLive(card.ProjectName);
-        var project = projects.FindByIdOrDisplayName(card.ProjectName);
-        var owner = project is null ? null : activations.List(project.WorkspaceId).Personas
-            .Select(p => p.Activation).OfType<PersonaActivationV1>().FirstOrDefault(a => a.PersonaId == lease?.Persona
-                && a.State == PersonaStates.Active && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(project.Id)
-                    || a.Scope.Projects.Contains(project.DisplayName)));
         var satisfied = tasks.GetAllResidentTasks().Where(c => c.State is TaskStates.Completed or TaskStates.Archive
             || !OverlapComparisonSet.IsInFlight(c) && c.Integration?.Status == IntegrationStatuses.Integrated)
             .Select(c => c.Key ?? c.TaskKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var decision = MonolithTransitionAdapter.DispatchPickup(record?.Plan, card.Key ?? card.TaskKey, time.GetUtcNow(),
-            record is not null && (owner is not null || lease is { Persona: "queue-keeper", Rollout: not null })
+            record is not null && HasPlanOwner(card.ProjectName, lease)
                 && live?.Record.DecisionId == record.DecisionId && lease?.Fence == live.Fence
                 && lease?.ExpiresAt > time.GetUtcNow(), satisfied);
         return MonolithTransitionAdapter.DispatchWavePickup(decision, card.WaveId,
             card.WaveId is null || store.ReadWaveRelease(card.ProjectName, card.WaveId)?.Complete == true);
+    }
+
+    internal (DispatchShadowRecordV1? Plan, DispatchLeaseV1? Lease) ReadActivePlan(
+        string project, string mode, DateTimeOffset now)
+    {
+        if (mode != "live") return default;
+        try
+        {
+            var (live, lease) = store.ReadPlanAndLease(project);
+            if (lease is null || lease.ExpiresAt <= now
+                || !string.Equals(lease.Project, project, StringComparison.OrdinalIgnoreCase)) return default;
+            if (!HasPlanOwner(project, lease)) return default;
+            var plan = live?.Record;
+            return live?.Fence == lease.Fence && plan is { Plan: { } dispatchPlan } && plan.At <= now
+                && dispatchPlan.Persona == lease.Persona
+                && string.Equals(dispatchPlan.Project, project, StringComparison.OrdinalIgnoreCase)
+                ? (plan, lease) : (null, lease);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or AgentStudio.Security.SecurityOperationException)
+        {
+            return default;
+        }
+    }
+
+    private bool HasPlanOwner(string projectName, DispatchLeaseV1? lease)
+    {
+        if (lease is null) return false;
+        if (lease is { Persona: "queue-keeper", Rollout: not null }) return true;
+        var project = projects.FindByIdOrDisplayName(projectName);
+        return project is not null && activations.List(project.WorkspaceId).Personas
+            .Select(p => p.Activation).OfType<PersonaActivationV1>().Any(a => a.PersonaId == lease.Persona
+                && a.State == PersonaStates.Active && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(project.Id)
+                    || a.Scope.Projects.Contains(project.DisplayName)));
     }
 
     public bool Validate(TaskInfo card, string? decisionId)

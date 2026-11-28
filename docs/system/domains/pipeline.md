@@ -70,6 +70,26 @@ unreconciled rejected tip. See the
 
 ## Gate economics and integration lane
 
+`GET /api/operator/coding-capacity` includes a `wait` projection on each
+authorized project row. It reports up to 50 live integration deliveries with
+their lane, queued review attempt and result SHA when available, queue phase
+and age. An admission observation within two integration recheck intervals,
+with overlapping paths and a matching current recovery receipt, yields
+`intentional-wait` with reason `wait-for-holder`. The next check uses the
+integration recheck interval.
+Each delivery shows up to eight reservations and 20 overlapping files per
+reservation. Dependent counts cover the returned deliveries. Legacy recovery
+receipts supply the holder's original delivery time as `sinceUtc` and have no
+recorded expiry.
+
+A known successor run or review can yield
+`confirmed-lost-ownership`. Missing or expired evidence yields `unknown`.
+The projection also includes the current fenced dispatch plan when available,
+observed gate and integration owners, and the latest observed progress time.
+Gate completions and integration ownership are observed by the serving
+process. The read performs no recovery or model calls, and never advises an API
+restart.
+
 The batch gate state read reports `phaseAtUtc` for each batch and
 `startedAtUtc` for each run. A `Running` phase also reports whether this
 process owns a live flight and, when it does not, the recovery delay and next
@@ -240,7 +260,10 @@ replacement keep their selected cases, even when already marked as guard steps.
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the
 legacy generated-map path. Whole .NET routine invocations remain post-merge
-obligations in these opted-in fast reviews. The selection audit records the
+obligations in these opted-in fast reviews. Only an unfiltered invocation or
+one filtered solely by `Category!=MachineBound` is recognized as whole-project.
+Explicit class or trait selections and unrecognized filters remain selected
+even when they exactly match a declared command. The selection audit records the
 commands and their reasons without treating selection as execution: attempted
 commands and tests must come from execution receipts, and selected commands
 without receipts remain missing evidence. A narrowed check never claims a
@@ -593,12 +616,20 @@ Recovery reconstructs the original plan and per-test ledger from saved raw
 command results. It reuses completed commands only when the saved workspace
 content digest (including ignored outputs and detached HEAD) and command inputs
 (command text, source SHA, declared environment and test-envelope fingerprint) still match.
+New command checkpoints use the envelope's configuration fields. The receipt also
+records the initial and peak host load for diagnostics.
 An incomplete command or changed workspace settles as `inconclusive`, retaining
 finished evidence, rather than attributing a product regression. Such a receipt
 does not advance the completed-window tip. Raw inconclusive evidence remains
-under `.post-merge-evidence/`; accepted delivery removes the isolated command
-home and temp files. Linux recovery reaps orphan command
-groups in the dedicated checkout before settling an incomplete command. Other
+under `.post-merge-evidence/`. The command home stays in the checkout. New runs
+share a short, owner-checked temp directory across commands and restarts
+(`/tmp/pm-<digest>/t` on Unix). The digest covers its contents, including
+Git metadata in nested repositories. For a linked worktree, both the per-worktree
+and common Git directories must be covered by the digest. Recovery settles as
+`inconclusive` when Git metadata changes or points outside the hashed directories.
+Accepted delivery removes both writable roots. Older journals retain their
+checkout-local temp path when resuming completed commands. Linux recovery reaps
+orphan command groups in the checkout and the owned temp directory before settling an incomplete command. Other
 hosts retain the journal and refuse automatic recovery of an incomplete command. No real restart drill is part of the routine
 tests; reconstructed-service fault injection covers this boundary.
 
@@ -3124,6 +3155,25 @@ comparison before Quality Studio's verdict contract can decide a review.
   keeps its own test stage until the project switches to post-merge checks
   (Dossier P7). The Owner picks the strategy on the project settings page or
   with `PUT /api/projects/{name}/testing` (`{"strategy":"fast"}`).
+- Fast coding reviews select against the immutable result and its merge base
+  with the integration line, including on fix rounds. The .NET review scope
+  keeps changed runnable test classes and `TypeTest` or `TypeTests` companions
+  of changed types. The selector reads both sides of renames and the old side
+  of deletions, groups partial classes, and excludes `MachineBound` cases.
+  Process-reference checks and the fixed review base remain outside the trial
+  budget. The budget covers 32 distinct test-source files added by direct type
+  references across all affected .NET test projects. It counts matching test
+  sources for a partial class. A match in a helper part alone counts the test
+  sources it selects. If the set is larger, the pilot omits the whole optional
+  set. The selection audit and review-plan
+  log record the paths and the post-merge routine suite obligation.
+  The default adds the eligible pilot checks and preserves existing class
+  selections. The log compares the two scopes on each delivery.
+  `RemoteReview:UseBudgetedDotNetScope=true` enables replacement of the prior
+  reference filters for the pilot. Unavailable inputs prevent that
+  replacement. Strict and full review policies retain their existing fallback.
+  Verify evidence reuse still requires the same result SHA, command and
+  toolchain, and a passing receipt from an eligible attempt.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.
@@ -3499,7 +3549,29 @@ move-error dialog.
   unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
   creates a review attempt: it first checks that the latest review in
   attempt authority for exactly that delivery SHA ended in `Pass`, and reuses
-  it. See
+  it. Host faults also carry a durable host/fingerprint budget in the platform-owned
+  `gate-host-repairs.json` receipt at the project root (AGT-4100). Delivery SHA
+  changes and operator retries cannot replenish an exhausted host budget. On
+  exhaustion the service quarantines that host fault and creates one separate,
+  code-free host repair obligation through the task mutation boundary. It retains
+  the source result, review and run identity and never queues a product continuation,
+  including when an older engine receipt asks for one. Legacy lane-folder storage
+  or a host without task mutation support closes with a durable quarantine reason
+  instead of creating a hidden card or reopening product work. Completion of the
+  repair permits one replay per held exact delivery; new deliveries cannot claim
+  that historical wake. Manual holds remain held. Transport failures stay with
+  their outage probe, and service-shutdown resumptions spend no host rung.
+  After quarantine, each held delivery can also relocate once to a configured
+  `RemoteGate:ShardHosts` host outside the failed host and all quarantined hosts.
+  The AI Operator decides from placement and durable spending facts. The narrow
+  `RemoteBuildTestGateRunner` hook confines placement to that replay's project and
+  card, bypasses the primary transport and its sharding, disables verdict-cache
+  reuse, and retains exact-subject evidence validation and bounded transport retries.
+  Relocated runs do not update the primary host's outage or disk state. Other gates
+  keep their current transport. A single-host installation records that no healthy
+  alternative is configured and retains the quarantine and repair path; it cannot
+  relocate. A configured alternative is a candidate whose operation is verified by
+  the exact-subject gate, not a promise of host health. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
   for the ladder, the receipts, and the operator action.
 - A gate that never reached a verdict at all - the process that owned the merge
@@ -5154,6 +5226,21 @@ and preserves both sides. Staging, the merge commit, publication, refs and works
 lifecycle remain platform-owned. Teardown refuses untouched text conflict markers.
 An operational merge error is aborted and recorded; abort failure retains evidence
 and never becomes a runnable handoff on an older tree.
+
+AGT-4353: the integration pin carries `retainUntilIntegrated: true`. Claims and
+NeedsInput or commitless settlements retain it. A mechanical fallback advances
+the pin only if the published ref resolves to the exact reported commit and
+that commit descends from the pinned delivery. A resolved merge then becomes
+the next checkout base. A successful integration releases the pin along with
+the conflict receipt. Ordinary salvage bases retain their single-use behavior.
+The completion endpoint persists the fallback base and fresh-session reason before
+handing the lane decision to either authority. A failed write returns 503 while
+the card remains in Progress; an Engine return cannot bypass this custody step.
+While a retained integration pin exists, continue-base discovery excludes failed
+runs and envelopes whose result equals their base, so an empty NeedsInput attempt
+cannot displace that delivery. Historical review rows and review-subject sidecars
+outlive integration and do not establish this protection on their own. Without a
+retained pin, newer salvage remains eligible for an operator continuation.
 
 The existing decision library still bounds automatic rounds at two per card and
 target. `Used` includes charged rounds plus reserved capacity. New automatic

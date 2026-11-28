@@ -700,6 +700,123 @@ public sealed class IntegrationRecoveryHandoffTests : IDisposable
         Assert.Equal(1, IntegrationRecoveryBudget.Count(_timeline.ReadAll(queued.FolderPath), _subject, "develop").Used);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    public async Task ConcernPassConflictResumedFallbackFreshClaimRetainsBothDeliveryCommitsAndPreparation(bool resolved)
+    {
+        using var fixture = new IntegrationPreparationFixtureTests();
+        var (workspace, delivery, target) = await fixture.Fixture(true, concernRound: true);
+        var first = (await IntegrationPreparationFixtureTests.Git(workspace.SharedRepoPath, true,
+            "rev-parse", delivery + "^")).Output;
+        var job = Job();
+        // The bounded concern round claimed the first delivery as a review fix.
+        ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord("refs/heads/results/first",
+            first, "review-fix-round", "review-concern", DateTime.UnixEpoch));
+        Assert.Equal(first, ContinuationBaseStore.ConsumeForClaim(job.FolderPath)!.CommitSha);
+        ContinuationBaseStore.ClearAfterCompletion(job.FolderPath);
+        // The second attempt passed review, then integration conflicted.
+        var passed = _subject with
+        {
+            RunAttemptId = "review-concern",
+            ResultSha = delivery,
+            ImmutableResultRef = "refs/heads/results/delivery",
+        };
+        ReviewSubjectStore.Write(job.FolderPath, passed);
+        var conflict = Conflict() with { PreviousIntegrationSha = target, ConflictedFiles = ["shared.txt"] };
+        Assert.True((await Service().TryStartAsync(Request(job), conflict)).Started);
+        var folder = Job().FolderPath;
+        var resumed = ContinuationBaseStore.ConsumeForClaim(folder)!;
+        Assert.True(resumed.RetainUntilIntegrated);
+        Assert.Equal(delivery, resumed.CommitSha);
+        var reason = Runner::AgentRunner.MechanicalRoundFallbackPolicy.Reason(true,
+            Runner::AgentRunner.RunOutcomeKind.Unknown, Contract.ExecutionOutcomeKind.Timeout, "Runner timeout");
+        Assert.Equal("resume-duration-ceiling", reason);
+        await workspace.PrepareAsync(default);
+        Assert.Equal(Runner::AgentRunner.ContinuationMergePreparationOutcome.Conflicted, workspace.ContinuationPreparation!.Outcome);
+        var salvageRef = "refs/heads/results/resumed-salvage";
+        var salvage = target;
+        if (resolved)
+        {
+            File.WriteAllText(Path.Combine(workspace.RepoPath, "shared.txt"), "delivery\ntarget\n");
+            await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "add", "shared.txt");
+            await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true,
+                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Resolve the conflict");
+            salvage = (await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "rev-parse", "HEAD")).Output;
+        }
+        await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "push", "origin", $"{salvage}:{salvageRef}");
+        var config = new ConfigurationBuilder().Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        ContinuationBaseStore.ClearAfterCompletion(folder);
+        Assert.True(IntegrationConflictRecovery.SaveMechanicalFallbackBase(git, workspace.SharedRepoPath, folder,
+            new ContinuationBaseRecord(salvageRef, salvage, reason!, "resumed", DateTime.UnixEpoch), delivery));
+        var fresh = ContinuationBaseStore.ConsumeForClaim(folder)!;
+        Assert.True(fresh.RetainUntilIntegrated);
+        Assert.Equal(resolved ? salvage : delivery, fresh.CommitSha);
+        Assert.Equal(resolved ? salvageRef : resumed.Ref, fresh.Ref);
+        // Use the production runner preparation with the claim's immutable ref and SHA.
+        workspace = fixture.CreateWorkspace(fresh, fresh: true);
+        await workspace.PrepareAsync(default);
+        await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "merge-base", "--is-ancestor", first, "HEAD");
+        await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "merge-base", "--is-ancestor", delivery, "HEAD");
+        Assert.Equal(fresh.CommitSha, workspace.BaseSha);
+        var recordPath = (await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true,
+            "rev-parse", "--git-path", "agent-studio-integration-preparation.json")).Output;
+        using var record = JsonDocument.Parse(File.ReadAllText(Path.GetFullPath(recordPath, workspace.RepoPath)));
+        Assert.Equal(fresh.CommitSha, record.RootElement.GetProperty("deliverySha").GetString());
+        Assert.Equal(target, record.RootElement.GetProperty("integrationSha").GetString());
+        var unresolved = record.RootElement.GetProperty("unresolvedFiles");
+        if (resolved)
+        {
+            Assert.Equal("AlreadyContainsTarget", record.RootElement.GetProperty("outcome").GetString());
+            Assert.Equal(0, unresolved.GetArrayLength());
+            Assert.Equal("delivery\ntarget\n", File.ReadAllText(Path.Combine(workspace.RepoPath, "shared.txt")));
+            await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true, "merge-base", "--is-ancestor", target, "HEAD");
+        }
+        else
+        {
+            Assert.Equal("Conflicted", record.RootElement.GetProperty("outcome").GetString());
+            Assert.Equal("shared.txt", unresolved[0].GetString());
+            Assert.Equal(target, (await IntegrationPreparationFixtureTests.Git(workspace.RepoPath, true,
+                "rev-parse", "MERGE_HEAD")).Output);
+        }
+        Assert.True(File.Exists(Path.Combine(workspace.RepoPath, "concern-fix.txt")));
+    }
+
+    [Fact]
+    public async Task FreshConflictAttemptWithoutRequiredBaseFailsBeforeCreatingTheWorktree()
+    {
+        using var fixture = new IntegrationPreparationFixtureTests();
+        await fixture.Fixture(true);
+        var workspace = fixture.CreateWorkspace(null, fresh: true);
+        var exception = await Assert.ThrowsAsync<Runner::AgentRunner.ContinuationBaseUnavailableException>(
+            () => workspace.PrepareAsync(default));
+        Assert.Equal("continuation-base-incomplete", exception.ReasonCode);
+        Assert.False(Directory.Exists(workspace.RepoPath));
+    }
+
+    [Fact]
+    public async Task NeedsInputOrEmptyResultCannotReplaceUnintegratedReviewedDelivery()
+    {
+        Assert.True((await Service().TryStartAsync(Request(Job()), Conflict())).Started);
+        var folder = Job().FolderPath;
+        var delivery = ContinuationBaseStore.ConsumeForClaim(folder)!;
+        ContinuationBaseStore.ClearAfterCompletion(folder); // NeedsInput settlement
+        Assert.True(ContinuationBaseStore.SaveAttemptResult(folder, new ContinuationBaseRecord(
+            "refs/heads/empty", new string('e', 40), "continue-round-result", "needs-input", DateTime.UnixEpoch)));
+        var next = ContinueRoundBasePolicy.Decide(null,
+            [new CardResultRef("refs/heads/empty", new string('e', 40), "needs-input", DateTime.UnixEpoch.AddMinutes(1))],
+            ContinuationBaseStore.Read(folder), true, DateTime.UnixEpoch.AddMinutes(2));
+        Assert.Equal(delivery, next.Base);
+        Assert.Equal(delivery, ContinuationBaseStore.ConsumeForClaim(folder));
+        var recovery = new IntegrationConflictRecovery(_ => "tip", (_, _, _) => false, _ => [], _ => []);
+        recovery.Record(Request(Job()), MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged));
+        Assert.Null(ContinuationBaseStore.Read(folder));
+    }
+
     [Fact]
     public async Task UnwritableBaseNeverConsumesTheRecoveryBudgetOrSupersedesTheDelivery()
     {

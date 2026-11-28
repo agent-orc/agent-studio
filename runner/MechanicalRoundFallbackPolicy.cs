@@ -5,6 +5,11 @@ namespace AgentRunner;
 /// <summary>Typed fresh-run triggers after the sole resumed mechanical round.</summary>
 public static class MechanicalRoundFallbackPolicy
 {
+    internal static bool RequiresPreparedCheckout(string? reason)
+        => reason is "semantic-conflict" or "invalid-session-after-resume" or "resume-token-ceiling"
+            or "resume-duration-ceiling" or "resumed-round-inconclusive" or "resumed-round-failed"
+            or MechanicalSessionContinuation.SessionLostBeforeLaunch;
+
     public static ExecutionOutcomeDecision AsTypedDecision(
         ExecutionOutcomeDecision decision,
         string reason) => decision with

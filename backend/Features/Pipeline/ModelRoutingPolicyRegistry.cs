@@ -108,7 +108,7 @@ public sealed class ModelRoutingPolicyRegistry
 
         if (CriticalFloorSignal.IsMatch(text))
         {
-            requested = Tier("sol-xhigh");
+            requested = Tier("sol-high");
             correctnessFloor = requested;
             score = Math.Max(score, 70);
         }
@@ -197,7 +197,7 @@ public sealed class ModelRoutingPolicyRegistry
             ? null
             : Tier(typeDefault.HardFloorTier);
         var text = $"{title}\n{prompt}";
-        if (CriticalFloorSignal.IsMatch(text)) return Tier("sol-xhigh");
+        if (CriticalFloorSignal.IsMatch(text)) return Tier("sol-high");
 
         var subsystemCount = RuntimeSubsystemSignal.Matches(text)
             .Select(match => match.Value)
@@ -230,6 +230,11 @@ public sealed class ModelRoutingPolicyRegistry
         ModelRoutingTier tier,
         CliModelCatalog catalogue)
     {
+        // Qualification chooses a policy route. The claiming host checks availability.
+        if (catalogue.Models.Any(model => model.Vendor == "openai")
+            && CodexRoutingPolicy.IsGpt62(tier.Model))
+            return (tier.Model, CodexRoutingPolicy.ResolveThinkingLevel(tier.ThinkingLevel));
+
         var available = catalogue.Models
             .Where(model => model.Available && !model.Deprecated)
             .ToList();
@@ -270,7 +275,7 @@ public sealed class ModelRoutingPolicyRegistry
 
     /// <summary>
     /// Finds the tier model in the live catalogue, or else its declared
-    /// provider-rejection sibling chain (gpt-6-sol -> gpt-5.6-sol). A CLI that
+    /// provider-rejection sibling chain. A CLI that
     /// does not offer a GPT-6 tier model yet keeps the same-family route
     /// instead of reaching the positional fallback.
     /// </summary>

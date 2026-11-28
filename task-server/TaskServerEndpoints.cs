@@ -427,6 +427,7 @@ public static class TaskServerEndpoints
         {
             if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and capability runner ids differ."));
+            request = HeartbeatPeer.Stamp(request, context.Connection.RemoteIpAddress, context.Request.Scheme, DateTime.UtcNow);
             return await InvokeAsync(() => store.AdvertiseCapabilitiesAsync(request, Actor(context), ct));
         });
         runners.MapPost("/{runnerId}/quota/claim", async (

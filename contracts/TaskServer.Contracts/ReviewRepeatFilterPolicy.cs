@@ -44,14 +44,23 @@ public static class ReviewRepeatFilterPolicy
     public static bool RequiresAssertionProof(ReviewCommandEvidenceDto candidate, ReviewCommandEvidenceDto repeat)
     {
         if (repeat is { ExitCode: 0, Signal: null }) return false;
-        var initial = (candidate.InitialFailures ?? []).Concat(candidate.NewFailures ?? [])
-            .Concat(candidate.PreExistingFailures ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        // NewFailures can include failures first seen in the repeat. Reconstruct
+        // the original set from partitions only when it was not recorded.
+        var initial = (candidate.InitialFailures ?? (candidate.NewFailures ?? [])
+            .Concat(candidate.PreExistingFailures ?? []).ToArray())
+            .Distinct(StringComparer.Ordinal).ToArray();
         var repeated = repeat.InitialFailures;
         var invocation = (candidate.FileName + " " + string.Join(' ', candidate.Arguments)).Replace('\\', '/');
         var tool = Path.GetFileNameWithoutExtension(candidate.FileName.Replace('\\', '/'));
         var dotnetTest = (tool.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
             && candidate.Arguments.FirstOrDefault() == "test")
             || invocation.Contains("dotnet test", StringComparison.OrdinalIgnoreCase);
+        // A product claim based on a repeat-only failure still needs proof of
+        // an original assertion before it can charge the delivery.
+        if (dotnetTest && candidate.Diagnosis?.ChargesCard == true
+            && candidate.InitialFailures is not null
+            && (candidate.NewFailures ?? []).Except(initial, StringComparer.Ordinal).Any())
+            return true;
         var mixedBaseline = dotnetTest && candidate.BaselineExitCode is > 0
             && initial.Except(candidate.PreExistingFailures ?? [], StringComparer.Ordinal).Any();
         if (repeated is null or { Count: 0 } || (mixedBaseline && candidate.Diagnosis?.ChargesCard == true))

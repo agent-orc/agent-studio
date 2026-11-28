@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestrationDecisions;
 
@@ -37,7 +38,7 @@ public sealed record DeepReviewDecision(
 public static class DeepReviewPolicy
 {
     public const int MaximumDeepRounds = 3;
-    public const string Model = "gpt-6-sol";
+    public const string Model = CodexRoutingPolicy.StandardModel;
     public const string Shadow = "shadow";
     public const string Active = "active";
 
@@ -58,7 +59,7 @@ public static class DeepReviewPolicy
         if (facts.ChangedLines < 0) grounds.Add("diff-size-unavailable");
         if (facts.PreviousBlocks > 0) grounds.Add("previous-review-block");
         if (facts.GateFailures > 0) grounds.Add("gate-failure-history");
-        if (critical && !string.Equals(facts.ProducingEffort, "xhigh", StringComparison.OrdinalIgnoreCase))
+        if (critical && facts.ProducingEffort?.Trim().ToLowerInvariant() is not ("high" or "xhigh" or "max" or "ultra"))
             grounds.Add("producer-below-critical-floor");
         if (critical && facts.ProducingModel is not null
             && !facts.ProducingModel.Contains("sol", StringComparison.OrdinalIgnoreCase)
@@ -83,8 +84,9 @@ public static class DeepReviewPolicy
             string.Join('\n', JsonSerializer.Serialize(facts), selectedMode, ruleVersionId ?? "",
                 ruleSelection?.ToString() ?? "", ruleModel ?? "", ruleThinkingLevel ?? ""))));
         var model = critical || string.IsNullOrWhiteSpace(ruleModel) ? Model : ruleModel;
-        var thinking = critical ? "xhigh" : ruleThinkingLevel is "medium" or "high" or "xhigh"
-            ? ruleThinkingLevel : "medium";
+        var thinking = critical ? CodexRoutingPolicy.HighThinkingLevel
+            : CodexRoutingPolicy.IsGpt62(model) ? CodexRoutingPolicy.ResolveThinkingLevel(ruleThinkingLevel)
+            : ruleThinkingLevel is "medium" or "high" or "xhigh" ? ruleThinkingLevel : "medium";
         return new("deep-review-" + digest[..24], selectedMode, selected,
             selected && selectedMode == Active, model, thinking,
             grounds, ruleVersionId);
