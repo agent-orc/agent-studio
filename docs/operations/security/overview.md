@@ -1742,7 +1742,7 @@ secret, or recovery code. It has these fact sources:
 | Source | What it reads |
 |---|---|
 | Exposure | profile, HTTPS requirement, `Security:PublicCloudflareEdge`, trusted proxy count, the sign-in client address health, and every route open to anonymous callers. The edge access layer, origin-pull authentication, and host firewall are not visible to the API and are reported as such; `check-edge-config.sh` checks them on the host. |
-| Credentials | API tokens and Access-area service-account tokens (holder, role, scope, creation, expiry, last use, state), operator agents with live sessions, and the credential inventory (GitHub App, App installations, host tokens and keys, secrets, runner credentials, provider sign-ins). With a standalone Task Server the inventory comes from it. |
+| Credentials | API tokens and Access-area service-account tokens (holder, role, scope, creation, expiry, last use, state), operator agents with live sessions, and the credential inventory (GitHub App, App installations, host tokens and keys, secrets, runner credentials, provider sign-ins). With a standalone Task Server, Studio joins its host inventory with local secret-provider and IAM metadata. |
 | Second factor | each user's TOTP, passkey, and recovery code counts; Owner and Operator must have a factor. The local profile has no sign-in and raises no entry. |
 | Versions | the server build identity, and per runner host its operating system, agent host release against the server (`HostReleaseDriftPolicy`), installed CLIs against the required version, and the container images the host reports. |
 | Audit | chain verification, off-host forwarding, open audit alerts, refused bearer requests and refused secret writes of the last 7 days (grouped by actor), kill switch uses and drills, and break-glass windows. |
@@ -2074,4 +2074,44 @@ On phones, authority and More navigation sit above the existing header actions
 so the elevated controls remain reachable without overlap.
 Operator activity can filter by agent, session and elevated actions, with
 reason, stated source, device and arming details.
+### Credential lifetimes and manual rotation plans (WI-1, 2026-11-28)
+
+Settings > Credentials classifies each inventory entry as `short-lived` or
+`long-lived`. A non-refreshable credential with a known issuer limit or recorded issuance
+window of at most 24 hours is short-lived; other entries are long-lived. A provider login
+stays long-lived when it can refresh an access token. Probe observations do not
+claim a creation date or a real credential use.
+A provider login is one entry per host and provider, whatever number of
+roles on that host advertise it, and it carries the same kind as the host
+registry's record for that login. An active registry record replaces the
+advertised entry, so each login produces one set of warnings; an inactive
+registry record does not hide a login the host still advertises.
+
+The installation inventory joins Task Server host registry and principal
+metadata with Studio's secret provider, external-store credential bindings and
+IAM service accounts and operator sessions. It never resolves a secret value.
+Rows show holder, target, creation date, recorded expiry (`none` when no expiry
+is recorded), last known use, rotation interval and next due date. Unknown
+creation and last-use dates remain unknown. A reported rotation due date wins;
+otherwise the inventory reminder interval defaults to 90 days, anchored to the
+last known rotation, creation, discovery, or a persisted first observation.
+A whole-day interval between a reported rotation due date and its known
+renewal, creation or discovery date is retained. Otherwise the interval remains
+the labelled inventory default. This reminder plan does not claim that the
+target has been rotated.
+
+An hourly Studio sweep, including startup, sends the Owner operator-feed
+warnings at 14 and 3 days before both expiry and due rotation. Persisted receipts
+de-duplicate each deadline and threshold; failures retry, and delivery state survives
+restart in the owner-only `.security/credential-lifecycle.json` metadata file.
+Late discovery emits the applicable threshold. Removed or revoked credentials
+and consumed enrolments do not raise lifecycle notices. The existing Task
+Server credential-view reminders keep their separate thresholds and behavior.
+
+This implements WI-D6 option A (`sichtbar-mit-ablauf`): stored credentials
+remain a marked fallback where the target has no federation. Classification
+changes no access grants. Federation, the issuer and automatic target rotation
+remain later slices. See the [host setup guide](../setup/linux-runner-host.md#credential-inventory-and-rotation-plans-wi-1)
+and [secret provider](secret-provider.md#credential-inventory-metadata-wi-1).
+
 <!-- append-only:security-overview:end -->
