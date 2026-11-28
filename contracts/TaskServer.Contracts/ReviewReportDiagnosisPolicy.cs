@@ -128,6 +128,34 @@ public static class ReviewReportDiagnosisPolicy
                 unproven ??= "DiagnosisEvidenceInvalid";
                 continue;
             }
+            if (command.AssertionEvidence.Count > ReviewRepeatFilterPolicy.MaximumAssertionControls
+                || (command.Diagnosis.ChargesCard
+                    && (command.AssertionEvidence.Count > 0
+                        || ReviewRepeatFilterPolicy.RequiresAssertionProof(command, clean))
+                    && !command.AssertionEvidence.Any(proof =>
+                        ReviewRepeatFilterPolicy.HasCompleteAssertionProof(proof, command, request.Commands))))
+            {
+                unproven ??= "DiagnosisEvidenceInvalid";
+                // A rejected command proof cannot retain a product verdict through later grading.
+                var incomplete = new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.FirstOccurrence, 0.2,
+                    command.Diagnosis.Evidence.Append($"Incomplete exact-test assertion evidence for {command.StepId}.").ToArray());
+                var singleCommand = (plan?.Commands.Count(item => item.Aspect == command.Aspect)
+                    ?? request.Commands.Count(item => item.Phase == "verification" && item.WorkspaceRole == "candidate"
+                        && item.Aspect == command.Aspect)) == 1;
+                request = request with
+                {
+                    Commands = request.Commands.Select(item => item == command ? item with { Diagnosis = incomplete } : item).ToArray(),
+                    Verdicts = request.Verdicts.Select(verdict => verdict.Aspect == command.Aspect
+                        && (singleCommand || verdict.EvidenceChecked?.Split(';', StringSplitOptions.TrimEntries)
+                            .Contains("command:" + command.StepId, StringComparer.Ordinal) == true)
+                        ? verdict with
+                        {
+                            Status = "concerns", Classification = DeliveryFailureDiagnosis.FirstOccurrence, Diagnosis = incomplete,
+                            Summary = verdict.Summary + $" Incomplete exact-test assertion evidence for {command.StepId}.", Missing = "none",
+                        } : verdict).ToArray(),
+                };
+                continue;
+            }
             if (command.Diagnosis.ChargesCard
                 && (clean.ExitCode == 0
                     || (command.BaselineExitCode != 0 && !HasNewTestFailures(command, plan))))

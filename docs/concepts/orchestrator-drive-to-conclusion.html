@@ -3621,6 +3621,13 @@
           <td>The continuation retains every integration-side row and the delivery patch;
             focused classes, guards and lint verify a replacement delivery.</td>
         </tr>
+        <tr id="case-mixed-review-assertion-hidden-by-base-failure">
+          <td>2026-11-28</td>
+          <td><code>AGT-4133</code><br><span class="small">mixed-review-assertion-hidden-by-base-failure (fix <code>AGT-4326</code>)</span></td>
+          <td>No CLI crashed in the named receipt. On 27 November, result <code>cb7c0030ed</code>, review <code>review_67986fdcb7e04f5592be22db7075bf25</code>, recorded a new durable-mutation assertion in <code>verify-8</code> while candidate, repeat and base exited 1 with different failure sets. Terminal: <code>Pass</code>.</td>
+          <td>Whole-run environment attribution hid the completed candidate-only assertion when another test failed on the base.</td>
+          <td>The repair collects at most three exact-test control pairs using each checkout's pinned envelope. A matching candidate assertion and an observed passing base control supply the existing <code>ProductFailure</code> decision. Aborted, missing or mismatched controls remain <code>ReviewInfra</code>; rejected proofs also lose their product verdict before grading. Shared base failures retain their disposition. No lane transition rule changes.</td>
+        </tr>
       </tbody>
     </table>
 

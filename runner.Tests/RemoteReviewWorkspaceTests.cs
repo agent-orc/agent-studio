@@ -253,6 +253,228 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             BaselineCommand("exit 0"), retried).Status);
     }
 
+    [Theory]
+    [InlineData("Test Run Aborted")]
+    [InlineData("The active test run was aborted. Reason: Test host process crashed")]
+    [InlineData("Test host terminated")]
+    [InlineData("The host process exited unexpectedly")]
+    public void Aborted_host_variants_cannot_supply_completed_assertion_evidence(string output)
+        => Assert.True(ReviewTestFailureAttribution.TestHostAborted(output));
+
+    [Fact]
+    public void Mixed_result_sets_select_only_original_reproduced_candidate_only_assertions()
+    {
+        Assert.Equal(["Product.Tests.A"], ReviewTestFailureAttribution.AssertionsNeedingControl(
+            ["Product.Tests.A", "Product.Tests.B"], ["Product.Tests.A", "Product.Tests.C"], ["Product.Tests.B"]));
+        Assert.Empty(ReviewTestFailureAttribution.AssertionsNeedingControl(
+            ["Product.Tests.B"], ["Product.Tests.B", "Product.Tests.C"], ["Product.Tests.B"]));
+        Assert.Empty(ReviewTestFailureAttribution.AssertionsNeedingControl(
+            ["Product.Tests.A"], ["Product.Tests.A"], []));
+        Assert.Empty(ReviewTestFailureAttribution.AssertionsNeedingControl(
+            ["Product.Tests.A"], ["Product.Tests.C"], ["Product.Tests.B"]));
+        var incomplete = ReviewTestFailureAttribution.Diagnose(
+            ["Product.Tests.A", "Product.Tests.B"], ["Product.Tests.A", "Product.Tests.C"], ["Product.Tests.B"],
+            baselineExitCode: 1, backendTest: true, backendChanged: true);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, incomplete?.Classification);
+        Assert.Contains("Product.Tests.A", string.Join(" ", incomplete!.Evidence));
+    }
+
+    [Fact]
+    public void Assertion_fingerprints_include_multiline_values_and_ignore_other_tests_and_checkout_paths()
+    {
+        static ProcessResult Output(string actual, string workspace, string other) => new(1, $"""
+              Failed Product.Tests.A [1 ms]
+              Error Message:
+            Assert.Equal() Failure: Strings differ
+            Expected: "Value"
+            Actual:   "{actual}"
+            Source: {workspace}/test.cs
+              Stack Trace:
+               at {workspace}/test.cs:line 10
+              Failed Product.Tests.B [1 ms]
+              Error Message:
+            {other}
+            """, "");
+        static string? Fingerprint(ProcessResult output) => ReviewTestFailureAttribution.AssertionFingerprint(
+            "/review", "verify", "Product.Tests.A", output);
+        var first = Fingerprint(Output("Value", "/review/repository", "Assert.True() Failure"));
+        Assert.NotNull(first);
+        var colored = Output("Value", "/review/repository", "Assert.True() Failure");
+        Assert.Equal(first, Fingerprint(new(1, string.Join('\n', colored.StdOut.Split('\n')
+            .Select(line => "\u001b[31m[xUnit.net 00:00:02] " + line + "\u001b[0m")), "")));
+        Assert.Equal(first, Fingerprint(Output("Value", "/review/baseline-clean-abc-123", "Other failure")));
+        Assert.NotEqual(first, Fingerprint(Output("value", "/review/repository", "Assert.True() Failure")));
+        Assert.Null(Fingerprint(new(1, "  Failed Product.Tests.A [1 ms]", "")));
+    }
+
+    [Theory]
+    [InlineData("Product.Tests.A", "FullyQualifiedName=Product.Tests.A")]
+    [InlineData("Product.Tests.A(value: 1)", null)]
+    [InlineData("Product.Tests.A|FullyQualifiedName~Other", null)]
+    public void Exact_test_filter_preserves_the_original_envelope_filter(string test, string? expected)
+    {
+        Assert.Equal(expected, ReviewRepeatFilterPolicy.ExactTestFilter(test));
+        var command = new ReviewCommandDto("verify", "build-tests", "dotnet",
+            ["test", "runner.Tests/Synthetic.csproj", "--filter", "Category!=MachineBound"]);
+        var exact = ReviewTargetedRerunPolicy.Select(command, [test], exactTest: true);
+        if (expected is null) Assert.Same(command, exact);
+        else Assert.Equal("(Category!=MachineBound)&(" + expected + ")", exact.Arguments[^1]);
+    }
+
+    [Theory]
+    [InlineData("matching", "ProductFailure")]
+    [InlineData("different", "ReviewInfra")]
+    [InlineData("absent", "ReviewInfra")]
+    [InlineData("aborted", "ReviewInfra")]
+    [InlineData("unavailable", "ReviewInfra")]
+    [InlineData("initial-aborted", "ReviewInfra")]
+    [InlineData("repeat-aborted", "ReviewInfra")]
+    [InlineData("base-aborted", "ReviewInfra")]
+    [InlineData("control-aborted", "ReviewInfra")]
+    [InlineData("base-theory", "ReviewInfra")]
+    [InlineData("bounded", "ProductFailure")]
+    [InlineData("declarations", "ProductFailure")]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Mixed_failures_require_matching_exact_assertion_and_observed_base_control(
+        string control, string expected)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string sha;
+        if (control == "declarations")
+        {
+            static string Definition(string key, string value) => $"""
+                schemaVersion: 1
+                stack: [dotnet]
+                commands:
+                  prepare: .agent-studio/prepare
+                  test: [echo test]
+                environment:
+                  {key}: {value}
+                """;
+            await SeedOriginWithFilesAsync(new Dictionary<string, string>
+            {
+                [".agent-studio/project.yml"] = Definition("PROJECT_ASSERTION_BASE", "healthy"),
+                [".agent-studio/prepare"] = "#!/bin/sh\nexit 0\n",
+            });
+            (_, sha) = await SeedSubjectBranchWithFileAsync("task/new-failure", ".agent-studio/project.yml",
+                Definition("PROJECT_ASSERTION_CANDIDATE", "delivery"));
+            Assert.Equal("delivery", ProjectDefinitionReader.ReadWorkspace(Path.Combine(_root, "seed"))
+                .Definition!.Environment["PROJECT_ASSERTION_CANDIDATE"]);
+        }
+        else (_, sha) = await SeedSubjectBranchAsync();
+        var tool = Path.Combine(_root, "dotnet");
+        await File.WriteAllTextAsync(tool, """
+            #!/bin/sh
+            [ "$1" = test ] && printf '%s\n' "$*" >> "$0.calls"
+            exact=false
+            for arg in "$@"; do
+              case "$arg" in *FullyQualifiedName=Product.Tests.A*) exact=true;; esac
+            done
+            if $exact; then
+              if grep -q subject product.txt || [ "$PROJECT_ASSERTION_CANDIDATE" = delivery ]; then
+                actual=409
+                [ 'CONTROL' = different ] && actual=500
+                printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual %s\n' "$actual"
+                [ 'CONTROL' = aborted ] && printf 'Test Run Aborted\n'
+                exit 1
+              fi
+              [ 'CONTROL' = declarations ] && [ "$PROJECT_ASSERTION_BASE" != healthy ] && exit 2
+              [ 'CONTROL' = unavailable ] && exit 2
+              [ 'CONTROL' = absent ] && { printf 'No test matches the given testcase filter\n'; exit 0; }
+              [ 'CONTROL' = base-theory ] && { printf '  Passed Product.Tests.A(value: 1) [1 ms]\nTotal tests: 1\n'; exit 0; }
+              printf '  Passed Product.Tests.A [1 ms]\nTotal tests: 1\n'
+              [ 'CONTROL' = control-aborted ] && printf 'Test Run Aborted\n'
+              exit 0
+            fi
+            if grep -q subject product.txt || [ "$PROJECT_ASSERTION_CANDIDATE" = delivery ]; then
+              printf '  Failed Product.Tests.A [1 ms]\n  Error Message:\nAssert.Equal() Failure: expected 204, actual 409\n'
+              case "$PWD" in
+                *clean-repeat-*) other=C; [ 'CONTROL' = repeat-aborted ] && printf 'Test Run Aborted\n';;
+                *) other=B; [ 'CONTROL' = initial-aborted ] && printf 'Test Run Aborted\n';;
+              esac
+              if [ 'CONTROL' = bounded ]; then
+                for extra in D E F; do
+                  printf '  Failed Product.Tests.%s [1 ms]\n  Error Message:\nAssert.True() Failure\n' "$extra"
+                done
+              fi
+              printf '  Failed Product.Tests.%s [1 ms]\n  Error Message:\nAssert.True() Failure\n' "$other"
+            else
+              printf '  Failed Product.Tests.B [1 ms]\n  Error Message:\nAssert.True() Failure\n'
+              [ 'CONTROL' = base-aborted ] && printf 'Test Run Aborted\n'
+            fi
+            exit 1
+            """.Replace("CONTROL", control, StringComparison.Ordinal));
+        File.SetUnixFileMode(tool, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = new ReviewCommandDto("verify-mixed", "build-tests", tool,
+            ["test", "runner.Tests/Synthetic.csproj", "--filter", "Category!=MachineBound"], CompareToBaseline: true);
+        var (workspace, subject) = Workspace("mixed-" + control, sha, [command], 26400,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(
+            Report(evidence, workspace), subject.Plan);
+
+        Assert.Equal(expected, evidence.Outcome);
+        Assert.Equal(expected, normalized.Outcome);
+        var candidate = CandidateVerification(evidence);
+        Assert.Contains("Product.Tests.A", candidate.NewFailures!);
+        Assert.Contains("Product.Tests.B", candidate.PreExistingFailures!);
+        Assert.Contains("Product.Tests.A", Assert.Single(evidence.Verdicts).Summary);
+        var exactInvocations = (await File.ReadAllLinesAsync(tool + ".calls"))
+            .Where(line => line.Contains("FullyQualifiedName=", StringComparison.Ordinal)).ToArray();
+        Assert.InRange(exactInvocations.Length, 0, ReviewRepeatFilterPolicy.MaximumAssertionControls * 2);
+        Assert.InRange(candidate.AssertionEvidence.Count, 1, ReviewRepeatFilterPolicy.MaximumAssertionControls);
+        var proof = candidate.AssertionEvidence[0];
+        Assert.Equal("Product.Tests.A", proof.Test);
+        if (expected == "ReviewInfra")
+        {
+            Assert.NotNull(proof.IncompleteReason);
+            Assert.Contains("Incomplete exact-test evidence", Assert.Single(evidence.Verdicts).Summary);
+            return;
+        }
+        Assert.Null(proof.IncompleteReason);
+        Assert.Equal(proof.Fingerprint, proof.RepeatFingerprint);
+        Assert.True(ReviewRepeatFilterPolicy.HasCompleteAssertionProof(proof, candidate, evidence.Commands));
+        Assert.Equal("Product.Tests.A", Assert.Single(evidence.Verdicts).Missing);
+        var reduced = ReviewReportArtifactBudget.Reduce(Report(evidence, workspace));
+        var serialized = System.Text.Json.JsonSerializer.Serialize(reduced);
+        var replay = System.Text.Json.JsonSerializer.Deserialize<ReviewReportRequest>(serialized)!;
+        Assert.Equal("ProductFailure", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(replay, subject.Plan).Outcome);
+        if (control == "bounded")
+        {
+            Assert.Equal(3, candidate.AssertionEvidence.Count);
+            Assert.DoesNotContain(candidate.AssertionEvidence, item => item.Test == "Product.Tests.F");
+            Assert.Equal(4, exactInvocations.Length);
+            Assert.DoesNotContain(exactInvocations, line => line.Contains("FullyQualifiedName=Product.Tests.F", StringComparison.Ordinal));
+            return;
+        }
+        var broken = new[]
+        {
+            proof with { RepeatFingerprint = "different" },
+            proof with { Filter = "FullyQualifiedName~Product.Tests." },
+            proof with { Repeat = proof.Repeat! with { Envelope = null } },
+            proof with { Repeat = proof.Repeat! with { HostId = "another-host" } },
+            proof with { Control = proof.Control! with { ExecutorId = "another-executor" } },
+            proof with { Repeat = proof.Repeat! with { BaselineCacheHit = true } },
+            proof with { Control = proof.Control! with { DependencyCacheHit = true } },
+            proof with { Control = proof.Control! with { RepeatObservedTests = [] } },
+            proof with { Control = proof.Control! with { HeadBefore = sha } },
+            proof with { Control = proof.Control! with { Envelope = proof.Control!.Envelope! with { DeclaredEnvironmentDigest = "wrong-tree" } } },
+            proof with { IncompleteReason = "test-host crash" },
+        };
+        foreach (var invalid in broken)
+        {
+            var report = reduced with { Commands = reduced.Commands.Select(item => item == candidate
+                ? item with { AssertionEvidence = [invalid] } : item).ToArray() };
+            Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(report, subject.Plan).Outcome);
+        }
+        var absent = reduced with { Commands = reduced.Commands.Select(item => item == candidate
+            ? item with { AssertionEvidence = [] } : item).ToArray() };
+        Assert.Equal("ReviewInfra", AgentStudio.OrchestrationDecisions.ReviewMeasurementPolicy.NormalizeReport(absent, subject.Plan).Outcome);
+    }
+
     [Fact]
     public void Varying_failed_tests_across_candidate_repeat_and_baseline_are_non_blocking()
     {

@@ -53,7 +53,7 @@ internal static class ReviewFailureFingerprint
             root + @"[/\\](?:baseline-runtime-[0-9a-f]+[/\\])?(home|tmp|cache)(?![\w-])",
             "<$1>", RegexOptions.IgnoreCase);
         output = Regex.Replace(output,
-            root + @"[/\\](?:repository|clean-repeat-[0-9a-f]+(?:-[0-9a-f]+)?|baseline-[0-9a-f]+)(?![\w-])",
+            root + @"[/\\](?:repository|clean-repeat-[0-9a-f]+(?:-[0-9a-f]+)?|baseline-(?:clean-)?[0-9a-f]+(?:-[0-9a-f]+)?)(?![\w-])",
             "<workspace>", RegexOptions.IgnoreCase);
         output = Regex.Replace(output,
             root + @"[/\\]clean-dependency-cache(?![\w-])",

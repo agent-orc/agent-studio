@@ -1104,6 +1104,17 @@ public sealed class RemoteReviewWorkspace
                         repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                 }
                 var requiredComparison = RequireBaselineComparison(comparison, command);
+                var backendChanged = await BackendChangedAgainstBaselineAsync(command, requiredComparison.BaselineSha, ct);
+                IReadOnlyList<string> assertionTests = cleanRepeat is null || ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                    || !ReviewTestFailureAttribution.IsTestCommand(command)
+                    ? [] : ReviewTestFailureAttribution.AssertionsNeedingControl(
+                        requiredComparison.InitialFailures,
+                        QuarantinePartition(ParsedTestFailures(cleanRepeat.Process)).Blocking,
+                        requiredComparison.BaselineFailures);
+                if (backendChanged == false) assertionTests = [];
+                IReadOnlyList<ReviewAssertionEvidenceDto> assertionProofs = assertionTests.Count == 0 ? []
+                    : await MeasureAssertionsAsync(command, requiredComparison, assertionTests,
+                        execution, cleanRepeat!, backendChanged, artifacts, ct);
                 var cacheDefect = await RepeatCachedBaselineCleanAsync(
                     command, requiredComparison, execution, cleanRepeat, commands, artifacts, ct);
                 comparison = cacheDefect is not null
@@ -1112,7 +1123,9 @@ public sealed class RemoteReviewWorkspace
                     ? requiredComparison with { BaselineExitCode = 0, Diagnosis = cacheDefect }
                     : requiredComparison with
                     {
-                        Diagnosis = (ReviewTestFailureAttribution.IsTestCommand(command)
+                        Diagnosis = assertionProofs.Count > 0
+                            ? ReviewTestFailureAttribution.DiagnoseAssertions(assertionProofs)
+                            : (ReviewTestFailureAttribution.IsTestCommand(command)
                                      && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
                             ? ReviewTestFailureAttribution.Diagnose(
                                         requiredComparison.InitialFailures,
@@ -1120,7 +1133,7 @@ public sealed class RemoteReviewWorkspace
                                         requiredComparison.BaselineFailures,
                                         requiredComparison.BaselineExitCode,
                                         ReviewTestFailureAttribution.IsBackendTestCommand(command),
-                                        await BackendChangedAgainstBaselineAsync(command, requiredComparison.BaselineSha, ct),
+                                        backendChanged,
                                         cleanRepeat is null
                                             ? [execution.Process.StdOut + execution.Process.StdErr]
                                             : [execution.Process.StdOut + execution.Process.StdErr,
@@ -1141,7 +1154,20 @@ public sealed class RemoteReviewWorkspace
                             : await DiagnoseFailureAsync(
                                 command, requiredComparison, execution, cleanRepeat, ct)),
                     };
-                if (ReviewMeasurementPolicy.MustMeasureTargetMerge(comparison.BaselineSha,
+                if (assertionProofs.Count > 0)
+                    comparison = comparison with
+                    {
+                        AssertionEvidence = assertionProofs,
+                        NewFailures = assertionTests,
+                    };
+                if (assertionTests.Count > ReviewRepeatFilterPolicy.MaximumAssertionControls)
+                    comparison = comparison with { Diagnosis = comparison.Diagnosis! with
+                    {
+                        Evidence = comparison.Diagnosis.Evidence.Append(
+                            $"Exact-test controls limited to {ReviewRepeatFilterPolicy.MaximumAssertionControls} of {assertionTests.Count} assertions.").ToArray(),
+                    } };
+                if ((assertionProofs.Count == 0 || comparison.Diagnosis?.ChargesCard == true)
+                    && ReviewMeasurementPolicy.MustMeasureTargetMerge(comparison.BaselineSha,
                         _integrationHeadSha, comparison.BaselineExitCode, execution.Process.ExitCode))
                     comparison = await MeasureRepairedTargetAsync(command, comparison, commands, artifacts, ct);
                 if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
@@ -2140,6 +2166,7 @@ public sealed class RemoteReviewWorkspace
             ModelUsage = agentUsage?.ModelUsage,
             Envelope = envelope,
             QuarantinedFailures = QuarantinePartition(ParsedTestFailures(process)).Ignored,
+            AssertionEvidence = comparison?.AssertionEvidence ?? [],
         };
     }
 
@@ -2668,7 +2695,10 @@ public sealed class RemoteReviewWorkspace
             failures,
             SubjectFailures(command, subjectResult),
             cacheHit: false,
-            execution.Process.ExitCode);
+            execution.Process.ExitCode) with
+        {
+            BaselineHostAborted = ReviewTestFailureAttribution.TestHostAborted(execution.Process.StdOut + execution.Process.StdErr),
+        };
     }
 
     private async Task<CommandExecution> RunCleanRepeatAsync(
@@ -2779,6 +2809,93 @@ public sealed class RemoteReviewWorkspace
             try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
             catch (IOException exception) { _log($"clean repeat clone removal failed: {exception.Message}"); }
         }
+    }
+
+    /// <summary>Each exact candidate repeat and base control has a fresh checkout and its own tree's envelope.</summary>
+    private async Task<IReadOnlyList<ReviewAssertionEvidenceDto>> MeasureAssertionsAsync(
+        ReviewCommandDto command, BaselineComparison comparison, IReadOnlyList<string> tests,
+        CommandExecution first, CommandExecution clean, bool? backendChanged,
+        ICollection<ReviewArtifactEvidenceDto> artifacts, CancellationToken ct)
+    {
+        var proofs = new List<ReviewAssertionEvidenceDto>();
+        foreach (var test in tests.Take(ReviewRepeatFilterPolicy.MaximumAssertionControls))
+        {
+            var filter = ReviewRepeatFilterPolicy.ExactTestFilter(test);
+            var fingerprint = ReviewTestFailureAttribution.AssertionFingerprint(AttemptRoot, command.StepId, test, first.Process);
+            ReviewCommandEvidenceDto? repeat = null, control = null;
+            string? repeatFingerprint = null;
+            string? reason = null;
+            if (comparison.BaselineHostAborted
+                || ReviewTestFailureAttribution.TestHostAborted(first.Process.StdOut + first.Process.StdErr)
+                || ReviewTestFailureAttribution.TestHostAborted(clean.Process.StdOut + clean.Process.StdErr))
+                reason = "test-host crash interrupted the mixed run";
+            else if (first.Signal is not null || clean.Signal is not null
+                || first.Process.ExitCode is not (> 0 and < 124) || clean.Process.ExitCode is not (> 0 and < 124))
+                reason = "mixed run did not complete normally";
+            else if (ReviewTestFailureAttribution.IsBackendTestCommand(command) && backendChanged != true)
+                reason = "backend diff does not establish a changed backend";
+            else if (filter is null || fingerprint is null)
+                reason = "exact test identity or assertion fingerprint unavailable";
+            else
+            {
+                var narrowed = ReviewTargetedRerunPolicy.Select(command, [test], exactTest: true);
+                if (ReferenceEquals(narrowed, command))
+                    reason = "command cannot safely select an exact test";
+                else
+                {
+                    narrowed = ReviewTargetedRerunPolicy.WithPassedTestNames(narrowed);
+                    try
+                    {
+                        var local = new List<ReviewCommandEvidenceDto>();
+                        var role = $"assertion-{SafeSegment(command.StepId)}-{proofs.Count + 1}";
+                        var measured = await RunCleanBaselineAsync(narrowed, _subject.ExpectedResultSha,
+                            local, artifacts, ct, role + "-candidate");
+                        repeat = local.LastOrDefault(item => item.StepId == command.StepId);
+                        repeatFingerprint = ReviewTestFailureAttribution.AssertionFingerprint(
+                            AttemptRoot, command.StepId, test, measured.Execution.Process);
+                        if (ReviewTestFailureAttribution.TestHostAborted(measured.Execution.Process.StdOut + measured.Execution.Process.StdErr))
+                            reason = "candidate exact-test repeat aborted its test host";
+                        else if (measured.BlockedByBuild || repeat is null
+                            || measured.Execution.Signal is not null
+                            || measured.Execution.Process.ExitCode is not (> 0 and < 124)
+                            || !ParsedTestFailures(measured.Execution.Process).SequenceEqual([test], StringComparer.Ordinal))
+                            reason = "candidate exact-test repeat did not complete with only the selected failure";
+                        else if (fingerprint != repeatFingerprint)
+                            reason = "candidate exact-test repeat has a different assertion fingerprint";
+                        else
+                        {
+                            // Like the class repeat, retain the frozen arguments and record the narrowing separately.
+                            repeat = repeat with { RepeatFilter = filter, Arguments = command.Arguments };
+                            local.Clear();
+                            var baseline = await RunCleanBaselineAsync(narrowed, comparison.BaselineSha,
+                                local, artifacts, ct, "baseline-" + role + "-control");
+                            control = local.LastOrDefault(item => item.StepId == command.StepId);
+                            // Class repeats accept method-level observations; an exact control must preserve the case.
+                            var exactOutput = string.Join('\n', baseline.Execution.Process.StdOut.Split('\n')
+                                .Where(line => !line.Contains(test + "(", StringComparison.Ordinal)));
+                            var observed = ReviewTargetedRerunPolicy.ObservedPassingFailures(exactOutput, [test]);
+                            if (control is not null)
+                                control = control with
+                                {
+                                    RepeatFilter = filter, RepeatObservedTests = observed, Arguments = command.Arguments,
+                                };
+                            if (ReviewTestFailureAttribution.TestHostAborted(baseline.Execution.Process.StdOut + baseline.Execution.Process.StdErr))
+                                reason = "base exact-test control aborted its test host";
+                            else if (baseline.BlockedByBuild || control is null || baseline.Execution.Signal is not null
+                                || !baseline.Execution.Process.Success
+                                || observed.Count != 1)
+                                reason = "base exact-test control unavailable, failed, or did not observe the selected test passing";
+                        }
+                    }
+                    catch (ReviewInfrastructureException exception)
+                    {
+                        reason = $"exact-test control unavailable: {exception.Classification}: {exception.Message}";
+                    }
+                }
+            }
+            proofs.Add(new(test, filter, fingerprint, repeatFingerprint, repeat, control, reason));
+        }
+        return proofs;
     }
 
     /// <summary>
@@ -3216,7 +3333,10 @@ public sealed class RemoteReviewWorkspace
             cacheHit: true,
             cached.ExitCode,
             cached.AttemptId,
-            age);
+            age) with
+        {
+            BaselineHostAborted = ReviewTestFailureAttribution.TestHostAborted(cached.StdOut + cached.StdErr),
+        };
     }
 
     /// <summary>
@@ -4316,7 +4436,9 @@ public sealed class RemoteReviewWorkspace
                 $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})",
                 $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
                 diagnosis.ChargesCard
-                    ? comparison.InitialFailures.Count > 0
+                    ? comparison.AssertionEvidence.Count > 0
+                        ? string.Join(", ", comparison.AssertionEvidence.Where(proof => proof.IncompleteReason is null).Select(proof => proof.Test))
+                        : comparison.InitialFailures.Count > 0
                         ? string.Join(", ", comparison.InitialFailures)
                         : $"failed command {command.StepId}"
                     : "none",
@@ -4765,6 +4887,8 @@ internal sealed record BaselineComparison(
 {
     public IReadOnlyList<string> InitialFailures { get; init; } = [];
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
+    public IReadOnlyList<ReviewAssertionEvidenceDto> AssertionEvidence { get; init; } = [];
+    public bool BaselineHostAborted { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
     /// the verdict summary, the Markdown grade, and the card projection.
@@ -4823,6 +4947,7 @@ internal sealed record BaselineComparison(
         return retried with
         {
             InitialFailures = InitialFailures,
+            BaselineHostAborted = BaselineHostAborted,
             PreExistingFailures = InitialFailures.Concat(subjectFailures)
                 .Where(baseline.Contains)
                 .Distinct(StringComparer.Ordinal)
