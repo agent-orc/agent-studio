@@ -9,9 +9,11 @@ using Microsoft.Win32.SafeHandles;
 
 namespace AgentRunner.WorkContainers;
 
-/// <summary>What the root-side launcher trusts: the networks of the applied, verified work zone.</summary>
+/// <summary>Root-controlled launch prerequisites and authenticated attempt or daemon authority.</summary>
 public sealed record WorkContainerLauncherContext(IReadOnlySet<string> WorkZoneNetworks)
 {
+    public WorkContainerAttemptCapability? AttemptCapability { get; init; }
+    public bool DaemonCapability { get; init; }
     public RoleImageManifest ApprovedImages { get; init; } = RoleImageManifest.Empty();
     public IReadOnlySet<string> BindSources { get; init; } = new HashSet<string>(StringComparer.Ordinal);
     public IReadOnlySet<string> Volumes { get; init; } = new HashSet<string>(StringComparer.Ordinal);
@@ -39,6 +41,16 @@ public static class WorkContainerLauncherPolicy
     };
 
     public static string? Refusal(IReadOnlyList<string> args, WorkContainerLauncherContext context)
+    {
+        if (ShapeRefusal(args, context) is { } refusal) return refusal;
+        if (context.AttemptCapability is { } scope) return scope.Refusal(args);
+        if (!context.DaemonCapability) return "attempt-capability-required.";
+        return args[0] is "version" or "image" or "pull" or "ps" or "logs" or "rm" or "inspect"
+               || args is ["volume", "ls" or "rm", ..]
+            ? null : "operation-requires-attempt-capability.";
+    }
+
+    private static string? ShapeRefusal(IReadOnlyList<string> args, WorkContainerLauncherContext context)
     {
         if (args.Count == 0) return "empty: no runtime command.";
         var a = args.ToArray();
@@ -313,8 +325,207 @@ public static class WorkContainerLauncherPolicy
     }
 }
 
+/// <summary>Daemon-issued authority. Resource and cache names are derived, never supplied by the socket caller.</summary>
+public sealed record WorkContainerAttemptCapability(
+    WorkContainerAttempt Attempt, int CacheVersion, IReadOnlyDictionary<string, string> Labels,
+    IReadOnlyList<string> Operations)
+{
+    public const string RepositoryLabel = "agent-studio.repository";
+    public string Container => $"agent-work-{WorkContainerLaunchPlanner.Sanitize(Attempt.AttemptId)}-f{Attempt.Fence.ToString(CultureInfo.InvariantCulture)}";
+    public string PrepareContainer => Container + "-prepare";
+    public IReadOnlySet<string> Volumes => new HashSet<string>(new[] { Container }.Concat(
+        new[] { "npm", "nuget", "repo" }.Select(cache => WorkContainerLaunchPlanner.CacheVolume(cache, Attempt.RepositoryKey, CacheVersion))), StringComparer.Ordinal);
+
+    public static WorkContainerAttemptCapability For(WorkContainerAttempt attempt, WorkContainerLaunchPlan plan, int cacheVersion)
+        => new(attempt, cacheVersion, plan.Labels,
+            ["version", "image", "pull", "create", "run", "volume", "start", "wait", "logs", "inspect", "rm", "exec"]);
+
+    internal IReadOnlyDictionary<string, string> ResourceLabels(string name)
+    {
+        var labels = name == Container || name == PrepareContainer
+            ? new Dictionary<string, string>(Labels) { [RepositoryLabel] = Attempt.RepositoryKey }
+            : new Dictionary<string, string>
+            {
+                [WorkContainerLaunchPlanner.ManagedLabel] = "1", [RepositoryLabel] = Attempt.RepositoryKey,
+            };
+        // Preparation reserves no execution grant.
+        if (name == PrepareContainer) labels.Remove(WorkContainerLaunchPlanner.GrantLabel);
+        return labels;
+    }
+
+    internal string? Refusal(IReadOnlyList<string> args)
+    {
+        if (!Operations.Contains(args[0])) return "operation-outside-capability.";
+        var name = args switch
+        {
+            ["start" or "wait", var resource] => resource,
+            ["logs", _, var resource] => resource,
+            ["inspect", _, _, var resource] => resource,
+            ["rm", _, _, var resource] => resource,
+            ["exec", _, var resource, ..] => resource,
+            ["volume", "rm", _, var resource] => resource,
+            ["volume", "create", ..] => args[^1],
+            _ => WorkContainerLauncherPolicy.Values(args, "--name").SingleOrDefault(),
+        };
+        if (name is not null && name != Container && name != PrepareContainer) return "resource-outside-capability.";
+        if ((args[0] == "create" || args is ["volume", ..]) && name is not null && name != Container)
+            return "resource-kind-outside-capability.";
+        if (args[0] == "run" && name != PrepareContainer) return "resource-kind-outside-capability.";
+        if (args[0] is "image" or "pull" && args[^1] != Labels[WorkContainerLaunchPlanner.ImageLabel])
+            return "image-outside-capability.";
+        if (args is ["volume", "ls", ..] || args[0] == "ps") return "inventory-requires-daemon-capability.";
+        if (args[0] is "create" or "run" || args is ["volume", "create", ..])
+        {
+            var labels = WorkContainerLauncherPolicy.Values(args, "--label").ToArray();
+            // volume has a two-word verb, unlike create/run.
+            if (args[0] == "volume") labels = args.Skip(2).Where((_, index) => index % 2 == 1).ToArray();
+            var expected = Labels.Where(pair => args[0] != "run" || pair.Key != WorkContainerLaunchPlanner.GrantLabel).ToArray();
+            if (expected.Any(pair => labels.Count(label => label == $"{pair.Key}={pair.Value}") != 1)
+                || labels.Length != expected.Length) return "labels-outside-capability.";
+        }
+        foreach (var mount in WorkContainerLauncherPolicy.Values(args, "--mount").Select(WorkContainerLauncherPolicy.ParseMount).OfType<WorkContainerMount>())
+        {
+            if (mount.Type == "volume" && !Volumes.Contains(mount.Source)) return "cache-outside-capability.";
+            if (mount.Type == "bind" && mount.Source != Attempt.RepositorySource) return "source-outside-capability.";
+        }
+        if (args[0] == "create" && WorkContainerLauncherPolicy.Values(args, "--user").SingleOrDefault()
+            != Labels[WorkContainerIdentity.UidLabel] + ":" + WorkContainerIdentity.GroupId.ToString(CultureInfo.InvariantCulture))
+            return "identity-outside-capability.";
+        if (args[0] == "run" && args[^1] != Labels[WorkContainerIdentity.UidLabel]) return "identity-outside-capability.";
+        foreach (var env in WorkContainerLauncherPolicy.Values(args, "--env"))
+            if (env.StartsWith("AGENT_REPOSITORY_KEY=", StringComparison.Ordinal) && env != "AGENT_REPOSITORY_KEY=" + Attempt.RepositoryKey)
+                return "repository-outside-capability.";
+        return null;
+    }
+}
+
+/// <summary>Persisted bearer hashes and fence tombstones, shared by socket-activated launcher processes.</summary>
+public sealed class WorkContainerLauncherAuthority
+{
+    public sealed record Entry(string Hash, WorkContainerAttemptCapability Scope, bool Revoked = false);
+    public List<Entry> Entries { get; init; } = [];
+
+    private static string Hash(string value) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    internal static bool Matches(string? supplied, string expected)
+        => supplied is not null && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(Hash(supplied)), Encoding.UTF8.GetBytes(Hash(expected)));
+
+    public string Issue(WorkContainerAttemptCapability scope)
+    {
+        WorkContainerLaunchPlanner.Validate(scope.Attempt, scope.Labels[WorkContainerLaunchPlanner.ImageLabel]);
+        if (scope.CacheVersion < 1 || scope.Attempt.Fence < 1) throw new InvalidDataException("Invalid capability scope.");
+        if (Entries.Any(current => SameAttempt(current.Scope, scope) && (current.Scope.Attempt.Fence > scope.Attempt.Fence
+            || (current.Scope.Attempt.Fence == scope.Attempt.Fence && (current.Revoked
+                || current.Scope.Attempt.LeaseId != scope.Attempt.LeaseId
+                || current.Scope.Attempt.RepositoryKey != scope.Attempt.RepositoryKey)))))
+            throw new InvalidDataException("Stale attempt fence or conflicting lease.");
+        var identityLabels = new Dictionary<string, string>
+        {
+            [WorkContainerLaunchPlanner.ManagedLabel] = "1", [WorkContainerLaunchPlanner.HostLabel] = scope.Attempt.HostId,
+            [WorkContainerLaunchPlanner.RoleLabel] = scope.Attempt.Role, [WorkContainerLaunchPlanner.AttemptLabel] = scope.Attempt.AttemptId,
+            [WorkContainerLaunchPlanner.LeaseLabel] = scope.Attempt.LeaseId,
+            [WorkContainerLaunchPlanner.FenceLabel] = scope.Attempt.Fence.ToString(CultureInfo.InvariantCulture),
+            [WorkContainerLaunchPlanner.EpochLabel] = scope.Attempt.AuthorityEpoch.ToString(CultureInfo.InvariantCulture),
+        };
+        if (identityLabels.Any(pair => scope.Labels.GetValueOrDefault(pair.Key) != pair.Value)
+            || Entries.Any(entry => entry.Scope.Container == scope.Container && !SameAttempt(entry.Scope, scope)))
+            throw new InvalidDataException("Capability labels or resource identities conflict.");
+        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        Entries.Add(new(Hash(token), scope));
+        return token;
+    }
+
+    private static bool SameAttempt(WorkContainerAttemptCapability a, WorkContainerAttemptCapability b)
+        => a.Attempt.HostId == b.Attempt.HostId && a.Attempt.AttemptId == b.Attempt.AttemptId;
+
+    public WorkContainerAttemptCapability? Resolve(string? token)
+    {
+        if (token is null) return null;
+        var hash = Hash(token);
+        var entry = Entries.SingleOrDefault(item => item.Hash == hash);
+        if (entry is null || entry.Revoked || Entries.Any(other => SameAttempt(other.Scope, entry.Scope)
+            && (other.Scope.Attempt.Fence > entry.Scope.Attempt.Fence
+                || (other.Scope.Attempt.Fence == entry.Scope.Attempt.Fence && other.Revoked)))) return null;
+        return entry.Scope;
+    }
+
+    public void Reconcile(WorkContainerLauncherReconciliation reconciliation)
+    {
+        var byAttempt = reconciliation.Authority.GroupBy(item => item.AttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Fence).First(), StringComparer.Ordinal);
+        for (var index = 0; index < Entries.Count; index++)
+        {
+            var entry = Entries[index];
+            var attempt = entry.Scope.Attempt;
+            if (attempt.HostId != reconciliation.HostId) continue;
+            var live = byAttempt.GetValueOrDefault(attempt.AttemptId);
+            if (live is null || !live.Live || live.Fence != attempt.Fence || live.LeaseId != attempt.LeaseId)
+                Entries[index] = entry with { Revoked = true };
+        }
+    }
+
+    public void Revoke(string token)
+    {
+        var index = Entries.FindIndex(item => item.Hash == Hash(token));
+        if (index >= 0) Entries[index] = Entries[index] with { Revoked = true };
+    }
+}
+
+/// <summary>One async execution flow, including decorated runtimes, carries only its own attempt bearer.</summary>
+internal sealed class WorkContainerLauncherSession : IDisposable
+{
+    private static readonly AsyncLocal<WorkContainerLauncherSession?> Current = new();
+    private readonly WorkContainerLauncherSession? _previous = Current.Value;
+    private readonly string? _socket;
+    internal string? Token { get; private set; }
+    internal static string? CurrentToken => Current.Value?.Token;
+    internal WorkContainerLauncherSession(string? socket)
+    {
+        _socket = socket;
+        Current.Value = this;
+    }
+
+    internal async Task AuthorizeAsync(WorkContainerAttempt attempt, WorkContainerLaunchPlan plan, int cacheVersion, CancellationToken ct)
+    {
+        if (_socket is null) return;
+        var daemon = await WorkContainerLauncherCommand.ReadDaemonCapabilityAsync(ct);
+        var result = await WorkContainerLauncherClient.RunAsync(_socket, ["capability", "issue"], null, ct,
+            daemon, WorkContainerAttemptCapability.For(attempt, plan, cacheVersion));
+        if (!result.Success) throw new InvalidDataException("Launcher attempt capability was refused.");
+        Token = result.StdOut;
+    }
+
+    internal async Task RevokeAsync()
+    {
+        if (_socket is null || Token is null) return;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var result = await WorkContainerLauncherClient.RunAsync(_socket, ["capability", "revoke"], null, deadline.Token, Token);
+        if (!result.Success) throw new InvalidDataException("Launcher attempt capability revocation failed.");
+    }
+
+    internal static async Task ReconcileAuthorityAsync(string? socket, string hostId,
+        IReadOnlyList<WorkAttemptAuthority> authority, CancellationToken ct)
+    {
+        if (socket is null) return;
+        var daemon = await WorkContainerLauncherCommand.ReadDaemonCapabilityAsync(ct);
+        var result = await WorkContainerLauncherClient.RunAsync(socket, ["capability", "reconcile"], null, ct,
+            daemon, reconciliation: new(hostId, authority));
+        if (!result.Success) throw new InvalidDataException("Launcher authority reconciliation failed.");
+    }
+
+    public void Dispose()
+    {
+        Token = null;
+        Current.Value = _previous;
+    }
+}
+
 /// <summary>One launcher call: the runtime arguments and, for the secret injection only, stdin.</summary>
-public sealed record WorkContainerLauncherRequest(IReadOnlyList<string> Arguments, string? Stdin);
+public sealed record WorkContainerLauncherReconciliation(string HostId, IReadOnlyList<WorkAttemptAuthority> Authority);
+
+public sealed record WorkContainerLauncherRequest(IReadOnlyList<string> Arguments, string? Stdin,
+    string? Capability = null, WorkContainerAttemptCapability? Scope = null,
+    WorkContainerLauncherReconciliation? Reconciliation = null);
 
 public sealed record WorkContainerLauncherResponse(int ExitCode, string StdOut, string StdErr);
 
@@ -328,14 +539,16 @@ public static class WorkContainerLauncherClient
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public static async Task<ProcessResult> RunAsync(
-        string socketPath, IReadOnlyList<string> arguments, string? stdin, CancellationToken ct)
+        string socketPath, IReadOnlyList<string> arguments, string? stdin, CancellationToken ct,
+        string? capability = null, WorkContainerAttemptCapability? scope = null,
+        WorkContainerLauncherReconciliation? reconciliation = null)
     {
         try
         {
             using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct);
             await using var stream = new NetworkStream(socket, ownsSocket: false);
-            var request = JsonSerializer.Serialize(new WorkContainerLauncherRequest(arguments, stdin), Json) + "\n";
+            var request = JsonSerializer.Serialize(new WorkContainerLauncherRequest(arguments, stdin, capability, scope, reconciliation), Json) + "\n";
             await stream.WriteAsync(Encoding.UTF8.GetBytes(request), ct);
             await stream.FlushAsync(ct);
             socket.Shutdown(SocketShutdown.Send);
@@ -390,22 +603,24 @@ public static class WorkContainerLauncherCommand
                 request = null;
             }
             var response = request?.Arguments is { } arguments
-                ? await ExecuteAsync(arguments, arguments is ["exec", ..] ? request.Stdin : null, ct)
+                ? await ExecuteAsync(request with { Stdin = arguments is ["exec", ..] ? request.Stdin : null }, ct)
                 : new WorkContainerLauncherResponse(RefusedExitCode, "", "agent-work-launcher refused: malformed request.");
             if (response.ExitCode == RefusedExitCode) error.WriteLine(response.StdErr.TrimEnd());
             output.WriteLine(JsonSerializer.Serialize(response, Json));
             await output.FlushAsync(ct);
             return 0;
         }
-        var direct = await ExecuteAsync(args, args is ["exec", ..] ? await input.ReadToEndAsync(ct) : null, ct);
+        var direct = await ExecuteAsync(new(args, args is ["exec", ..] ? await input.ReadToEndAsync(ct) : null), ct,
+            trustedOperator: true);
         output.Write(direct.StdOut);
         error.Write(direct.StdErr);
         return direct.ExitCode;
     }
 
     private static async Task<WorkContainerLauncherResponse> ExecuteAsync(
-        IReadOnlyList<string> arguments, string? stdin, CancellationToken ct)
+        WorkContainerLauncherRequest request, CancellationToken ct, bool trustedOperator = false)
     {
+        var arguments = request.Arguments;
         var runtime = Environment.GetEnvironmentVariable(WorkContainerSettings.RuntimeVariable) ?? "docker";
         if (runtime is not ("docker" or "podman"))
             return new(2, "", $"{WorkContainerSettings.RuntimeVariable} must be docker or podman.");
@@ -427,23 +642,181 @@ public static class WorkContainerLauncherCommand
         {
             ApprovedImages = release,
             BindSources = (release.Sources ?? []).ToHashSet(StringComparer.Ordinal),
-            // Candidate names, not runtime authority. ExecuteAdmittedAsync must
-            // resolve these to safe daemon-created volumes before any launch.
-            Volumes = WorkContainerLauncherPolicy.Values(arguments, "--mount")
-                .Select(WorkContainerLauncherPolicy.ParseMount).OfType<WorkContainerMount>()
-                .Where(mount => mount.Type == "volume").Select(mount => mount.Source).ToHashSet(StringComparer.Ordinal),
         };
-        if (WorkContainerLauncherPolicy.Refusal(arguments, context) is { } refusal)
-            return Refused(refusal);
         try
         {
+            if (trustedOperator) request = request with { Capability = await ReadDaemonCapabilityAsync(ct) };
+            var authenticated = await AuthenticateAsync(request, context, ct);
+            if (authenticated.Response is { } response) return response;
+            context = authenticated.Context;
+            if (WorkContainerLauncherPolicy.Refusal(arguments, context) is { } refusal) return Refused(refusal);
             using var executable = ResolveRuntime(runtime, RuntimeSearchDirectories, ct);
-            return await ExecuteAdmittedAsync(arguments, stdin,
+            return await ExecuteAuthorizedAsync(arguments, request.Stdin, context,
                 (call, data, token) => ProcessRunner.RunAsync(executable.ExecutionPath, call, stdin: data, ct: token), ct);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
         {
             return Refused("capability-unavailable: " + ex.Message);
+        }
+    }
+
+    // Provisioned by the operator: root-owned, readable only by the host daemon's
+    // group, never mounted into a work container. Do not accept caller paths.
+    public const string DaemonCapabilityPath = "/etc/agent-host/work-container-daemon-capability";
+    private const string AuthorityDirectory = "/var/lib/agent-work-launcher/authority";
+
+    internal static async Task<string> ReadDaemonCapabilityAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Launcher capabilities require Linux.");
+        using var handle = RoleImageManifest.OpenRootControlled(DaemonCapabilityPath, directory: false);
+        if ((File.GetUnixFileMode(RoleImageManifest.DescriptorPath(handle)) & UnixFileMode.OtherRead) != 0)
+            throw new InvalidDataException("Daemon capability must not be world-readable.");
+        using var reader = new StreamReader(RoleImageManifest.DescriptorPath(handle));
+        var secret = (await reader.ReadToEndAsync(ct)).Trim();
+        if (secret.Length < 64 || secret.Length > 256 || secret.Any(char.IsWhiteSpace))
+            throw new InvalidDataException("Invalid daemon capability configuration.");
+        return secret;
+    }
+
+    private static async Task<(WorkContainerLauncherContext Context, WorkContainerLauncherResponse? Response)> AuthenticateAsync(
+        WorkContainerLauncherRequest request, WorkContainerLauncherContext context, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidDataException("Launcher authority requires Linux.");
+        using (RoleImageManifest.OpenRootControlled("/var/lib", directory: true)) { }
+        const string parent = "/var/lib/agent-work-launcher";
+        if (!Directory.Exists(parent)) Directory.CreateDirectory(parent, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using (RoleImageManifest.OpenRootControlled(parent, directory: true)) { }
+        Directory.CreateDirectory(AuthorityDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using (RoleImageManifest.OpenRootControlled(AuthorityDirectory, directory: true)) { }
+        await using var held = await HostFileOperationLock.AcquireAsync(Path.Combine(AuthorityDirectory, "authority.lock"), ct);
+        var path = Path.Combine(AuthorityDirectory, "capabilities.json");
+        WorkContainerLauncherAuthority authority;
+        if (File.Exists(path))
+        {
+            using var handle = RoleImageManifest.OpenRootControlled(path, directory: false);
+            using var reader = new StreamReader(RoleImageManifest.DescriptorPath(handle));
+            authority = JsonSerializer.Deserialize<WorkContainerLauncherAuthority>(await reader.ReadToEndAsync(ct), Json)
+                ?? throw new InvalidDataException("Invalid launcher authority state.");
+        }
+        else authority = new();
+        var authenticated = Authenticate(request, context, authority, await ReadDaemonCapabilityAsync(ct));
+        if (request.Arguments is ["capability", "issue" or "revoke" or "reconcile"] && authenticated.Response?.ExitCode == 0)
+        {
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var file = new FileStream(temporary, new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None,
+                    Options = FileOptions.WriteThrough, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                }))
+                {
+                    await JsonSerializer.SerializeAsync(file, authority, Json, ct);
+                    file.Flush(flushToDisk: true);
+                }
+                File.Move(temporary, path, overwrite: true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        return authenticated;
+    }
+
+    internal static (WorkContainerLauncherContext Context, WorkContainerLauncherResponse? Response) Authenticate(
+        WorkContainerLauncherRequest request, WorkContainerLauncherContext context,
+        WorkContainerLauncherAuthority authority, string daemonSecret)
+    {
+        var daemon = WorkContainerLauncherAuthority.Matches(request.Capability, daemonSecret);
+        if (request.Arguments is ["capability", "issue"])
+        {
+            if (!daemon || request.Scope is null) return (context, Refused("issuance-requires-daemon-capability."));
+            try { return (context, new(0, authority.Issue(request.Scope), "")); }
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or KeyNotFoundException)
+            {
+                return (context, Refused("invalid-or-stale-capability-scope."));
+            }
+        }
+        if (request.Arguments is ["capability", "reconcile"])
+        {
+            if (!daemon || request.Reconciliation is null) return (context, Refused("reconciliation-requires-daemon-capability."));
+            authority.Reconcile(request.Reconciliation);
+            return (context, new(0, "", ""));
+        }
+        var scope = daemon ? null : authority.Resolve(request.Capability);
+        if (!daemon && scope is null) return (context, Refused("attempt-capability-missing-or-stale."));
+        if (request.Arguments is ["capability", "revoke"])
+        {
+            if (scope is null) return (context, Refused("revocation-requires-attempt-capability."));
+            authority.Revoke(request.Capability!);
+            return (context, new(0, "", ""));
+        }
+        return (context with
+        {
+            DaemonCapability = daemon, AttemptCapability = scope,
+            Volumes = scope?.Volumes ?? new HashSet<string>(StringComparer.Ordinal),
+        }, null);
+    }
+
+    /// <summary>Policy plus runtime ownership checks. No resource output escapes before both succeed.</summary>
+    internal static async Task<WorkContainerLauncherResponse> ExecuteAuthorizedAsync(
+        IReadOnlyList<string> arguments, string? stdin, WorkContainerLauncherContext context,
+        Func<IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>> run, CancellationToken ct,
+        string sourceSnapshotRoot = SourceSnapshotRoot)
+    {
+        if (WorkContainerLauncherPolicy.Refusal(arguments, context) is { } refusal) return Refused(refusal);
+        var volume = arguments is ["volume", "rm" or "create", ..];
+        var name = arguments switch
+        {
+            ["start" or "wait", var resource] => resource,
+            ["logs", _, var resource] => resource,
+            ["inspect", _, _, var resource] => resource,
+            ["rm", _, _, var resource] => resource,
+            ["exec", _, var resource, ..] => resource,
+            ["volume", "rm" or "create", ..] => arguments[^1],
+            _ => null,
+        };
+        if (name is not null)
+        {
+            var inspection = await run(volume
+                ? ["volume", "inspect", "--format", "{{json .}}", name]
+                : ["inspect", "--format", "{{json .Config.Labels}}", name], null, ct);
+            if (inspection.ExitCode == 0)
+            {
+                if (ResourceLabelsRefusal(inspection.StdOut, name, volume, context.AttemptCapability) is { } badLabels)
+                    return Refused(badLabels);
+            }
+            else if (arguments is not ["volume", "create", ..])
+                return Refused("resource-inspection-unavailable.");
+        }
+        var rewritten = arguments.ToList();
+        if (context.AttemptCapability is { } scope && (arguments[0] is "create" or "run" || arguments is ["volume", "create", ..]))
+            rewritten.InsertRange(arguments[0] == "volume" ? 2 : 1,
+                ["--label", WorkContainerAttemptCapability.RepositoryLabel + "=" + scope.Attempt.RepositoryKey]);
+        return await ExecuteAdmittedAsync(rewritten, stdin, run, ct, sourceSnapshotRoot, context.AttemptCapability);
+    }
+
+    internal static string? ResourceLabelsRefusal(string json, string name, bool volume, WorkContainerAttemptCapability? scope)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var labels = volume ? document.RootElement.GetProperty("Labels") : document.RootElement;
+            var actual = labels.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.GetString() ?? "", StringComparer.Ordinal);
+            if (scope is not null)
+                return scope.ResourceLabels(name).All(pair => actual.GetValueOrDefault(pair.Key) == pair.Value)
+                    ? null : "runtime-labels-outside-capability.";
+            // Trusted reconciliation also covers pre-upgrade orphans, but only
+            // actual managed resources whose daemon labels agree with the name.
+            if (actual.GetValueOrDefault(WorkContainerLaunchPlanner.ManagedLabel) != "1"
+                || !actual.TryGetValue(WorkContainerLaunchPlanner.AttemptLabel, out var attempt)
+                || string.IsNullOrWhiteSpace(actual.GetValueOrDefault(WorkContainerLaunchPlanner.LeaseLabel))
+                || !long.TryParse(actual.GetValueOrDefault(WorkContainerLaunchPlanner.FenceLabel), out var fence) || fence < 1)
+                return "runtime-resource-unmanaged.";
+            var expected = $"agent-work-{WorkContainerLaunchPlanner.Sanitize(attempt)}-f{fence.ToString(CultureInfo.InvariantCulture)}";
+            return name == expected || (!volume && name == expected + "-prepare") ? null : "runtime-name-label-mismatch.";
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+        {
+            return "runtime-labels-invalid.";
         }
     }
 
@@ -543,7 +916,7 @@ public static class WorkContainerLauncherCommand
     internal static async Task<WorkContainerLauncherResponse> ExecuteAdmittedAsync(
         IReadOnlyList<string> arguments, string? stdin,
         Func<IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>> run, CancellationToken ct,
-        string sourceSnapshotRoot = SourceSnapshotRoot)
+        string sourceSnapshotRoot = SourceSnapshotRoot, WorkContainerAttemptCapability? scope = null)
     {
         if (arguments[0] is not ("create" or "run"))
         {
@@ -571,13 +944,18 @@ public static class WorkContainerLauncherCommand
             if (inspection.ExitCode != 0)
             {
                 // Never use implicit creation or caller-provided driver options.
-                var created = await run(["volume", "create", "--driver", "local", "--label",
-                    WorkContainerLaunchPlanner.ManagedLabel + "=1", mount.Source], null, ct);
+                var labels = scope?.ResourceLabels(mount.Source) ?? new Dictionary<string, string> { [WorkContainerLaunchPlanner.ManagedLabel] = "1" };
+                var createVolume = new List<string> { "volume", "create", "--driver", "local" };
+                foreach (var pair in labels) createVolume.AddRange(["--label", pair.Key + "=" + pair.Value]);
+                createVolume.Add(mount.Source);
+                var created = await run(createVolume, null, ct);
                 if (created.ExitCode != 0) return Refused("volume-capability-unavailable: daemon volume creation failed.");
                 inspection = await Inspect();
             }
             if (inspection.ExitCode != 0 || VolumeCapabilityRefusal(inspection.StdOut, mount.Source, out var path) is { })
                 return Refused("volume-capability-unavailable: only local daemon volumes without driver options are admitted.");
+            if (scope is not null && ResourceLabelsRefusal(inspection.StdOut, mount.Source, volume: true, scope) is { } badLabels)
+                return Refused(badLabels);
             volumePaths.Add(mount.Source, path!);
         }
         var preparation = arguments[0] == "run";
@@ -590,6 +968,12 @@ public static class WorkContainerLauncherCommand
         var keep = false;
         try
         {
+            if (scope is not null)
+            {
+                var ownership = await run(["inspect", "--format", "{{json .Config.Labels}}", name], null, ct);
+                if (ownership.ExitCode != 0 || ResourceLabelsRefusal(ownership.StdOut, name, volume: false, scope) is { })
+                    return Refused("runtime-labels-outside-capability.");
+            }
             var inspection = await run(["inspect", "--format", "{{json .Mounts}}", name], null, ct);
             if (inspection.ExitCode != 0) return Refused("effective-mount-refused: runtime inspection failed.");
             if (WorkContainerLauncherPolicy.EffectiveMountsRefusal(inspection.StdOut, arguments, volumePaths) is { } badMount)
