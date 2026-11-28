@@ -118,11 +118,13 @@ public sealed class CarWorkerExecutionTests : IDisposable
         if (NodeMissing()) return;
         var fixture = Fixture.Load("p1-happy-done.claude.fixture");
         const string prompt = "Refactor the parser and end with the sentinel.";
+        var baseline = await RunFixtureAsync(fixture, prompt: prompt, unattendedCoding: false);
         var run = await RunFixtureAsync(fixture, prompt: prompt);
 
         // T1 jump 1 - permission injection: no permissionMode on the spec means
         // YOLO, where the legacy remote spawn injected nothing at all.
         Assert.NotNull(run.SpawnedArgv);
+        Assert.Equal(baseline.SpawnedArgv!.ToArray(), run.SpawnedArgv!.ToArray());
         Assert.Contains("--dangerously-skip-permissions", run.SpawnedArgv!);
         Assert.Contains("--output-format", run.SpawnedArgv!);
         Assert.Contains("stream-json", run.SpawnedArgv!);
@@ -217,6 +219,7 @@ public sealed class CarWorkerExecutionTests : IDisposable
         var argv = continued.SpawnedArgv!.ToList();
         var resumeIndex = argv.IndexOf("resume");
         Assert.True(argv.IndexOf("exec") >= 0 && argv.IndexOf("exec") < resumeIndex);
+        AssertUnattendedCodexArguments(argv);
         Assert.Contains(sessionId, argv.Skip(resumeIndex + 1));
         Assert.Contains(argv, argument => argument.Contains("model_reasoning_effort", StringComparison.Ordinal)
             && argument.Contains("low", StringComparison.Ordinal));
@@ -252,12 +255,37 @@ public sealed class CarWorkerExecutionTests : IDisposable
         var fixture = Fixture.Load("p1-happy-done.codex.fixture");
         var run = await RunFixtureAsync(fixture);
 
-        Assert.Equal("exec", run.SpawnedArgv![0]);
+        AssertUnattendedCodexArguments(run.SpawnedArgv!);
         Assert.Contains("--experimental-json", run.SpawnedArgv!);
         Assert.Contains("--sandbox", run.SpawnedArgv!);
         Assert.Contains("danger-full-access", run.SpawnedArgv!);
         Assert.Equal("-", run.SpawnedArgv![^1]); // prompt on stdin
         Assert.Equal(fixture.ExitCode, run.Result.ExitCode);
+    }
+
+    [Fact]
+    public async Task Non_coding_Codex_launch_keeps_its_descriptor_arguments()
+    {
+        if (NodeMissing()) return;
+        var fixture = Fixture.Load("p1-happy-done.codex.fixture");
+        var run = await RunFixtureAsync(fixture, unattendedCoding: false);
+
+        Assert.Equal("exec", run.SpawnedArgv![0]);
+        Assert.DoesNotContain(run.SpawnedArgv!, arg => arg.StartsWith("developer_instructions=", StringComparison.Ordinal));
+        Assert.DoesNotContain("background_terminal_max_timeout=300000", run.SpawnedArgv!);
+    }
+
+    private static void AssertUnattendedCodexArguments(IReadOnlyList<string> argv)
+    {
+        Assert.Equal("-c", argv[0]);
+        Assert.StartsWith("developer_instructions=\"This coding session runs unattended.", argv[1]);
+        Assert.Contains("Nobody can be reached while a command runs.", argv[1]);
+        Assert.Contains("Waiting for many minutes inside that script is expected.", argv[1]);
+        Assert.Contains("Do not use separate sleep, wait, or empty write_stdin calls", argv[1]);
+        Assert.Equal("-c", argv[2]);
+        Assert.Equal("background_terminal_max_timeout=300000", argv[3]);
+        Assert.Equal("exec", argv[4]);
+        Assert.DoesNotContain(argv, arg => arg.StartsWith("model_instructions_file=", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -650,7 +678,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
         string? cleanContextKey = null,
         CancellationToken stopToken = default,
         string? model = null, string? thinkingLevel = null,
-        string? resumeSessionId = null, string? workingDirectory = null)
+        string? resumeSessionId = null, string? workingDirectory = null,
+        bool unattendedCoding = true)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         workingDirectory ??= Path.Combine(workerDirectory, "worktree");
@@ -694,7 +723,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 EnvironmentOverrides = environment,
             },
             cleanContextRoot: Path.Combine(_root, "clean-context"),
-            stopToken: stopToken);
+            stopToken: stopToken,
+            unattendedCoding: unattendedCoding);
 
         JsonDocument? capture = null;
         if (File.Exists(capturePath))
