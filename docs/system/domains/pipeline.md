@@ -231,7 +231,11 @@ test command, retaining its original exclusions such as `MachineBound`.
 Other selected class invocations exclude only the checks covered by the same
 declared invocation, matched by command without its filter, working directory
 and shell. A selector in one project never excludes cases from another project.
-Commands without a matching replacement keep their selected cases.
+The retained filter must also match the replacement's base filter or use the
+selector's simple parenthesized conjunction to narrow that filter. Different
+declared filters retain separate replacement coverage, independent of command
+order. Broader filters, other filter shapes and commands without a matching
+replacement keep their selected cases, even when already marked as guard steps.
 
 This union runs after fast review fallback, including an unmapped path or an
 overly broad type-reference selection, on both the shared impact map and the

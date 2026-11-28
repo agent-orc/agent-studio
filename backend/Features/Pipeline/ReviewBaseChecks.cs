@@ -57,17 +57,18 @@ internal static class ReviewBaseChecks
         // Use the same guard inventory on mapped and legacy reviews. A project's
         // fixed selectors share one invocation with its guards, so RDG runs once.
         var guards = GuardFirstGatePlan.Apply(declared.Commands).Where(GuardFirstGatePlan.IsGuardStep).ToArray();
-        var exclusionsByInvocation = new Dictionary<(string, string, VerifyCommandShell), string>();
+        var coverage = new List<(VerifyCommand Invocation, string Filter, string Exclusions)>();
         var bounded = guards.Select(guard =>
         {
             var original = declared.Commands.First(command => command.Kind == VerifyCommandKind.Test
                 && command.WorkingSubdir == guard.WorkingSubdir && command.Shell == guard.Shell
                 && GuardFirstGatePlan.GuardCommand(command.Command) == guard.Command);
             var filters = fixedFilters.GetValueOrDefault(original.Command) ?? [];
-            exclusionsByInvocation[InvocationKey(original)] = string.Join('&',
+            var exclusions = string.Join('&',
                 new[] { "Category!=Guard", "FullyQualifiedName!~.Architecture." }
                     .Concat(filters.Distinct().Select(filter => filter.Replace("=", "!=", StringComparison.Ordinal)
                         .Replace("~", "!~", StringComparison.Ordinal))));
+            coverage.Add((original, FilterExpression(original.Command), exclusions));
             return guard with
             {
                 Command = Narrow(original.Command, string.Join('|', new[] { GuardFirstGatePlan.GuardFilter }.Concat(filters))),
@@ -79,15 +80,18 @@ internal static class ReviewBaseChecks
         commands.AddRange(bounded);
         foreach (var command in selection.Commands.Where(command => command.Kind == VerifyCommandKind.Test))
         {
-            var exclusions = exclusionsByInvocation.GetValueOrDefault(InvocationKey(command));
+            var exclusions = string.Join('&', coverage.Where(replacement =>
+                    InvocationKey(replacement.Invocation) == InvocationKey(command)
+                    && FilterIsCovered(command.Command, replacement.Filter))
+                .Select(replacement => replacement.Exclusions).Distinct());
             // Whole .NET invocations are post-merge obligations on fast reviews.
             if ((GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
                     && declared.Commands.Any(full => full.Kind == VerifyCommandKind.Test && full.Command == command.Command
                         && InvocationKey(full) == InvocationKey(command)))
-                || (exclusions is not null && (GuardFirstGatePlan.IsGuardStep(command) || command.TestScope == Scope))) continue;
+                || (exclusions.Length > 0 && (GuardFirstGatePlan.IsGuardStep(command) || command.TestScope == Scope))) continue;
             // Remove cases only where the matching invocation runs their replacement.
-            // Other projects, directories and build options can select different cases.
-            commands.Add(exclusions is not null && GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
+            // Other projects, directories, build options and filters can select different cases.
+            commands.Add(exclusions.Length > 0 && GateFlakyRerunPolicy.IsTargetableDotNetTest(command.Command)
                 ? command with { Command = Narrow(command.Command, exclusions) } : command);
         }
         var tests = commands.Where(command => command.Kind == VerifyCommandKind.Test).ToArray();
@@ -130,10 +134,22 @@ internal static class ReviewBaseChecks
         && Regex.IsMatch(path, @"^[A-Za-z0-9_./-]+$", RegexOptions.CultureInvariant));
 
     private static string Narrow(string command, string filter)
+        => $"{ExistingFilter.Replace(command, string.Empty).Trim()} --filter \"({FilterExpression(command)})&({filter})\"";
+
+    private static string FilterExpression(string command)
     {
         var match = ExistingFilter.Match(command);
-        var existing = match.Success ? match.Groups["value"].Value.Trim('"', '\'') : "Category!=MachineBound";
-        return $"{ExistingFilter.Replace(command, string.Empty).Trim()} --filter \"({existing})&({filter})\"";
+        return match.Success ? match.Groups["value"].Value.Trim('"', '\'') : "Category!=MachineBound";
+    }
+
+    private static bool FilterIsCovered(string command, string replacementFilter)
+    {
+        if (!ExistingFilter.IsMatch(command)) return false;
+        var selected = FilterExpression(command);
+        // Recognize the selector's simple conjunction, not an arbitrary Boolean
+        // expression. Unknown shapes keep their cases rather than assume coverage.
+        return selected == replacementFilter || Regex.IsMatch(selected,
+            @"\A\(" + Regex.Escape(replacementFilter) + @"\)&\([^()]+\)\z", RegexOptions.CultureInvariant);
     }
 
     private static readonly Regex ExistingFilter = new(

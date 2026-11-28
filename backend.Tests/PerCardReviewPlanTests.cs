@@ -394,6 +394,61 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Contains(TestSelectionPlanner.Describe(retained), selected.Audit.SelectedCommands);
     }
 
+    [Theory]
+    [InlineData("Category!=ReviewFlaky", "work-package")]
+    [InlineData("Category!=ReviewFlaky", "guard")]
+    [InlineData("Category!=ReviewFlaky", "review-base")]
+    [InlineData("(Category!=MachineBound)|(Category=Guard)", "work-package")]
+    [InlineData("(Category!=MachineBound)&(FullyQualifiedName~Example.Tests)|Category=Guard", "work-package")]
+    [InlineData(null, "work-package")]
+    public void Fixed_checks_preserve_same_project_cases_outside_the_replacement_filter(string? filter, string scope)
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var retained = verify.Commands.Single(command => command.Command == BackendTest) with
+        {
+            Command = "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build"
+                + (filter is null ? "" : $" --filter \"{filter}\""),
+            TestScope = scope,
+        };
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([retained], new TestSelectionAudit()), ["backend/Changed.cs"]);
+
+        // These selections may include MachineBound Guard/ReviewBase cases.
+        // The fixed invocation excludes those cases, so it cannot replace them.
+        Assert.Contains(retained, selected.Commands);
+        Assert.Contains(TestSelectionPlanner.Describe(retained), selected.Audit.SelectedCommands);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_project_declared_filter_variants_do_not_overwrite_replacement_coverage(bool reverse)
+    {
+        ReviewBaseInventory(mapped: false);
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var routine = verify.Commands.Single(command => command.Command == BackendTest);
+        var variant = routine with { Command = BackendTest.Replace("Category!=MachineBound",
+            "Category!=ReviewFlaky", StringComparison.Ordinal) };
+        VerifyCommand[] variants = reverse ? [variant, routine] : [routine, variant];
+        verify = verify with { Commands = verify.Commands.Where(command => command != routine).Concat(variants).ToArray() };
+        var retained = variant with
+        {
+            Command = variant.Command.Replace("Category!=ReviewFlaky",
+                "\"(Category!=ReviewFlaky)&(FullyQualifiedName~BoardReadMutationTests)\"", StringComparison.Ordinal),
+        };
+        var selected = PerCardVerifyPlanner.WithReviewBase(_repo, verify,
+            new StagedVerifyPlan([retained], new TestSelectionAudit()), ["backend/Changed.cs"]);
+
+        var remaining = Assert.Single(selected.Commands, command => command.Command.Contains(
+            "FullyQualifiedName~BoardReadMutationTests", StringComparison.Ordinal));
+        // The variant covers its own guards, but only the routine covers ReviewBase.
+        Assert.Contains("Category!=Guard", remaining.Command);
+        Assert.DoesNotContain("Category!=ReviewBase", remaining.Command);
+        Assert.Equal(2, selected.Commands.Count(command => command.TestScope == ReviewBaseChecks.Scope
+            && command.Command.Contains("backend.Tests/", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public void Fixed_dotnet_checks_preserve_selected_other_ecosystem_commands()
     {
