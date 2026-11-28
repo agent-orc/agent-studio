@@ -116,6 +116,60 @@ class ConfigVerificationTests(unittest.TestCase):
 
 
 class ControlPlanePromotionTests(unittest.TestCase):
+    def test_runbook_never_approves_failed_publish_or_digest_output(self):
+        runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
+        commands = runbook.split("## 2. Build agent-host", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+        commands = commands.replace("<origin>", "fixture-origin")
+        steps = ["harden", "publish", "digest", "install-directory", "install-approval", "promote"]
+        for failure in ("harden", "publish", "digest", "none"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "agent-taskboard").mkdir()
+                log = root / "calls"
+                fixture = '''
+                    record() {
+                      printf '%s\\n' "$1" >>"$CALL_LOG"
+                      [[ "$1" != "$FAIL_STEP" ]] || return 19
+                    }
+                    git() {
+                      [[ "$1" != rev-parse ]] || printf '%s\\n' fixture-revision
+                    }
+                    dotnet() {
+                      # A failed publish may leave an executable in its output.
+                      printf '%s\\n' partial-build >"${@: -1}/agent-host"
+                      record publish
+                    }
+                    sudo() {
+                      case "$1" in
+                        ./scripts/harden-agent-runner-host.sh) record harden ;;
+                        /usr/local/sbin/agent-runner-deploy)
+                          if [[ "${2:-}" == --release-digest ]]; then
+                            record digest || return $?
+                            printf '%s\\n' fixture-digest
+                          else
+                            record promote
+                          fi ;;
+                        install)
+                          if [[ "$2" == -d ]]; then record install-directory
+                          else record install-approval; fi ;;
+                        find|test) return 0 ;;
+                        -u) cat >/dev/null ;;
+                        *) return 90 ;;
+                      esac
+                    }
+                    tar() { printf '%s\\n' fixture-archive; }
+                '''
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + commands],
+                    cwd=root,
+                    env={**os.environ, "CALL_LOG": str(log), "FAIL_STEP": failure,
+                         "TMPDIR": temporary, "SHELLOPTS": ""},
+                    capture_output=True, text=True,
+                )
+                expected_steps = steps if failure == "none" else steps[:steps.index(failure) + 1]
+                self.assertEqual(expected_steps, log.read_text().splitlines(), result.stderr)
+                self.assertEqual(0 if failure == "none" else 19, result.returncode, result.stderr)
+
     def test_runbook_migration_stops_at_each_failed_verification_or_install(self):
         runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
         migration = runbook.split("### Release approval migration", 1)[1]
