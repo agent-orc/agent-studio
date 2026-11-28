@@ -335,7 +335,9 @@ RunnerModelAcceptanceProbe.Shared.Configure(
                     worker, (_, _) => { }, stopToken: deadline);
             }, ct);
     },
-    ModelProbeCredentialGeneration);
+    ModelProbeCredentialGeneration,
+    quotaRefused: (provider, result, retry) => ProviderAuthProbe.Shared.RecordProcessResult(
+        provider == "codex" ? options.CodexCliBin : options.ClaudeCliBin, result, usageRetry: retry));
 
 if (help)
 {

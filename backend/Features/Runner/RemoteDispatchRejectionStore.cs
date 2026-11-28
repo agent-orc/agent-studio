@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
 
 namespace AgentStudio.Runner;
@@ -62,6 +63,32 @@ public sealed class RemoteDispatchRejectionStore
             next.Code,
             next.Reason);
         return next;
+    }
+
+    internal void RefreshModelWaits(IReadOnlyList<TaskInfo> tasks, string runnerId, string instanceId,
+        V1ReviewExecutorRegistry registry)
+    {
+        foreach (var task in tasks)
+        {
+            var rejection = task.RemoteDispatchRejection;
+            if (task.State != TaskStates.Ready || rejection?.RunnerId != runnerId
+                || rejection.Code is not ("host-model-unavailable" or "host-capability-missing")
+                || rejection.Capability?.Split(':', 3) is not ["model-acceptance", var provider, var model])
+                continue;
+            var admission = registry.ModelAdmission(runnerId, instanceId, provider, model);
+            var recovered = admission is ModelAcceptanceAdmission.Accepted or ModelAcceptanceAdmission.Legacy;
+            var reason = ModelAcceptanceAdmissionPolicy.Refusal(rejection.RunnerName, rejection.Capability, admission);
+            if (!recovered && reason == rejection.Reason) continue;
+            lock (TaskJsonFile.SyncRoot(task.FolderPath))
+            {
+                if (Read(task.FolderPath) != rejection) continue;
+                if (recovered)
+                    Clear(task);
+                else
+                    Record(task, runnerId, rejection.RunnerName, admission == ModelAcceptanceAdmission.Unavailable
+                        ? "host-model-unavailable" : "host-capability-missing", reason, capability: rejection.Capability);
+            }
+        }
     }
 
     public void Clear(TaskInfo task)

@@ -32,6 +32,9 @@ public static class CardWaitingReason
             }
         }
         if (task.RemoteDispatchRejection is { Code: "host-disk-pressure" } disk) return disk.Reason;
+        if (task.PickupHold?.Mechanism is PickupHoldMechanisms.DispatchRejection or PickupHoldMechanisms.HostCapabilityMissing
+            && task.RemoteDispatchRejection is { } rejection && rejection.RejectedAtUtc != default)
+            return $"dispatch rule since {rejection.RejectedAtUtc.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC: {rejection.Reason}";
         if (task.PickupHold is { } hold)
             return hold.Mechanism is PickupHoldMechanisms.DispatchRejection or PickupHoldMechanisms.HostCapabilityMissing
                 ? $"dispatch rule: {task.RemoteDispatchRejection?.Reason ?? hold.Reason}"

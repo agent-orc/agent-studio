@@ -2921,7 +2921,7 @@ public static class LeaseEndpoints
                         attemptId, "health-marked", "model-unavailable",
                         req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
                         providerRejectionModel!,
-                        $"{providerRejectionModel} is unavailable on this host until the next catalogue refresh.");
+                        $"{providerRejectionModel} is unavailable on this host pending fresh model acceptance.");
                     var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                         task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
                         "remote-model-rejection",
