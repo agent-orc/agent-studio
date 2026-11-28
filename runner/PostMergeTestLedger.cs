@@ -36,9 +36,9 @@ internal sealed class PostMergeTestLedger
 
     public bool HasTests => _entries.Count > 0;
 
-    /// <summary>Records the initial failure of each observed test of one failed suite command.</summary>
+    /// <summary>Records the initial result of each test for which the command collected failure evidence.</summary>
     public void Initial(ProjectTestSuite suite, string command, IReadOnlyList<string> observed,
-        IReadOnlyList<string> blocking, string sha)
+        IReadOnlyList<string> blocking, string sha, Func<string, string>? initialResult = null)
     {
         _repeatSuite = suite.Id;
         foreach (var test in observed)
@@ -47,7 +47,7 @@ internal sealed class PostMergeTestLedger
             if (entry is null) _entries.Add(entry = new(test, suite, command));
             entry.Command = command;
             entry.Quarantined = !blocking.Contains(test, StringComparer.Ordinal);
-            entry.Attempts.Add(new(PostMergeRunPhases.Initial, PostMergeTestResults.Fail, null, sha));
+            entry.Attempts.Add(new(PostMergeRunPhases.Initial, initialResult?.Invoke(test) ?? PostMergeTestResults.Fail, null, sha));
         }
     }
 
@@ -131,7 +131,7 @@ internal sealed class PostMergeTestLedger
             entry.Suite.Category == ProjectTestSuiteCategories.Base ? RedTestCategory.Base : RedTestCategory.Routine)
         {
             EnvelopeCanary = TestEnvelope.CanaryFailed([entry.Test]) ? RedTestResult.Fail : RedTestResult.Pass,
-            FirstResult = RedTestResult.Fail,
+            FirstResult = Parse(entry.Attempts[0].Result),
             SameShaRepeat = entry.Repeat,
             ReferenceEnvelopeRepeat = Parse(entry.Attempts.LastOrDefault(attempt => attempt.Phase == PostMergeRunPhases.Reference)?.Result ?? "unknown"),
             LastGreenControlResults = entry.Controls,

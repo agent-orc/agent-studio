@@ -60,6 +60,9 @@
                 }
               </dd></div>
               <div><dt>Free slots</dt><dd>{{ freeSlots(host) ?? '—' }}</dd></div></dl>
+            @if (host.diskPressureReason && host.status !== 'offline' && host.status !== 'retired') {
+              <p class="environment-flow__host-detail">{{ host.diskPressureReason }}</p>
+            }
             <div class="environment-flow__host-detail"><strong>Provider auth</strong>
               @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }
               @if (!auth(host).length) { <span>Unavailable</span> }

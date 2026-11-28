@@ -237,6 +237,7 @@
       flex: 0 0 auto;
     }
     .task-card__project-name {
+      color: var(--studio-fg);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;

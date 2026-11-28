@@ -31,6 +31,7 @@ public static class CardWaitingReason
                 return $"waits for {target.Key} ({state})";
             }
         }
+        if (task.RemoteDispatchRejection is { Code: "host-disk-pressure" } disk) return disk.Reason;
         if (task.PickupHold is { } hold)
             return hold.Mechanism is PickupHoldMechanisms.DispatchRejection or PickupHoldMechanisms.HostCapabilityMissing
                 ? $"dispatch rule: {task.RemoteDispatchRejection?.Reason ?? hold.Reason}"

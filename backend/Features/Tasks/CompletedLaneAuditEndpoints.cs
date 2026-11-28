@@ -46,10 +46,16 @@ public static class CompletedLaneAuditEndpoints
         });
 
         app.MapGet("/api/audits/{runId}",
-            (string runId, AuditRunStore store) =>
+            (string runId, HttpContext context, AuditRunStore store, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             var status = store.Get(runId);
-            return status == null ? Results.NotFound() : Results.Ok(status);
+            if (status is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [status.ProjectId],
+                    IamPermissions.ProjectRead, projects))
+                return Results.Json(
+                    new { error = "project-scope-denied", message = "This account is not a member of the requested project." },
+                    statusCode: StatusCodes.Status403Forbidden);
+            return Results.Ok(status);
         });
 
         // AGT-2202: accepted-but-not-integrated listing. Re-derives the live git

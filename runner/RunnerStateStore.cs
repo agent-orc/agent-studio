@@ -53,7 +53,8 @@ public sealed record PersistedRunnerSlot(
     string? ResumeDecision = null,
     string? ResumeRejectionReason = null,
     string? FreshRunReason = null,
-    int ModelCapacityRetryAttempts = 0);
+    int ModelCapacityRetryAttempts = 0,
+    Guid? PreparationCopyId = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore
@@ -100,7 +101,8 @@ public sealed class RunnerStateStore
             0,
             "claimed",
             DateTime.UtcNow,
-            RunSpec: runSpec);
+            RunSpec: runSpec,
+            PreparationCopyId: Guid.NewGuid());
         Save(slot);
         return slot;
     }

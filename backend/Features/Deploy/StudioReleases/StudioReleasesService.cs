@@ -8,13 +8,14 @@ namespace AgentStudio.Deploy;
 public sealed class StudioReleasesService(InstanceDeployService instance, InstanceDeployStore deploys,
     ReleaseCardAttributionSource attribution, TaskScannerService scanner, GitService git,
     AgentStudio.Projects.ProjectSettingsService settings, BuildIdentity identity,
-    IConfiguration configuration, TimeProvider clock, ProjectRegistry projects)
+    IConfiguration configuration, TimeProvider clock, ProjectRegistry projects, AgentStudio.Areas.AreaRegistryService? areas = null)
 {
     private StudioReleasesView? _view;
     private const int ReachabilityLimit = 100000;
     private readonly Dictionary<string, HashSet<string>> _reachable = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _known = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<(string, string), bool> _membership = new();
+    private readonly Dictionary<string, IReadOnlyList<string>> _changedPaths = new(StringComparer.Ordinal);
     private string? _source;
     private readonly DateTime _startedAt = clock.GetUtcNow().UtcDateTime;
     public string? Source => Volatile.Read(ref _source) ?? instance.SourceProject;
@@ -80,12 +81,12 @@ public sealed class StudioReleasesService(InstanceDeployService instance, Instan
         }
         var metadata = scanner.ScanAllJobsWithArchive()
             .Where(card => string.Equals(card.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .GroupBy(card => card.TaskKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(card => card.Key ?? card.TaskKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var cards = attribution.IntegratedCards(project).Select(record =>
         {
             // TaskKey includes watch path on some surfaces; release records use the human key.
-            var card = metadata.Values.FirstOrDefault(candidate => string.Equals(candidate.Key, record.Key, StringComparison.OrdinalIgnoreCase));
+            var card = metadata.GetValueOrDefault(record.Key);
             var integratedAt = card?.IntegrationRecords.Where(row => row.RecordedAtUtc != default)
                 .OrderByDescending(row => row.RecordedAtUtc).FirstOrDefault()?.RecordedAtUtc;
             if (integratedAt is null && card is not null && !attribution.ReadsTaskServer)
@@ -119,8 +120,29 @@ public sealed class StudioReleasesService(InstanceDeployService instance, Instan
         }
         var next = StudioReleaseProjection.Build(project, running, target, clock.GetUtcNow().UtcDateTime,
             revisions, cards, Ancestor);
-        Volatile.Write(ref _view, next);
+        var vocabulary = areas?.List(project) ?? AgentStudio.Areas.AreaTaxonomy.ProductDefaults;
+        var needed = next.Pending.SelectMany(DeliveryRevisions).ToHashSet(StringComparer.Ordinal);
+        foreach (var sha in _changedPaths.Keys.Where(sha => !needed.Contains(sha)).ToArray()) _changedPaths.Remove(sha);
+        foreach (var sha in needed.Where(sha => !_changedPaths.ContainsKey(sha)))
+        {
+            if (git.GetFirstParent(repo, sha) is { } parent
+                && git.ChangedPathsAgainstMergeBase(repo, parent, sha) is { } paths)
+                _changedPaths[sha] = paths;
+        }
+        var waiting = next.Pending.Select(card =>
+        {
+            var revisions = DeliveryRevisions(card);
+            var labels = vocabulary.Where(area => metadata.GetValueOrDefault(card.Key)?.Tags.Contains(area.Id) == true)
+                .Select(area => area.Label);
+            var flags = revisions.Count > 0 && revisions.All(_changedPaths.ContainsKey)
+                ? WaitingDelivery.PathFlags(revisions.SelectMany(sha => _changedPaths[sha]).ToArray()) : null;
+            return new WaitingDelivery(card.Key, card.Title, string.Join(" / ", labels), flags, card.IntegratedAtUtc);
+        }).ToArray();
+        Volatile.Write(ref _view, next with { Branch = branch, Tip = target, Waiting = waiting });
     }
+
+    private static IReadOnlyList<string> DeliveryRevisions(StudioReleaseCard card) =>
+        card.Shas.Count > 0 ? card.Shas : card.IntegrationSha is { } sha ? [sha] : [];
 
     public void Unavailable(string detail)
     {

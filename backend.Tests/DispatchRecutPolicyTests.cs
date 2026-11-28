@@ -1,4 +1,7 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Dispatch;
+using AgentStudio.Tests.Architecture;
+using System.Text.Json;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -11,6 +14,35 @@ public sealed class DispatchRecutPolicyTests
             ["m"], 1, prior, null, true);
     private static DispatchRecutPlan Plan(params DispatchRecutCard[] cards)
         => DispatchRecutPolicy.Plan(new("p", "w", cards, ["hub.cs"], [], true));
+
+    [Theory]
+    [InlineData("DP", 16)]
+    [InlineData("IN", 13)]
+    [InlineData("RV", 14)]
+    public void November_source_waves_chain_in_order_and_explain_the_reference_packages(string group, int edgeCount)
+    {
+        var fixture = Path.Combine(CSharpSourceScanner.RepoRoot(), "docs/dispatcher-personas/replay/wave-2026-11-17.json");
+        var wave = DispatchReplayCommand.ReadFixture(fixture, "project");
+        using var json = JsonDocument.Parse(File.ReadAllText(fixture));
+        var source = json.RootElement.GetProperty("cards").EnumerateArray()
+            .Where(card => card.GetProperty("group").GetString() == group).ToArray();
+        var cards = source.Select(card =>
+        {
+            var ready = wave.Cards.Single(c => c.Ready.Key == card.GetProperty("key").GetString()).Ready;
+            return new DispatchRecutCard(card.GetProperty("label").GetString()!, ready.Source!.Position,
+                ready.Source.SourceKind, ready.Forecast.Files, ready.Forecast.Modules,
+                Math.Max(1, card.GetProperty("findings").GetInt32()), ready.Source.SizePriorFiles, null, true);
+        }).ToArray();
+        var plan = DispatchRecutPolicy.Plan(new("project", group, cards, wave.HubFiles, [], false));
+        Assert.DoesNotContain(plan.Actions, action => action.Kind == "package");
+        Assert.Equal(edgeCount, plan.Edges.Count);
+        Assert.All(plan.Edges, edge => Assert.True(cards.Single(c => c.Key == edge.Card).SourceOrder >
+            cards.Single(c => c.Key == edge.DependsOn).SourceOrder));
+        if (group != "RV") return;
+        // Each of the five reference packages includes a member requiring a split proposal.
+        foreach (var key in new[] { "RV-22", "RV-21", "RV-20", "RV-13", "RV-3" })
+            Assert.Contains(plan.Actions, action => action.Kind == "split" && action.Cards.Contains(key));
+    }
 
     [Fact]
     public void Packages_three_findings_at_most_and_chains_the_rest_in_source_order()

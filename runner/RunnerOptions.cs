@@ -87,6 +87,9 @@ public sealed class RunnerOptions
     /// <summary>Directory the runner checks the repo out into on the runner host.</summary>
     public required string WorkDir { get; init; }
 
+    /// <summary>Host-wide ceiling for coding preparation copies, also limited by disk capacity.</summary>
+    public long PreparationCopiesMaxBytes { get; init; } = RunnerPreparationCopies.DefaultMaxBytes;
+
     /// <summary>Combined inactive attempt budget for the review root and its stale sibling.</summary>
     public long ReviewRetentionBytes { get; init; } = ReviewWorkspaceRetention.MaximumRetainedBytes;
 
@@ -575,6 +578,7 @@ public sealed class RunnerOptions
             WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")
                 .Trim().ToLowerInvariant() is "1" or "true",
             WorkDir = Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")),
+            PreparationCopiesMaxBytes = EnvInt("RUNNER_PREPARATION_COPIES_MAX_GB", 20) * 1_000_000_000L,
             ReviewRetentionBytes = (long)EnvInt("RUNNER_REVIEW_RETENTION_GIB", 20) * 1024 * 1024 * 1024,
             ReviewWorkDir = Val(
                 "review-workdir",

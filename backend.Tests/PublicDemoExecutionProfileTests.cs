@@ -5,7 +5,6 @@ using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -58,25 +57,20 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
-    public async Task Unknown_security_profile_refuses_server_startup()
+    public void Unknown_security_profile_refuses_server_startup()
     {
         using var probe = new UnobservedTaskExceptionProbe();
-        var factory = BuildFactory(new Dictionary<string, string?>
-        {
-            ["Security:Profile"] = "public-demo-typo",
-        });
+        // The executable entry point observes Main's task directly. A failed
+        // WebApplicationFactory boot also faults its private host-start tasks.
+        var start = typeof(Program).Assembly.EntryPoint!.CreateDelegate<Action<string[]>>();
+        var error = Assert.Throws<InvalidOperationException>(() => start([
+            "--environment=Test", $"--TaskRepository={_workspace}", "--Security:Profile=public-demo-typo",
+            // If validation ever accepts the typo, prevent the test from serving requests.
+            "--urls=invalid",
+        ]));
 
-        var error = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
-        await factory.DisposeAsync();
-
-        Assert.Contains("Unsupported Security:Profile", error.ToString(), StringComparison.Ordinal);
-        // AGT-3755: WebApplicationFactory keeps the entry point's exception in
-        // a task it never reads. Finalize that task here, while this test owns
-        // it, so it does not surface on a later test's finalizer pass; any
-        // other leaked failure of this boot still fails the test.
-        probe.AssertNoLeak("public-demo-typo", leaked =>
-            leaked.InnerException is InvalidOperationException startup
-            && startup.Message.Contains("Unsupported Security:Profile", StringComparison.Ordinal));
+        Assert.Contains("Unsupported Security:Profile", error.Message, StringComparison.Ordinal);
+        probe.AssertNoLeak("public-demo-typo");
     }
 
     [Fact]
@@ -419,10 +413,6 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             }
         }
     }
-
-    private WebApplicationFactory<Program> BuildFactory(
-        IReadOnlyDictionary<string, string?>? overrides = null)
-        => PublicDemoHostFixture.CreateFactory(_workspace, overrides);
 
     private static IReadOnlyList<RouteEndpoint> ExecutionRoutes(IServiceProvider services) =>
         services.GetServices<EndpointDataSource>()

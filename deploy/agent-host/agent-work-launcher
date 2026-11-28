@@ -41,6 +41,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly config="/etc/agent-host/work-container-launcher.env"
 readonly product_root="/opt/agent-host"
 readonly binary="$product_root/current/agent-host"
+readonly deploy_helper="/usr/local/sbin/agent-runner-deploy"
 
 die() {
   printf 'agent-work-launcher: %s\n' "$*" >&2
@@ -57,10 +58,26 @@ root_owned() {
 }
 
 (( EUID == 0 )) || die "runs as root from agent-work-launcher.socket; the service user has no runtime access"
+# Validate the verifier's complete installation path before executing it.
+path="$deploy_helper"
+while [[ "$path" != / ]]; do
+  [[ ! -L "$path" ]] && root_owned "$path" \
+    || die "untrusted release verifier path: $path"
+  path="$(dirname -- "$path")"
+done
 resolved="$(readlink -f -- "$binary")" || die "agent-host is not installed: $binary"
-for path in "$config" "$product_root" "$product_root/releases" "$(dirname -- "$resolved")" "$resolved"; do
+for path in "$config" "$product_root" "$product_root/releases" "$(dirname -- "$resolved")" "$resolved" "$deploy_helper"; do
   root_owned "$path" || die "$path must exist, be owned by root and not be writable by group or others"
 done
+
+# Root ownership of a copied upload does not authenticate its publisher. Check
+# the entire resolved release against the independent root-managed approval on
+# every call, including cleanup and probes, before executing any release code.
+release_root="$(dirname -- "$resolved")"
+[[ "$resolved" == "$release_root/agent-host" ]] || die "invalid agent-host release path"
+"$deploy_helper" --verify-release "$release_root" \
+  || die "agent-host release provenance is not approved"
+cd -- "$release_root"
 
 runtime="docker"
 zone_state="/var/lib/agent-studio/zone-policy/applied.json"

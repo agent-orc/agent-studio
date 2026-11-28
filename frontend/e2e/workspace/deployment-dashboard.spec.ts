@@ -207,18 +207,19 @@ test('dashboard shows the Studio instance, undeclared projects, watched lanes on
 
   // 2. A watched project without declarations is listed with the way to declare them.
   const undeclared = dashboard.getByTestId('deployment-undeclared-PROJ-003');
-  await expect(undeclared).toContainText('No environments declared');
-  await expect(undeclared.getByRole('link', { name: 'How to declare environments' }))
+  await dashboard.getByText('1 project has no deployment target').click();
+  await expect(undeclared).toHaveText('Handbook');
+  await expect(dashboard.getByRole('link', { name: 'How to declare environments' }))
     .toHaveAttribute('href', /docs\/concepts\/deployment-first-class\.md/);
   await expect(dashboard.getByTestId('deployment-project-PROJ-004')).toContainText('Release 2026.10.16.1');
 
   // 3. The registered but unwatched project has no row, no lane request and no error section.
-  await expect(dashboard.getByTestId('delivery-lanes')).toHaveCount(3);
-  await expect(dashboard.getByTestId('delivery-card-HBK-7')).toBeVisible();
+  await expect(dashboard.getByTestId('delivery-lanes')).toHaveCount(2);
+  await expect(dashboard.getByTestId('delivery-card-HBK-7')).toHaveCount(0);
   await expect(dashboard.getByTestId('deployment-project-PROJ-001')).toHaveCount(0);
   await expect(dashboard.getByText('Runbook')).toHaveCount(0);
   await expect(dashboard.getByText('could not be loaded')).toHaveCount(0);
-  expect(new Set(laneRequests)).toEqual(new Set(['Agent Studio', 'Handbook', 'Website']));
+  expect(new Set(laneRequests)).toEqual(new Set(['Agent Studio', 'Website']));
 
   // 4. The long column shows its count, twelve cards and the control.
   const long = dashboard.getByTestId('delivery-lane-Agent Studio-studio-instance');
@@ -258,4 +259,100 @@ test('dashboard shows the Studio instance, undeclared projects, watched lanes on
       }
     }
   }
+});
+
+// The matrix, readiness and journal use their wire contracts. Every environment in this fixture is observed.
+test('production, waiting deliveries and history are visible without declarations', async ({ page }) => {
+  const live = '497d40ebb'.padEnd(40, 'a');
+  const prior = '772fc4c0d'.padEnd(40, 'b');
+  const since = '2026-11-27T17:47:00Z';
+  const shell = Array.from({ length: 16 }, (_, i) => ({ id: 'PROJ-' + String(i + 1).padStart(3, '0'),
+    displayName: ['Agent Studio', 'Handbook'][i] ?? 'Project ' + (i + 1), workspaceId: 'studio', shortCode: 'P' + i,
+    storageLocation: '/workspace/project-' + i }));
+  const components = [
+    ['api', 'Studio API', 'studio-server'], ['web', 'Web frontend', 'studio-server'],
+    ['engine', 'Orchestrator engine', 'studio-server'], ['coding', 'Coding host', 'studio-server'],
+    ['review', 'Review host', 'workstation-vm'], ['gate', 'Gate worker', 'workstation-vm'],
+  ].map(([id, name, machine]) => ({ id, name, machine, version: '0.9.5', commit: live, health: 'Reporting', seenAtUtc: since }));
+  const installation = { version: '0.9.5', commit: live, sinceUtc: since, timeBasis: 'deploy', components,
+    branch: 'develop', tip: 'e7c812356'.padEnd(40, 'd'), verification: { state: 'green', source: 'Post-merge run 81 (green)', atUtc: since },
+    waiting: [
+      { key: 'AGT-4251', title: 'Show the host that runs each component', area: 'Observation', flags: ['Interface only'], integratedAtUtc: since },
+      { key: 'AGT-4254', title: 'Record the outcome of each deployment', area: 'Delivery chain', flags: ['Changes stored data'], integratedAtUtc: since },
+    ], detail: null, history: [] };
+  const records = [
+    { id: 'switch', startedAtUtc: '2026-11-27T17:31:00Z', endedAtUtc: since,
+      fromCommit: prior, toCommit: live, outcome: 'succeeded', cardsShipped: ['AGT-4244'],
+      steps: [{ name: 'Server switch', startedAtUtc: '2026-11-27T17:45:00Z', endedAtUtc: since, outcome: 'succeeded' }] },
+    { id: 'rollback', startedAtUtc: '2026-11-27T13:48:31Z', endedAtUtc: '2026-11-27T14:06:47Z',
+      fromCommit: prior, toCommit: 'a4a9f1c54'.padEnd(40, 'c'), outcome: 'rolled-back', cardsShipped: [], steps: [] },
+  ];
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.clock.setFixedTime(new Date('2026-11-28T00:00:00Z'));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
+    negotiateVersion: 1, connectionId: 'deployments', connectionToken: 'deployments',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  } }));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => socket.onMessage(message => {
+    if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send('{}\u001e');
+  }));
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'deployment-dashboard' }], activeKey: 'deployment-dashboard',
+  })));
+  await page.context().route('**/api/**', route => {
+    const url = new URL(route.request().url());
+    const json = (body: unknown) => route.fulfill({ json: body });
+    if (url.pathname.endsWith('/deploy/matrix')) return json({ hasDeployRecords: true, environmentKinds: [],
+      projects: shell.map((project, i) => ({ projectId: project.displayName, environmentsDeclared: false, error: null,
+        statuses: [], tenantStatuses: [], installation: i === 0 ? installation : null,
+        urls: i === 1 ? [{ projectId: project.id, id: 'docs', name: 'Public handbook', url: 'https://handbook.example' }] : [] })) });
+    if (url.pathname === '/api/operations/deploy-records') return json({ items: records, total: 2 });
+    if (url.pathname.endsWith('/urls/docs/readiness')) return json({ kind: 'healthy', statusCode: 200, commit: 'ab88dce88' });
+    if (fulfillShell(route, shell)) return;
+    return json([]);
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/#/workspace/deployments');
+  const dashboard = page.getByTestId('deployment-dashboard');
+  await expect(dashboard.getByRole('heading', { name: 'Production v0.9.5' })).toBeVisible();
+  await expect(dashboard.getByText('6 components on 2 machines · All on the same commit')).toBeVisible();
+  await expect(dashboard.getByText('AGT-4254', { exact: true })).toBeVisible();
+  await expect(dashboard.getByText('Post-merge run 81 (green) · 6 h ago')).toBeVisible();
+  await expect(dashboard.getByRole('heading', { name: 'Delivery chain' })).toBeVisible();
+  await expect(dashboard.getByText('Changes stored data', { exact: true })).toBeVisible();
+  await expect(dashboard.getByText('Commit ab88dce88')).toBeVisible();
+  const disclosure = dashboard.getByText('14 projects have no deployment target', { exact: true });
+  await expect(dashboard.getByText('Project 16', { exact: true })).toBeHidden();
+  await disclosure.focus();
+  await page.keyboard.press('Enter');
+  await expect(dashboard.getByText('Project 16', { exact: true })).toBeVisible();
+  await page.keyboard.press('Enter');
+  const attempt = dashboard.getByTestId('deploy-attempt-switch');
+  await attempt.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(attempt.getByText('Server switch', { exact: false })).toBeVisible();
+  await expect(dashboard.getByText('Rolled back', { exact: true })).toBeVisible();
+  await attempt.locator('summary').blur();
+  fs.mkdirSync(resultsDir, { recursive: true });
+  for (const width of [1440, 390]) {
+    for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1310 });
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await dashboard.evaluate(el => { el.scrollTop = 0; });
+      await expect(page.getByTestId('offline-banner-state')).toBeHidden();
+      if (width === 1440) await expect(disclosure).toBeInViewport();
+      expect(await dashboard.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await dashboard.screenshot({ path: path.join(resultsDir, `deployments-${width}-${theme}.png`) });
+      if (width === 390) {
+        await dashboard.getByRole('heading', { name: 'History', exact: true }).evaluate(el => el.scrollIntoView({ block: 'start' }));
+        await dashboard.screenshot({ path: path.join(resultsDir, `deployments-history-${width}-${theme}.png`) });
+      }
+    }
+  }
+  await dashboard.getByTestId('deployment-environment-filter').selectOption('url:public handbook');
+  await expect(dashboard.getByRole('heading', { name: 'This installation' })).toHaveCount(0);
+  await expect(disclosure).toHaveCount(0);
+  await expect(dashboard.getByText('HTTP 200 · Reachable')).toBeVisible();
+  expect(errors).toEqual([]);
 });

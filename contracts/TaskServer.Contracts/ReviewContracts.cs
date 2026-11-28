@@ -678,7 +678,12 @@ public sealed record ReviewVerdictDto(
     string? EvidenceChecked = null,
     string? Missing = null,
     DeliveryFailureDiagnosisResult? Diagnosis = null,
-    string? CarriedOverFrom = null);
+    string? CarriedOverFrom = null)
+{
+    /// <summary>The executor supplied checkout access instructions, including when running an older frozen plan.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UsesDossierCheckout { get; init; }
+}
 
 /// <summary>
 /// Enforces the citation contract for semantic review blocks. A model may

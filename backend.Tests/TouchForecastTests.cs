@@ -12,6 +12,16 @@ public sealed class TouchForecastTests
     private static CoChangeIndex Index(params string[] tracked) => TouchForecast.BuildIndex("tip", At, tracked, []);
 
     [Fact]
+    public void Tracked_source_paths_seed_the_expansion_before_prompt_inference()
+    {
+        var index = TouchForecast.BuildIndex("tip", At, [A, B, C], [[A, B], [A, B], [A, B]]);
+        var cited = TouchForecast.Compute(C, index, [], [A, "removed.cs"]);
+        Assert.Equal([A], cited.CitedFiles);
+        Assert.Equal(new[] { A, B }.Order(), cited.ForecastFiles);
+        Assert.Equal([C], TouchForecast.Compute(C, index, [], ["removed.cs"]).CitedFiles);
+    }
+
+    [Fact]
     public void CitesExactPathsAndUniqueNamesWithoutSubstringOrAmbiguousNameMatches()
     {
         var index = Index(A, B, C, "runner/Task.cs", "docs/not-code.md");

@@ -147,15 +147,15 @@ public sealed class DispatchForecastService(TaskScannerService scanner, TaskInde
                                 {
                                     var promptPath = Path.Combine(card.FolderPath, "prompt.md");
                                     var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : "";
-                                    var text = card.Title + "\n" + prompt + "\n" + string.Join("\n", card.CitedPaths);
-                                    var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+                                    var text = card.Title + "\n" + prompt;
+                                    var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text + "\0" + string.Join("\n", card.CitedPaths))));
                                     if (previous is null || enteredReady || previous.PromptRevision != revision || !previous.HubFiles.SequenceEqual(hubs)
                                         || (card.State == TaskStates.Ready && previous.ReadyEntryAt != card.EnteredLaneAt))
                                     {
                                         // ls-tree reads exactly the integration tip's tracked inventory. The live index
                                         // may belong to a different branch and must not leak files into the forecast.
                                         tracked ??= Run(repo, stoppingToken, "ls-tree", "-r", "--name-only", "-z", tip).Split('\0', StringSplitOptions.RemoveEmptyEntries);
-                                        previous = TouchForecast.Compute(text, index with { IntegrationTip = tip, TrackedFiles = tracked }, hubs) with
+                                        previous = TouchForecast.Compute(text, index with { IntegrationTip = tip, TrackedFiles = tracked }, hubs, card.CitedPaths) with
                                         { PromptRevision = revision, ComputedAt = now, ReadyEntryAt = card.State == TaskStates.Ready ? card.EnteredLaneAt : previous?.ReadyEntryAt ?? default,
                                             Deliveries = previous?.Deliveries ?? [] };
                                         store.Write(project.Name, key, previous);

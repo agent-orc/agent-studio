@@ -352,7 +352,8 @@ describe('TaskCardComponent (smoke)', () => {
     const host = fixture.nativeElement.querySelector('[data-testid="task-card"]') as HTMLElement | null;
     expect(host).not.toBeNull();
     expect(findCssDeclaration('.task-card', 'border')).toContain('1px solid color-mix');
-    expect(findCssDeclaration('.task-card[data-task-type', '--task-card-type-color')).toContain('248,113,113');
+    expect(findCssDeclarationWithSelectorParts(['.task-card[data-task-type', 'bug'], '--task-card-type-color'))
+      .toBe('var(--studio-status-danger)');
     expect(hasExplicitCssDeclaration('.task-card', 'border-left')).toBe(false);
     expect(hasExplicitCssDeclaration('.task-card__progress', 'height')).toBe(false);
     expect(findCssDeclaration('.task-card', '--task-card-ring')).toBe('0 0 0 1px var(--studio-card-state-border)');

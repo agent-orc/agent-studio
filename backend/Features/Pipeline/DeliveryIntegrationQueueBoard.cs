@@ -67,6 +67,12 @@ public sealed class DeliveryIntegrationQueueBoard
     public void Publish(string project, IReadOnlyList<DeliveryIntegrationQueueRow> rows)
         => _queues[project] = rows.ToArray();
 
+    /// <summary>A detached fleet snapshot, including current work and pending deliveries.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<DeliveryIntegrationQueueRow>> Read()
+        => _queues.ToDictionary(item => item.Key,
+            item => (IReadOnlyList<DeliveryIntegrationQueueRow>)item.Value.ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+
     public void Clear(string project) => _queues.TryRemove(project, out _);
 
     /// <summary>Remembers the failure of the card's last attempt; a success forgets it.</summary>

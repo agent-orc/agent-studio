@@ -85,7 +85,7 @@ public sealed class BatchGateStorageRootTests : IDisposable
     }
 
     [Fact]
-    public void Startup_warns_when_another_instance_contains_batch_manifests()
+    public void Only_explicit_inspection_warns_when_another_instance_contains_batch_manifests()
     {
         var workspace = Path.Combine(_root, "workspace");
         var state = Path.Combine(_root, "state");
@@ -96,7 +96,38 @@ public sealed class BatchGateStorageRootTests : IDisposable
         File.WriteAllText(Path.Combine(unmatched, "manifest.json"), "{}");
         var logger = new ListLogger();
         BatchGateStorageRoot.Prepare(Path.Combine(_root, "app"), workspace, logger, state);
+        Assert.Empty(logger.Messages);
+        BatchGateInstanceInspection.Run(Path.GetDirectoryName(BatchGateStorageRoot.ForInstance(
+            Path.Combine(_root, "app"), workspace, "batch-gates", state))!, logger.Messages.Add);
         Assert.Contains(logger.Messages, message => message.Contains("batch-state-unmatched-instance", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Explicit_inspection_is_bounded_even_when_siblings_have_deep_state()
+    {
+        var instances = Path.Combine(_root, "bounded", "instances");
+        var current = Path.Combine(instances, "current");
+        Directory.CreateDirectory(current);
+        for (var i = 0; i < 20; i++)
+            Directory.CreateDirectory(Path.Combine(instances, "sibling-" + i, "batch-gates", "batch"));
+        var messages = new List<string>();
+
+        BatchGateInstanceInspection.Run(current, messages.Add, maxEntries: 10);
+
+        Assert.Contains(messages, message => message.Contains("limitReached=True entries=10", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Inspection_command_validates_arguments_without_starting_a_host()
+    {
+        using var output = new StringWriter();
+        Assert.Equal(2, BatchGateInstanceInspection.RunCommand([], output));
+        Assert.Contains("Usage:", output.ToString());
+        var workspace = Path.Combine(_root, "command-workspace");
+        Directory.CreateDirectory(workspace);
+        Assert.Equal(0, BatchGateInstanceInspection.RunCommand(
+            [workspace, Path.Combine(_root, "command-state")], output));
+        Assert.False(File.Exists(Path.Combine(workspace, ".batch-state-installation-id")));
     }
 
     private static void CopyDirectory(string from, string to)

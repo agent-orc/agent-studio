@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../contracts/TaskServer.Contracts/TaskServer.Contracts.csproj" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
     <PackageReference Include="Serilog" Version="4.2.0" />

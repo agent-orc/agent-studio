@@ -51,18 +51,20 @@ public sealed partial class AccessSecurityStore : IUserDisplayNames
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
     private readonly IKeyEncryptionKeySource _totpKeys;
+    private readonly SecretProjectKeys _secretProjectKeys;
     private bool _lastSeenDirty;
 
     public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null,
-        IKeyEncryptionKeySource? keys = null)
-        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword, keys: keys)
+        IKeyEncryptionKeySource? keys = null, SecretProjectKeys? projectKeys = null)
+        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword, keys: keys, projectKeys: projectKeys)
     {
     }
 
     internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
         TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null,
-        IKeyEncryptionKeySource? keys = null)
+        IKeyEncryptionKeySource? keys = null, SecretProjectKeys? projectKeys = null)
     {
+        _secretProjectKeys = projectKeys ?? SecretProjectKeys.Identity;
         _configuration = configuration;
         _totpKeys = keys ?? new ConfiguredKeyEncryptionKeySource(configuration);
         _logger = logger;

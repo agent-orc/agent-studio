@@ -581,9 +581,11 @@ account role and does not use human sign-in.
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
   under `/api/auth/api-tokens` with Operator agent (`operator`) or Viewer
-  bindings for the requested projects. They keep the API-token limits: no
-  installation-wide writes even with `*`, and no use once the creating user is
-  disabled.
+  bindings for the requested projects. Disabling the creating user disables use
+  of the token. Deployment history has one reporting exception. An operator
+  token with the workspace grant (`*`) may submit attempts and historical
+  imports to the [deploy record routes](../deploy-records.md). All other
+  installation-wide writes retain the API-token restriction.
 - The `operator-agent` role (Dossier operator-agent-level, OP-1, decision
   OA-D4 B) holds exactly the operator surface: `workspace.read`,
   `project.read`, `project.cards.write` (create, title, lane moves and
@@ -596,8 +598,8 @@ account role and does not use human sign-in.
   or approval, no access permission, no `workspace.settings.write` or
   `workspace.administer`, and no `project.settings.write`. Only service
   accounts take it. A principal whose strongest granting role is
-  `operator-agent` cannot make an installation-wide (unaddressed) write, so
-  `workspace.operate` stays read-only for it. Its card writes resolve the
+  `operator-agent` can use its workspace binding for installation-wide reads
+  and, with the operator API token described above, deploy history reporting. Its card writes resolve the
   card's project even through a workspace binding, so they are
   project-addressed and not refused as installation-wide. It does not hold
   operator authority: the operator decider of a decision card stays with Admin

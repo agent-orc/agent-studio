@@ -11,6 +11,17 @@ public sealed record DispatchLeaseState(string Champion = "queue-keeper", string
     DispatchGuardFallback? Guard = null, string? UndoneSample = null)
 {
     public IReadOnlyList<DispatchLeaseWindow> Windows { get; init; } = [];
+
+    public HashSet<string> AvailablePlanners(IReadOnlyList<DispatchChallenger> candidates, IReadOnlySet<string> scoped)
+    {
+        var available = candidates.Where(c => scoped.Contains(c.Persona) && c.Strategy != DispatchStrategies.PackageThenChain
+                && DispatchCompetitionPolicy.Evaluate(c.Facts).EligibleForAlternatingLive)
+            .Select(c => c.Persona).ToHashSet(StringComparer.Ordinal);
+        if (scoped.Contains(Champion)) available.Add(Champion);
+        if (Challenger is { } rival && scoped.Contains(rival)) available.Add(rival);
+        available.Add("queue-keeper");
+        return available;
+    }
 }
 public sealed record DispatchLeaseFacts(DateTimeOffset Now, string? Wave, string? CurrentPersona,
     IReadOnlyList<DispatchChallenger> Challengers, IReadOnlyList<string> Available,
@@ -19,7 +30,17 @@ public sealed record DispatchLeaseFacts(DateTimeOffset Now, string? Wave, string
 public sealed record DispatchLeaseDecision(DispatchLeaseState State, string Persona, string Window,
     string Reason, bool Allowed = true, int? FeedImportance = null)
 {
+    internal const string AssignmentUnavailable = "assigned-persona-unavailable";
     public string AuthorityTier => "T1";
+
+    public bool CanApplyWith(DispatchLeaseOccurrence occurrence, IReadOnlySet<string> scopedPlanners)
+    {
+        // A pause handoff depends on availability at collection. A resume need not advance the lease fence.
+        if (Reason == AssignmentUnavailable)
+            return occurrence.State.AvailablePlanners(occurrence.Facts.Challengers, scopedPlanners)
+                .SetEquals(occurrence.Facts.Available);
+        return Persona == "queue-keeper" || scopedPlanners.Contains(Persona);
+    }
 }
 public sealed record DispatchLeaseOccurrence(DispatchLeaseState State, DispatchLeaseFacts Facts,
     long ExpectedFence, DateTimeOffset? LeaseExpiresAt);
@@ -66,8 +87,8 @@ public static class DispatchLeasePolicy
         }
         if (state.Guard is not null) return new(state, "queue-keeper", window, "guard-active");
         if (state.Pinned is { } pinned)
-            return new(state, facts.Available.Contains(pinned) ? pinned : "queue-keeper", window, "owner-pinned");
-        if (state.Stopped) return new(state, state.Champion, window, "alternation-stopped");
+            return Assign(pinned, "owner-pinned");
+        if (state.Stopped) return Assign(state.Champion, "alternation-stopped");
 
         if (state.Challenger is { } rival)
         {
@@ -94,12 +115,16 @@ public static class DispatchLeasePolicy
         }
         var existing = state.Windows.FirstOrDefault(w => w.Key == window);
         if (existing is not null)
-            return new(state, facts.Available.Contains(existing.Persona) ? existing.Persona : "queue-keeper", window, "window-retained");
+            return Assign(existing.Persona, "window-retained");
         var selected = state.Challenger is not null && state.ChallengerNext ? state.Challenger : state.Champion;
-        if (!facts.Available.Contains(selected)) selected = "queue-keeper";
         state = state with { Windows = [.. state.Windows, new(window, selected, state.Epoch, facts.Now)],
             ChallengerNext = state.Challenger is not null && !state.ChallengerNext };
-        return new(state, selected, window, "window-opened");
+        return Assign(selected, "window-opened");
+
+        DispatchLeaseDecision Assign(string assigned, string reason)
+            => assigned == "queue-keeper" || facts.Available.Contains(assigned)
+                ? new(state, assigned, window, reason)
+                : new(state, "queue-keeper", window, DispatchLeaseDecision.AssignmentUnavailable);
     }
 
     /// <summary>Only the later admission of a named collision owns its conflict, regardless of which card integrated last.</summary>

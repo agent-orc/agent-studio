@@ -100,12 +100,14 @@ public static class TouchForecast
         return new($"co-change.v1:{asOf:yyyyMMddTHHmmssfffffffZ}:{tip}", asOf, tip, inventory, expansion);
     }
 
-    public static TouchForecastV1 Compute(string text, CoChangeIndex index, IReadOnlyList<string> hubs)
+    public static TouchForecastV1 Compute(string text, CoChangeIndex index, IReadOnlyList<string> hubs,
+        IReadOnlyList<string>? citedPaths = null)
     {
-        var tokens = Regex.Matches(text.Replace('\\', '/'), @"[\p{L}\p{N}_.@/-]+")
+        var inventory = Inventories.GetValue(index.TrackedFiles, static tracked => new ForecastInventory(tracked));
+        var explicitFiles = (citedPaths ?? []).Where(inventory.Files.Contains).ToHashSet(StringComparer.Ordinal);
+        var tokens = explicitFiles.Count > 0 ? explicitFiles : Regex.Matches(text.Replace('\\', '/'), @"[\p{L}\p{N}_.@/-]+")
             .Select(match => match.Value.TrimEnd('.', ':'))
             .Select(token => token.StartsWith("./", StringComparison.Ordinal) ? token[2..] : token).ToHashSet(StringComparer.Ordinal);
-        var inventory = Inventories.GetValue(index.TrackedFiles, static tracked => new ForecastInventory(tracked));
         var cited = tokens.Where(inventory.Files.Contains).Concat(tokens.Where(inventory.UniqueNames.ContainsKey)
             .Select(token => inventory.UniqueNames[token])).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var files = cited.Concat(cited.SelectMany(file => index.Expansion.GetValueOrDefault(file) ?? []))

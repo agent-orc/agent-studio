@@ -387,6 +387,13 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-post-merge-lint-signer-socket">
+          <td>2026-11-28</td>
+          <td><code>AGT-4336</code><br><span class="small">post-merge-lint-signer-socket</span></td>
+          <td>The operator signer failed to start during post-merge lint. The red receipt gave the repair cards no test names.</td>
+          <td>The signer put its socket under a temp path longer than the Unix address buffer. Lint ran outside the test suites that record per-test attempts.</td>
+          <td>The signer uses a short private directory. A failed TAP test in lint gets a named initial attempt and a measured same-tip repeat. A repeat records new failures by name. A skipped or missing test stays unresolved. Same-named tests carry their suite or source location where available. Ambiguous matches retain separate attempt evidence.</td>
+        </tr>
         <tr id="case-conflict-receipt-preparation-retry">
           <td>2026-11-27</td>
           <td><code>AGT-4140</code><br><span class="small">conflict-receipt-preparation-retry</span></td>
@@ -3573,6 +3580,13 @@
           <td>AGT-4049's stale-verdict recovery contract and AGT-4098's capability disposition contract appended different sections at the same location.</td>
           <td>Retained both contract sections and the three prior delivery changes, including the report-policy and code-quality fixes. The already-integrated engine guard trait is retained. Focused checks return the combined tree to platform-owned delivery and integration.</td>
         </tr>
+        <tr id="case-agt-4198-gate-predecessor-fault">
+          <td>2026-11-28</td>
+          <td><code>AGT-4198</code><br><span class="small">gate-predecessor-fault</span></td>
+          <td>No CLI crash. A gate flight fault after authority settlement aborted its independently claimed successor before local claim recovery.</td>
+          <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
+          <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>
@@ -3620,6 +3634,41 @@
           <td>AGT-4117 and AGT-4098 incident rows shared the append location.</td>
           <td>The continuation retains every integration-side row and the delivery patch;
             focused classes, guards and lint verify a replacement delivery.</td>
+        </tr>
+        <tr id="case-concept-review-material-unavailable">
+          <td>2026-11-27</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-material-unavailable</span></td>
+          <td>Seven concept-fit reviews returned concerns about unavailable Dossier files or cut diffs. The review CLIs completed.</td>
+          <td>The prompt used the plan host's checkout before publication and prohibited file reads on the review host.</td>
+          <td>The operator accepted the seven by override. Concept-fit now reads the verified delivery checkout.
+            A material-access failure reaches <code>ReviewInfra / ReviewMaterialUnavailable</code> for the existing retry or escalation.</td>
+        </tr>
+        <tr id="case-concept-review-content-finding">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-content-finding</span></td>
+          <td>Code review reproduced a runner returning <code>ReviewInfra</code> for a finding that a Dossier lacked
+            a retry policy for unavailable inputs. The review CLI produced a verdict.</td>
+          <td>The legacy access-failure text matcher also ran on verdicts from checkout reviews.</td>
+          <td>Checkout reviews now use the explicit access-failure classification. The reproduced concern survives
+            execution and settlement for normal content admission.</td>
+        </tr>
+        <tr id="case-concept-review-frozen-prompt">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-frozen-prompt</span></td>
+          <td>A frozen snapshot prompt could produce a content concern for a checkout read failure.</td>
+          <td>The executor appended checkout instructions while the stock prompt still prohibited tools and
+            directed the CLI to report truncated evidence as a concern.</td>
+          <td>The executor replaces the obsolete instructions before the CLI runs. An inaccessible file
+            reaches <code>ReviewInfra / ReviewMaterialUnavailable</code>. A cited content finding keeps its verdict.</td>
+        </tr>
+        <tr id="case-concept-review-interrupted-aspects">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-interrupted-aspects</span></td>
+          <td>A Dossier read failure stopped the review before another required aspect ran.</td>
+          <td>Task Server required the remaining verdicts and command evidence and recorded
+            <code>IncompleteReviewReport</code> as the retry reason.</td>
+          <td>When the report identifies a material failure and supplies the executed concept-fit command,
+            Task Server validates the available evidence and schedules the <code>ReviewMaterialUnavailable</code> retry.</td>
         </tr>
       </tbody>
     </table>

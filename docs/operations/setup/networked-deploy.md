@@ -113,6 +113,29 @@ role reports the image it runs; set `Release__ReviewImages__<hostId>` on the
 server to the expected `imageRef` from the deploy journal to show it next to the
 running one.
 
+## Release startup preflight
+
+Before every release switch, stage the candidate API image locally on the server
+and run the startup preflight from the installed stack directory:
+
+```sh
+sudo ./preflight-start.sh IMAGE-TAG 240
+```
+
+Install `preflight-start.sh` and `studio-copy.py` from the release's
+`deploy/compose/monolith-networked/` directory. Use the candidate release tag
+for `IMAGE-TAG` and the production Compose configuration. The preflight starts
+the candidate API on a copy-on-write view of the production workspace, projects
+and home data, with disposable writes and no network beyond loopback. It waits
+up to 240 seconds for the image's health check, then removes the container and
+copy. Proceed with the switch only after exit status 0 (`result=healthy`). If
+health does not arrive in time, the API exits, or setup or cleanup fails, stop
+the deploy without switching. The networked deploy driver does not invoke this
+tool automatically; make it a required step in the operator's deploy job.
+
+See [release preflight configuration and exit statuses](../studio-host-tools.md#release-preflight)
+for installation settings, isolation limits and cleanup recovery.
+
 ## Run
 
 ```sh

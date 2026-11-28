@@ -10,10 +10,14 @@ public sealed class HostTelemetrySampler
     private readonly RunnerOptions? _options;
     private readonly IHostFilesystemProbe _probe;
     private readonly string _proc;
-    public HostTelemetrySampler(RunnerOptions? options = null, IHostFilesystemProbe? probe = null, string proc = "/proc")
+    private readonly Func<long?>? _preparationCopyBytes;
+
+    public HostTelemetrySampler(RunnerOptions? options = null, IHostFilesystemProbe? probe = null,
+        Func<long?>? preparationCopyBytes = null, string proc = "/proc")
     {
         _options = options;
         _proc = proc;
+        _preparationCopyBytes = preparationCopyBytes;
         _probe = probe ?? HostFilesystemProbes.Default;
     }
     private CpuCounters? _previousCpu;
@@ -62,6 +66,11 @@ public sealed class HostTelemetrySampler
                 [("runner worktrees", _options?.WorkDir ?? Environment.CurrentDirectory),
                  ("logs", _options?.StateDir ?? Environment.CurrentDirectory),
                  ("result archives", _options?.SalvageDir ?? Environment.CurrentDirectory)]);
+        if (_preparationCopyBytes?.Invoke() is { } bytes)
+            filesystems = filesystems.Select(disk => disk.Purpose == "runner work"
+                ? disk with { OwnedBytes = new Dictionary<string, long>(disk.OwnedBytes ?? new Dictionary<string, long>())
+                    { [HostDiskPressurePolicy.PreparationCopies] = bytes } }
+                : disk).ToArray();
         var network = OperatingSystem.IsLinux() ? NetworkRate(now) : null;
         return WithConnectivity(sample with
         {

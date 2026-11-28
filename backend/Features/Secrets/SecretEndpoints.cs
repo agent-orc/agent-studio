@@ -42,6 +42,15 @@ public static class SecretEndpoints
                 (await routed.HealthAsync(ct)).Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList()));
         }));
 
+        app.MapPost("/api/secrets/migrate-project-keys", (HttpContext context, ProjectSecretBindings bindings,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry) => Run(() =>
+        {
+            Caller.From(context, security, configuration, registry).RequireWrite(SecretScope.Workspace, context);
+            var bindingFiles = bindings.MigrateProjectKeys(context.RequestAborted);
+            var telemetryTokens = security.MigrateTelemetryProjectKeys();
+            return Task.FromResult<IResult>(Results.Ok(new { bindingFiles, telemetryTokens }));
+        }));
+
         app.MapPut("/api/secrets/backends", (SecretBackendBinding binding, HttpContext context,
             SecretBackendSettings backends, SecretAuditLog audit, TimeProvider clock,
             AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry, CancellationToken ct) => Run(async () =>

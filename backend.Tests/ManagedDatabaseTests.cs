@@ -239,6 +239,55 @@ public sealed class ManagedDatabaseTests : IDisposable
         Assert.Contains(logs.Lines, line => line.Contains(Reference, StringComparison.Ordinal));
     }
 
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Database_credential_claim_after_rename_keeps_the_generated_password(bool legacy)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = Path.Combine(_root, "workspace") }).Build();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var project = registry.EnsureProjectForStorage(Path.Combine(_root, "workspace", "projects", "demo"),
+            "demo", "ws-default", _clock);
+        var service = Build(Orders, registry);
+        var keys = new SecretProjectKeys(registry);
+        var (provider, oldBindings) = Secrets(service, legacy ? null : keys);
+        var oldCredentials = new ManagedDatabaseCredentials(service, oldBindings, provider, NullLogger<ManagedDatabaseCredentials>.Instance);
+        Queue(service, _artifact);
+        await oldCredentials.EnsureForHostAsync("run-host", CancellationToken.None);
+        var original = Assert.Single((await provider.ListAsync()).Records);
+        Assert.Equal(legacy ? "demo/stage" : project.Id + "/stage", original.Scope);
+        var beforeBound = oldBindings.ApprovedReferences("demo", "stage", [original.Name], "stage");
+        var (beforeWorkload, beforeDecision) = SecretWorkloadBinding.DecideRunTarget(Runner("run-host"),
+            new RunTargetCredentialLease("demo", "stage", "run-host", [original.Name], beforeBound)
+                { ProjectKeys = oldBindings.ProjectKeys("demo", beforeBound) });
+        Assert.True(beforeDecision.Allowed);
+        var before = await provider.GetForWorkloadAsync(SecretReference.Parse(beforeBound[original.Name]), beforeWorkload!,
+            "run-target:managed-database");
+        registry.Rename(project.Id, "shop");
+        Assert.NotNull(service.QueueDeployment("shop", service.Declarations("shop")!.Single(item => item.Id == "stage"),
+            _artifact, "operator", rollback: false));
+        var (reader, bindings) = Secrets(service, keys);
+        var credentials = new ManagedDatabaseCredentials(service, bindings, reader, NullLogger<ManagedDatabaseCredentials>.Instance);
+        await credentials.EnsureForHostAsync("run-host", CancellationToken.None);
+        var desired = Assert.Single(Assert.Single(service.DesiredState("run-host").Environments).Databases!);
+        Assert.Equal($"secret://{project.Id}/stage/{original.Name}", desired.PasswordRef);
+        var bound = bindings.ApprovedReferences("shop", "stage", [original.Name], "stage");
+        var (workload, decision) = SecretWorkloadBinding.DecideRunTarget(Runner("run-host"),
+            new RunTargetCredentialLease("shop", "stage", "run-host", [original.Name], bound)
+                { ProjectKeys = bindings.ProjectKeys("shop", bound) });
+        Assert.True(decision.Allowed);
+        var issued = await reader.GetForWorkloadAsync(SecretReference.Parse(desired.PasswordRef), workload!, "run-target:managed-database");
+        Assert.Equal(before.Value, issued.Value);
+        var storedAfter = Assert.Single((await reader.ListAsync()).Records);
+        Assert.Equal(original.Id, storedAfter.Id);
+        Assert.Equal(original.Scope, storedAfter.Scope);
+        Assert.Equal(original.Versions.Select(item => item with { LastUsedAt = null }),
+            storedAfter.Versions.Select(item => item with { LastUsedAt = null }));
+    }
+
     [Fact]
     public void HostObservations_UpdateTheView_AndAMajorVersionChangeIsRefusedBeforeTheHostSeesIt()
     {
@@ -374,7 +423,7 @@ public sealed class ManagedDatabaseTests : IDisposable
         Assert.Equal(1, service.RecordObserved("run-host", new([], [new("demo", "stage", "orders", state, version, bytes, Now)])));
     }
 
-    private (SecretProvider Provider, ProjectSecretBindings Bindings) Secrets(ProjectEnvironmentService service)
+    private (SecretProvider Provider, ProjectSecretBindings Bindings) Secrets(ProjectEnvironmentService service, SecretProjectKeys? keys = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -383,8 +432,8 @@ public sealed class ManagedDatabaseTests : IDisposable
         }).Build();
         var provider = new SecretProvider(
             new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
-            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock, NullLogger<SecretProvider>.Instance);
-        return (provider, new ProjectSecretBindings(config, provider, service, _clock));
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock, NullLogger<SecretProvider>.Instance, keys);
+        return (provider, new ProjectSecretBindings(config, provider, service, _clock, keys));
     }
 
     private string Repository => Path.Combine(_root, "repo");
@@ -395,7 +444,7 @@ public sealed class ManagedDatabaseTests : IDisposable
         File.WriteAllText(Path.Combine(Repository, ".agent-studio", "project.yml"), Head + databases);
     }
 
-    private ProjectEnvironmentService Build(string databases)
+    private ProjectEnvironmentService Build(string databases, AgentStudio.Registry.ProjectRegistry? registry = null)
     {
         var watch = Path.Combine(_root, "workspace", "projects", "demo");
         Directory.CreateDirectory(watch);
@@ -423,11 +472,11 @@ public sealed class ManagedDatabaseTests : IDisposable
             ["WatchPaths:0:RootPath"] = Repository, ["WatchPaths:0:RepositoryPath"] = Repository,
         }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary, projectRegistry: registry);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         settings.SetRunTargetDomainSuffixes("demo", ["example.com"]);
-        return new(config, scanner, git, settings, _clock);
+        return new(config, scanner, git, settings, _clock, secretKeys: registry is null ? null : new SecretProjectKeys(registry));
     }
 
     private static void Git(string directory, params string[] arguments)
