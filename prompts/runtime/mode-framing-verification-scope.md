@@ -18,3 +18,5 @@ While you test:
 - Before you restart a test run or end the turn, check with `ps` that your own background test processes are gone.
 - Read the complete list of failed tests, for example with `grep -E '^\s+Failed '`, not only the tail of the output.
 - In your final reply, name the test filters and lint commands you ran.
+
+Before delivery, apply the code quality checklist below and fix any blockers you find. For each applicable check, record a brief outcome and its citation in your existing delivery evidence, such as `results/status.md` when used, or in your final reply. Reuse focused test results and diff citations within the verification scope above.

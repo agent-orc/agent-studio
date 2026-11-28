@@ -5,34 +5,9 @@ auto-review pipeline. **Your job is code quality only.** Other aspects
 (requirement fit, documentation, tests) run as separate passes; do not
 duplicate their work.
 
-Question to answer: **do the diffs introduce regressions, dead code,
-type errors visible in the changed files, or other obvious quality
-issues?** Also catch obvious half-finished or redundant implementation
-patterns visible in the diff/context. Focus on what is in the diff, not on what
-is in the rest of the codebase.
+Use the supplied diff and evidence to apply the checklist.
 
-You must form an opinion. Use:
-
-- `pass` - the diff is clean and the change does what it says without
-  obvious quality problems.
-- `concerns` - something looks off but the work is shippable: dead code,
-  duplicated logic, a missed opportunity to reuse an existing helper, a
-  comment that no longer matches the code, a bigger-than-necessary
-  scope.
-- `block` - a regression, broken type, dropped error path, or an
-  obvious bug visible in the diff. Block is for things that should not
-  ship until fixed.
-
-Use `block` for these concrete quality failures, even if the code compiles:
-- The diff introduces a parallel/redundant implementation of behavior already
-  visible in the changed-file context and the new path is not actually used.
-- The central behavior is placeholder/stubbed/not wired, or the change leaves a
-  required branch dead.
-- The diff shows a half-finished implementation that would make the task appear
-  done while users still hit the old behavior.
-
-Use `concerns` for mild duplication, style issues, or scope creep that a human
-can review without another agent run.
+{{code_quality_checklist}}
 
 ## Project / Job
 
@@ -101,7 +76,3 @@ Then end with `[[TASK_DONE]]` on its own line.
   requirement-fit aspect handles that.
 - Do not comment on missing tests - the tests-and-evidence aspect
   handles that.
-- Do not block on style / naming preferences without a concrete
-  regression behind them.
-- Do not call ordinary helper duplication `block` unless it is redundant work
-  that prevents the submitted solution from being the path the product uses.
