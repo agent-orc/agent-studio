@@ -3634,6 +3634,27 @@
             A fresh conflict claim with no base fails preparation before launch. The operator
             restored the incident's saved merge as a single delivery commit.</td>
         </tr>
+        <tr id="case-post-merge-temp-budget">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-temp-budget</span></td>
+          <td>The post-merge base suite failed its temp ownership canary and its registry hotspot guard.</td>
+          <td>The checkout-local journal temp path exceeded the test bootstrap's length budget. Repair-card additions also took the incident test file past the weekly contention limit.</td>
+          <td>New runs use a short, owned temp root that participates in checkpoint validation and terminal cleanup. Repair-card tests have their own file. Both checks continue through the normal review and integration gates.</td>
+        </tr>
+        <tr id="case-post-merge-checkpoint-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-checkpoint-metadata</span></td>
+          <td>After a simulated host restart, checkpoint validation missed a changed temp repository ref. An unchanged workspace could also settle as inconclusive when host load fluctuated.</td>
+          <td>The workspace digest skipped every .git directory, and the command hash included live load measurements.</td>
+          <td>Recovery settles as inconclusive on a changed temp ref and can resume completed work across load changes. Receipts retain the load measurements.</td>
+        </tr>
+        <tr id="case-post-merge-linked-worktree-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-linked-worktree-metadata</span></td>
+          <td>After a simulated restart, a linked worktree could reuse a completed command after a ref changed.</td>
+          <td>The digest covered the <code>.git</code> pointer file but did not check that its per-worktree and common Git directories were also covered.</td>
+          <td>Recovery resumes when the referenced metadata is covered and unchanged. A ref change or an uncovered directory settles as inconclusive and retains finished command evidence.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>

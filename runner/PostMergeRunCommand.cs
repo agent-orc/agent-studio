@@ -355,9 +355,15 @@ public sealed class PostMergeRunCommand
         var freeSlots = _journal.FreeSlots;
         var selection = started.SuiteSelection!;
         var host = new CoverageHostLoad(started.StartLoadPerCore, started.StartOccupiedSlots ?? 0);
-        _testHome = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "home");
-        _testTemp = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner, "temp");
+        _testHome = Path.Combine(CommandWorkspace, "home");
         Directory.CreateDirectory(_testHome);
+        // Completed commands in older journals can still reference the original temp path.
+        _testTemp = Path.Combine(CommandWorkspace, "temp");
+        if (Directory.Exists(ShortTempRoot) || !Directory.Exists(_testTemp))
+        {
+            ReviewAttemptTemp.Ensure(ShortTempRoot, CommandWorkspace, mustBeNew: false);
+            _testTemp = Path.Combine(ShortTempRoot, "t");
+        }
         Directory.CreateDirectory(_testTemp);
         bool MayShard(ProjectTestSuite? suite, string command) => started.Kind == "nightly" && suite is not null
             && freeSlots > 1 && command.Contains("dotnet test ", StringComparison.Ordinal)
@@ -527,6 +533,9 @@ public sealed class PostMergeRunCommand
     private bool _terminalDelivered;
     private string JournalPath => Path.Combine(_options.Checkout, ".post-merge-journal.json");
 
+    private string CommandWorkspace => Path.Combine(_options.Checkout, ".post-merge-work", _journal!.Owner);
+    private string ShortTempRoot => ReviewAttemptTemp.Root(ReviewAttemptTemp.DefaultBase(), CommandWorkspace, "pm-");
+
     internal PostMergeHostJournal ReadJournal()
         => JsonSerializer.Deserialize<PostMergeHostJournal>(File.ReadAllText(JournalPath), Json)
             ?? throw new IOException("Post-merge journal is empty.");
@@ -547,39 +556,119 @@ public sealed class PostMergeRunCommand
     }
 
     // Include ignored build outputs: a clean Git status cannot validate a completed build.
-    // Record symlinks without traversing outside the dedicated checkout.
+    // Record symlinks without traversing outside the checkpointed roots.
     internal string WorkspaceDigest()
     {
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value + "\0"));
-        void Walk(string directory)
+        var shortTemp = _journal is not null && Directory.Exists(ShortTempRoot) ? ShortTempRoot : null;
+        if (shortTemp is not null && !ReviewAttemptTemp.OwnedBy(shortTemp, CommandWorkspace))
+            throw new IOException("The post-merge temp directory has a different owner.");
+        var checkout = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_options.Checkout));
+        var checkoutPrefix = checkout + Path.DirectorySeparatorChar;
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        bool IsCheckoutBookkeeping(string name) => name.Equals(".git", pathComparison)
+            || name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work";
+
+        string CoveredGitDirectory(string parent, string pointer)
+        {
+            if (pointer.Length == 0 || pointer != pointer.Trim() || pointer.IndexOfAny(['\0', '\r', '\n']) >= 0
+                || Path.IsPathRooted(pointer) && !Path.IsPathFullyQualified(pointer))
+                throw new IOException("Invalid Git metadata path prevents post-merge checkpoint reuse.");
+
+            // Leading parent segments are normal in gitfiles and commondir. A later
+            // parent segment could hide an intermediate symlink during normalization.
+            var segments = pointer.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
+            if (segments.SkipWhile(segment => segment is "" or "." or "..").Contains(".."))
+                throw new IOException("Ambiguous Git metadata path prevents post-merge checkpoint reuse.");
+
+            string target;
+            try { target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pointer, parent)); }
+            catch (ArgumentException exception)
+            {
+                throw new IOException("Invalid Git metadata path prevents post-merge checkpoint reuse.", exception);
+            }
+            var root = target.StartsWith(checkoutPrefix, pathComparison) ? checkout
+                : shortTemp is not null && target.StartsWith(shortTemp + Path.DirectorySeparatorChar, pathComparison) ? shortTemp
+                : throw new IOException("External Git metadata prevents post-merge checkpoint reuse.");
+            for (var directory = target; !directory.Equals(root, pathComparison); directory = Path.GetDirectoryName(directory)!)
+            {
+                var containingDirectory = Path.GetDirectoryName(directory)!;
+                if (containingDirectory.Equals(checkout, pathComparison) && IsCheckoutBookkeeping(Path.GetFileName(directory)))
+                    throw new IOException("Git metadata in checkout bookkeeping prevents post-merge checkpoint reuse.");
+                var attributes = File.GetAttributes(directory);
+                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                    throw new IOException("Git metadata must be in a checkpointed directory without symlinks.");
+            }
+            return target;
+        }
+
+        void ValidateCommonDirectory(string gitDir, bool checkoutGitDir = false)
+        {
+            var common = Path.Combine(gitDir, "commondir");
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(common); }
+            catch (FileNotFoundException) { return; }
+            if (checkoutGitDir || (attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                throw new IOException("Git common directory cannot be validated for post-merge checkpoint reuse.");
+            CoveredGitDirectory(gitDir, File.ReadAllText(common).TrimEnd('\r', '\n'));
+        }
+
+        void Walk(string root, string directory)
         {
             foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
             {
                 var name = Path.GetFileName(path);
-                if (name == ".git" || directory == _options.Checkout
-                    && name.StartsWith(".post-merge-", StringComparison.Ordinal) && name != ".post-merge-work") continue;
-                Add(Path.GetRelativePath(_options.Checkout, path));
+                var isGitEntry = name.Equals(".git", pathComparison);
+                if (directory == checkout && !isGitEntry && IsCheckoutBookkeeping(name)) continue;
                 var attributes = File.GetAttributes(path);
+                if (isGitEntry)
+                {
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new IOException("A linked .git entry prevents post-merge checkpoint reuse.");
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    {
+                        ValidateCommonDirectory(path, checkoutGitDir: directory == checkout);
+                        // The pinned standalone checkout has a separately tracked HEAD.
+                        if (directory == checkout) continue;
+                    }
+                    else
+                    {
+                        const string prefix = "gitdir: ";
+                        var gitFile = File.ReadAllText(path).TrimEnd('\r', '\n');
+                        if (!gitFile.StartsWith(prefix, StringComparison.Ordinal))
+                            throw new IOException("Invalid .git file prevents post-merge checkpoint reuse.");
+                        ValidateCommonDirectory(CoveredGitDirectory(directory, gitFile[prefix.Length..]));
+                    }
+                }
+                Add(Path.GetRelativePath(root, path));
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 {
                     var link = new FileInfo(path);
                     Add(link.LinkTarget ?? "");
                     var target = link.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-                    if (target is null || !Path.GetFullPath(target).StartsWith(
-                        Path.GetFullPath(_options.Checkout) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    if (target is null || !target.StartsWith(checkoutPrefix, StringComparison.Ordinal)
+                        && (shortTemp is null || !target.StartsWith(shortTemp + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
                         throw new IOException("An external symlink prevents post-merge checkpoint reuse.");
                     continue;
                 }
                 if (!OperatingSystem.IsWindows()) Add(File.GetUnixFileMode(path).ToString());
-                if ((attributes & FileAttributes.Directory) != 0) { Walk(path); continue; }
+                if ((attributes & FileAttributes.Directory) != 0) { Walk(root, path); continue; }
                 using var file = File.OpenRead(path);
                 digest.AppendData(SHA256.HashData(file));
             }
         }
-        var head = Path.Combine(_options.Checkout, ".git", "HEAD");
-        if (File.Exists(head)) Add(File.ReadAllText(head));
-        Walk(_options.Checkout);
+        var checkoutGit = Path.Combine(checkout, ".git");
+        var head = Path.Combine(checkoutGit, "HEAD");
+        if (Directory.Exists(checkoutGit) && (File.GetAttributes(checkoutGit) & FileAttributes.ReparsePoint) == 0
+            && File.Exists(head)) Add(File.ReadAllText(head));
+        Walk(checkout, checkout);
+        if (shortTemp is not null)
+        {
+            Add(shortTemp);
+            Walk(shortTemp, shortTemp);
+        }
         return Convert.ToHexString(digest.GetHashAndReset());
     }
 
@@ -600,6 +689,8 @@ public sealed class PostMergeRunCommand
         if (!OperatingSystem.IsLinux())
             throw new IOException("Interrupted post-merge command requires confirmed process cleanup before recovery on this host.");
         await WorktreeProcessReaper.ReapAsync(_options.Checkout, line => _output.WriteLine(line), ct);
+        if (ReviewAttemptTemp.OwnedBy(ShortTempRoot, CommandWorkspace))
+            await WorktreeProcessReaper.ReapAsync(ShortTempRoot, line => _output.WriteLine(line), ct);
     }
 
     private async Task RecoverAsync(CancellationToken ct)
@@ -664,6 +755,14 @@ public sealed class PostMergeRunCommand
     private async Task DeliverTerminalAsync(CancellationToken ct)
     {
         await Post(_journal!.Terminal!, ct);
+        try
+        {
+            if (ReviewAttemptTemp.OwnedBy(ShortTempRoot, CommandWorkspace) && !ReviewAttemptTemp.Remove(ShortTempRoot))
+                _output.WriteLine($"post-merge envelope cleanup unavailable: {ShortTempRoot}");
+            if (Directory.Exists(CommandWorkspace)) Directory.Delete(CommandWorkspace, recursive: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { _output.WriteLine($"post-merge envelope cleanup unavailable: {exception.Message}"); }
         lock (_journalGate)
         {
             if (_journal.Terminal!.Status == "inconclusive")
@@ -675,13 +774,6 @@ public sealed class PostMergeRunCommand
             else File.Delete(JournalPath);
             _terminalDelivered = true;
         }
-        try
-        {
-            var workspace = Path.Combine(_options.Checkout, ".post-merge-work", _journal.Owner);
-            if (Directory.Exists(workspace)) Directory.Delete(workspace, recursive: true);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        { _output.WriteLine($"post-merge envelope cleanup unavailable: {exception.Message}"); }
     }
 
     private async Task InterruptAsync(string reason, CancellationToken ct)
@@ -1062,15 +1154,21 @@ public sealed class PostMergeRunCommand
             if (!source.Success) throw new IOException(source.StdErr);
             sourceSha = source.StdOut.Trim();
         }
-        var input = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            JsonSerializer.Serialize(new { command, sourceSha, environment, shape, Envelope = _lastEnvelope }, Json))));
+        string CommandInput(PostMergeEnvelopeFingerprint fingerprint)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new { command, sourceSha, environment, shape, Envelope = fingerprint }, Json);
+            return Convert.ToHexString(SHA256.HashData(bytes));
+        }
+        var input = CommandInput(_lastEnvelope with { StartLoadPerCore = null, PeakLoadPerCore = null });
         if (_journal is not null)
         {
             lock (_journalGate)
             {
                 if (ordinal < _journal.Commands.Count && _journal.Commands[ordinal] is { } cached)
                 {
-                    if (cached.Input != input) throw new PostMergeCheckpointException("Post-merge checkpoint inputs changed.");
+                    // Older journals included the observed host load in the hash.
+                    if (cached.Input != input && cached.Input != CommandInput(_lastEnvelope))
+                        throw new PostMergeCheckpointException("Post-merge checkpoint inputs changed.");
                     _canaryObserved |= cached.CanaryObserved;
                     _canaryFailed |= cached.CanaryFailed;
                     duration?.Invoke(cached.DurationMs);
