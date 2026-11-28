@@ -121,6 +121,7 @@ public static class PostMergeRunEndpoints
                 || run.Commands.Count > 64 || run.Verdicts.Count > 64
                 || run.Commands.Any(string.IsNullOrWhiteSpace)
                 || run.Commands.Distinct(StringComparer.Ordinal).Count() != run.Commands.Count
+                    && !store.Read(record.Id).Runs.Any(recorded => recorded.Id == run.Id)
                 || run.Verdicts.Any(verdict => verdict is null || string.IsNullOrWhiteSpace(verdict.Command)
                     || verdict.SuiteId is { } suiteId && (string.IsNullOrWhiteSpace(suiteId) || suiteId.Length > 128)
                     || verdict.FailureMessages?.Count > 64

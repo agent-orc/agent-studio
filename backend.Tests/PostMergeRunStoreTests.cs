@@ -159,6 +159,10 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("extra-argument")]
     [InlineData("extra-positional")]
     [InlineData("valid-quoted-path")]
+    [InlineData("leading-zero")]
+    [InlineData("plus-sign")]
+    [InlineData("leading-space")]
+    [InlineData("negative-zero")]
     public void ExplicitShardsCoverTheirOriginalCommandExactlyOnce(string evidence)
     {
         const string command = "dotnet test tests.csproj --no-build --filter Category!=MachineBound";
@@ -212,6 +216,17 @@ public sealed class PostMergeRunStoreTests : IDisposable
             },
             _ => receipt,
         };
+        var alternateIndex = evidence switch
+        {
+            "leading-zero" => "00",
+            "plus-sign" => "+0",
+            "leading-space" => " 0",
+            "negative-zero" => "-0",
+            _ => null,
+        };
+        if (alternateIndex is not null)
+            receipt = receipt with { Verdicts = [receipt.Verdicts[0], shard with
+                { Command = shard.Command.Replace("shard-0.runsettings", "shard-" + alternateIndex + ".runsettings", StringComparison.Ordinal) }, second] };
         if (evidence.StartsWith("extra-", StringComparison.Ordinal))
         {
             var extra = evidence switch
@@ -234,6 +249,29 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.NotNull(store.Record(Project, receipt));
         Assert.Equal(First, store.Read(Project).LastGreenSha);
         Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt));
+    }
+
+    [Fact]
+    public void PersistedDuplicatePlanAllowsOnlyExactReplayWithoutChangingState()
+    {
+        var receipt = Run("legacy", First, "window") with { Commands = ["build", "build"],
+            Status = "green", FinishedAtUtc = Now,
+            Verdicts = [new("build", 0, false), new("build", 0, false)] };
+        var state = PostMergeProjectState.Empty(Project) with { LastGreenSha = First,
+            DevelopState = "green", Runs = [receipt] };
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, Project + ".json");
+        var persisted = System.Text.Json.JsonSerializer.Serialize(state,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        File.WriteAllText(path, persisted);
+        var store = new PostMergeRunStore(_root);
+        Assert.NotNull(store.Record(Project, receipt));
+        Assert.Equal(persisted, File.ReadAllText(path));
+        Assert.Null(store.Record(Project, receipt with { Reason = "conflicting replay" }));
+        Assert.Null(store.Record(Project, receipt with { TipSha = Second }));
+        Assert.Null(store.Record(Project, receipt with { Id = "new", Status = "running", Verdicts = [] }));
+        Assert.Null(store.Record(Project, receipt with { Id = "new" }));
+        Assert.Equal(persisted, File.ReadAllText(path));
     }
 
     [Fact]

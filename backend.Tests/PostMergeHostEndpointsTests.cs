@@ -271,5 +271,52 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         Assert.Equal(System.Net.HttpStatusCode.Conflict, conflict.StatusCode);
     }
 
+    [Fact]
+    public async Task PersistedDuplicatePlanCanReplayThroughTheBoundedRunRoute()
+    {
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root, ["Security:Profile"] = "local", ["AllowedHosts"] = "*" }));
+            builder.ConfigureServices(services =>
+            {
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.Replace(ServiceDescriptor.Singleton(new PostMergeRunStore(Path.Combine(_root, "post-merge"))));
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var projectPath = Path.Combine(_root, "one");
+        Directory.CreateDirectory(projectPath);
+        var project = factory.Services.GetRequiredService<ProjectRegistry>()
+            .EnsureProjectForStorage(projectPath, "one", DefaultWorkspace.Id, _clock);
+        var receipt = new PostMergeRunRecord("legacy", "one", "window", new string('a', 40), null,
+            null, null, 1, ["build", "build"], [new("build", 0, false), new("build", 0, false)],
+            "green", _clock.GetUtcNow(), _clock.GetUtcNow());
+        var state = PostMergeProjectState.Empty(project.Id) with { LastGreenSha = receipt.TipSha,
+            DevelopState = "green", Runs = [receipt] };
+        var stateRoot = Path.Combine(_root, "post-merge");
+        Directory.CreateDirectory(stateRoot);
+        var statePath = Path.Combine(stateRoot, project.Id + ".json");
+        var persisted = System.Text.Json.JsonSerializer.Serialize(state,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        File.WriteAllText(statePath, persisted);
+        // A historical accepted receipt has already completed incident reconciliation.
+        factory.Services.GetRequiredService<PostMergeIncidentService>().Apply(project, receipt);
+        persisted = File.ReadAllText(statePath);
+        const string route = "/api/runner/post-merge/projects/one/runs";
+        using (var replay = await client.PostAsJsonAsync(route, receipt)) replay.EnsureSuccessStatusCode();
+        using (var conflict = await client.PostAsJsonAsync(route, receipt with { Reason = "changed" }))
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, conflict.StatusCode);
+        using (var fresh = await client.PostAsJsonAsync(route, receipt with { Id = "new" }))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, fresh.StatusCode);
+        using (var unbounded = await client.PostAsJsonAsync(route, receipt with
+            { Commands = Enumerable.Repeat("build", 65).ToArray() }))
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, unbounded.StatusCode);
+        Assert.Equal(persisted, File.ReadAllText(statePath));
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }
