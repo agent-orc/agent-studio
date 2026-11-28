@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
 using AgentStudio.Security;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -10,8 +11,10 @@ namespace AgentStudio.Tests;
 
 public sealed partial class OperatorApprovalFlowTests
 {
-    [Fact]
-    public async Task Batch_confirmation_audit_failure_settles_without_execution_or_replay()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Batch_confirmation_retry_depends_on_whether_the_decision_was_saved(bool failAudit)
     {
         using var factory = BuildFactory(("alpha-done", TaskStates.Completed));
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
@@ -26,37 +29,70 @@ public sealed partial class OperatorApprovalFlowTests
         store.ConfirmOperatorSignIn(new(start.UserCode, agentId, ["cards.archive-override"], 8), human, "127.0.0.1");
         var principal = store.AuthenticateOperatorSession(store.PollOperatorSignIn(start.PollHandle).Token)!;
         var item = new OperatorBatchItemRequest("alpha-done", TaskStates.Archive, "Duplicate without delivery", "alpha");
-        var batch = store.SubmitOperatorBatch(principal, new("cards.archive-override", [item], "owner-chat"),
-            [new(0, item, "Completed card", "revision", null, null)]);
+        using var scope = factory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<OperatorBatchService>();
+        var batch = service.Submit(principal, new("cards.archive-override", [item], "owner-chat"));
+        Assert.Null(Assert.Single(batch.Items).Refusal);
         store.VerifyStepUp(human, CurrentCode());
-        var service = factory.Services.GetRequiredService<OperatorBatchService>();
-        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = factory.Services };
+        var context = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
         var auditPath = store.ControlPlaneAudit.FilePath;
         var backupPath = auditPath + ".backup";
-        File.Move(auditPath, backupPath);
-        Directory.CreateDirectory(auditPath);
+        var statePath = Path.Combine(store.SecurityFolder, "access-state.json");
+        var before = File.ReadAllText(statePath);
+        var auditStart = store.ControlPlaneAudit.HeadSequence + 1;
+        // Block the state temp file before replacement, or the audit after replacement.
+        var blockedPath = failAudit ? auditPath : statePath + ".tmp";
+        if (failAudit) File.Move(auditPath, backupPath);
+        Directory.CreateDirectory(blockedPath);
+        Task<OperatorBatch> Confirm() => service.DecideAsync(batch.Id, new([0]), human, context, CancellationToken.None);
         try
         {
-            var failure = await Record.ExceptionAsync(() => service.DecideAsync(batch.Id, new([0]), human, context, CancellationToken.None));
-            Assert.True(failure is IOException or UnauthorizedAccessException, $"Expected an audit write failure, got {failure}");
-            var settled = Assert.Single(store.ListOperatorBatches());
-            Assert.Equal("confirmed", settled.State);
-            Assert.Equal(human.User.Id, settled.ApprovedBy);
-            var itemResult = Assert.Single(settled.Items);
-            Assert.Equal("skipped", itemResult.State);
-            Assert.Contains("Confirmation interrupted", itemResult.ResultReason);
+            var failure = await Record.ExceptionAsync(Confirm);
+            Assert.True(failure is IOException or UnauthorizedAccessException, $"Expected a write failure, got {failure}");
+            var visible = Assert.Single(store.ListOperatorBatches());
+            var facts = new OperatorApprovalFactSource(store).Collect(_clock.GetUtcNow().UtcDateTime);
+            if (failAudit)
+            {
+                Assert.NotEqual(before, File.ReadAllText(statePath));
+                Assert.Equal("confirmed", visible.State);
+                Assert.Equal(human.User.Id, visible.ApprovedBy);
+                var itemResult = Assert.Single(visible.Items);
+                Assert.Equal("skipped", itemResult.State);
+                Assert.Contains("Confirmation interrupted", itemResult.ResultReason);
+                Assert.Empty(facts);
+            }
+            else
+            {
+                Assert.Equal(before, File.ReadAllText(statePath));
+                Assert.Equal("pending", visible.State);
+                Assert.Null(visible.ApprovedBy);
+                Assert.Single(facts);
+            }
             Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
-            Assert.Empty(new OperatorApprovalFactSource(store).Collect(_clock.GetUtcNow().UtcDateTime));
         }
         finally
         {
-            Directory.Delete(auditPath);
-            File.Move(backupPath, auditPath);
+            Directory.Delete(blockedPath);
+            if (failAudit) File.Move(backupPath, auditPath);
         }
-        var replay = await Assert.ThrowsAsync<SecurityOperationException>(() => service.DecideAsync(
-            batch.Id, new([0]), human, context, CancellationToken.None));
-        Assert.Equal("batch-already-settled", replay.Code);
-        Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
+        IEnumerable<ControlPlaneAuditEntry> ConfirmAudits() => store.ControlPlaneAudit.Read(auditStart, 1000)
+            .Where(entry => entry.Operation == "operator-batch.confirm");
+        Assert.Empty(ConfirmAudits());
+        if (failAudit)
+        {
+            var replay = await Assert.ThrowsAsync<SecurityOperationException>(Confirm);
+            Assert.Equal("batch-already-settled", replay.Code);
+            Assert.Equal(TaskStates.Completed, CardState(factory, "alpha-done"));
+            Assert.Empty(ConfirmAudits());
+        }
+        else
+        {
+            var retried = await Confirm();
+            Assert.Equal("confirmed", retried.State);
+            Assert.Equal("executed", Assert.Single(retried.Items).State);
+            Assert.Equal(TaskStates.Archive, CardState(factory, "alpha-done"));
+            Assert.Single(ConfirmAudits());
+        }
     }
 
     [Theory]
