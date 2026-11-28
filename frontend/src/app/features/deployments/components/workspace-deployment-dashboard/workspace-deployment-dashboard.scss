@@ -1,3 +1,5 @@
+@use '../../../../../styles/mixins' as m;
+
 :host { display: block; min-width: 0; min-height: 0; height: 100%; }
 .deployment-dashboard {
   box-sizing: border-box;
@@ -17,7 +19,6 @@
   h1 { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-35); }
   p { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-muted); }
 }
-.deployment-dashboard__eyebrow { font-size: var(--studio-font-size-sm); font-weight: 650; text-transform: uppercase; letter-spacing: .08em; }
 .deployment-dashboard__filters {
   display: flex;
   flex-wrap: wrap;
@@ -80,4 +81,20 @@ tbody tr { background: var(--studio-bg-surface); }
 }
 @media (max-width: 800px) {
   table { min-width: 700px; }
+}
+.deployment-dashboard__no-target { margin-block: var(--studio-spacing-4); padding: var(--studio-spacing-3); background: var(--studio-bg-surface); }
+.deployment-dashboard__no-target summary { @include m.disclosure-control; font-weight: 600; }
+.deployment-dashboard__no-target summary:focus-visible { outline: 2px solid var(--studio-accent); }
+.deployment-dashboard__url { display: grid; gap: var(--studio-spacing-1); padding: var(--studio-spacing-2); overflow-wrap: anywhere; }
+.deployment-dashboard a { color: var(--studio-accent); }
+.deployment-dashboard h2 { margin-block: var(--studio-spacing-5) var(--studio-spacing-2); }
+@media (max-width: 600px) {
+  .deployment-dashboard { padding: var(--studio-spacing-3); }
+  .deployment-dashboard__filters { width: 100%; gap: var(--studio-spacing-2); }
+  .deployment-dashboard__filters label { flex: 1 1 6rem; min-width: 0; }
+  .deployment-dashboard__filters label:nth-child(2) { flex-grow: 2; }
+  .deployment-dashboard__filters select { min-width: 0; width: 100%; }
+  table { min-width: 0; table-layout: auto; }
+  tbody th { width: auto; }
+  .deployment-dashboard__table-wrap { overflow-wrap: anywhere; }
 }

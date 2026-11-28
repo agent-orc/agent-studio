@@ -16,20 +16,25 @@ area of the Studio's own source project shows:
   shows **failed at <step>**; a run that reports nothing for 30 minutes shows
   **stalled after <step>**.
 
-The workspace deployment dashboard (Workspace / Deployments) shows the same
-instance as the Production cell of the source project's row (AGT-3949): live
-release and commit, live since, the state of the last run (succeeded, failed,
-stalled or running, with the step for the last three) and health. The row has
-no Staging cell, because the Studio has no staging environment. After a run
-that failed or stalled, the cell names the live release as long as the server
-switch decides it: a run that failed before its switch left the previous
-release live, one that failed after it took its own release live. Only a run
-whose switch was reported but did not succeed leaves the running release open.
-The delivery lanes below the table follow the same records: the Production
-lane of the source project lists the cards the live commit contains, the newest
-live release first, and "Waiting for release" lists the cards integrated after
-the live commit. Cards integrated before the first recorded deploy therefore
-count as delivered, not as waiting.
+Workspace / Deployments opens with the running installation, grouped by
+reporting machine. The running build identifies the API. The Structure host
+reports identify runner roles, containers and gate heartbeats. A matching
+version string alone cannot establish commit alignment. A switch receipt gives
+the live time. A process observation gives the earliest observed time.
+
+Waiting to ship uses the Releases view's verified ancestry comparison against
+the integration tip. It groups cards by their area tags and derives impact
+flags from the paths in attributed Git diffs. The tip verification quotes the
+post-merge receipt for that exact commit. History uses the operations deploy
+journal when available, with running-revision observations and instance deploy
+reports as the fallback. An observed revision has no measured deploy duration.
+
+The matrix includes declared targets and registered project URLs. Each URL
+uses the existing registry readiness probe. A successful response can identify
+its commit with an `X-Build-Commit` header or a `build-commit` or `git-commit`
+HTML meta tag in the first 32 KiB of the page. A declaration takes precedence
+over a URL with the same name. Expand the project count at the bottom to see
+the watched projects that have no target.
 
 Card badges of the source project's cards then read
 `Production · live since <UTC time> · <version>`; badges of declared

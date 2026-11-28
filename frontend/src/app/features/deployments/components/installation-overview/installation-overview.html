@@ -1,0 +1,90 @@
+@let data = facts();
+<section aria-labelledby="installation-heading" class="installation">
+  <div class="section-heading"><h2 id="installation-heading">This installation</h2>
+    <button class="btn btn--ghost" (click)="openDeployment.emit(project())">{{ project() }} deployment</button>
+  </div>
+  <div class="production">
+    <h3>{{ title() }} <span>{{ data.version ? 'v' + data.version : 'Version not observed' }}</span></h3>
+    <p><code>{{ data.commit?.slice(0, 9) || 'Commit not observed' }}</code>
+      @if (data.sinceUtc && data.timeBasis !== 'build-baseline') {
+        · {{ data.timeBasis === 'deploy' ? 'Live since' : 'First observed' }}
+        <time [attr.datetime]="data.sinceUtc">{{ data.sinceUtc | date:'d MMM HH:mm':'UTC' }} UTC</time>
+      } @else { · Live time not observed. A switch report records it. }
+    </p>
+    @if (instanceStatus()?.instance?.lastRun; as run) {
+      @if (run.state !== 'succeeded') {
+        <sui-status-indicator [compact]="true" [tone]="run.state === 'running' ? 'running' : 'warning'"
+          label="Deploy of {{ run.version }} {{ run.state }}{{ run.step ? ' · ' + run.step : '' }}" />
+      }
+    }
+    <p>{{ data.components.length }} {{ data.components.length === 1 ? 'component' : 'components' }} on {{ machines().length }} {{ machines().length === 1 ? 'machine' : 'machines' }} · {{ alignment() }}</p>
+  </div>
+  <div class="machines">
+    @for (machine of machines(); track machine.name) {
+      <section class="machine"><h4>{{ machine.name }}</h4>
+        @for (component of machine.entries; track component.id) {
+          <div class="component">
+            <strong>{{ component.name }}</strong>
+            <span>{{ component.version || 'Version not reported' }} · <code>{{ component.commit?.slice(0, 9) || 'Commit not reported' }}</code></span>
+            <sui-status-indicator [compact]="true"
+              [tone]="component.health === 'Stale heartbeat' || drift(component.commit) === 'Different commit' ? 'warning' : 'neutral'"
+              [label]="component.health + (drift(component.commit) === 'Different commit' ? ' · Different commit' : '')" />
+          </div>
+        }
+      </section>
+    }
+  </div>
+  @if (reportedBuilds().length) {
+    <p class="identity-note">Builds in the deploy report · {{ reportedBuilds().join(' · ') }}</p>
+  }
+  @if (missingIdentity()) { <p class="identity-note">A component release report with its version and Git commit completes its identity.</p> }
+</section>
+<section aria-labelledby="waiting-heading">
+  <div class="section-heading"><h2 id="waiting-heading">Waiting to ship</h2>
+    <span>{{ data.waiting.length }} {{ data.detail ? 'confirmed' : '' }} {{ data.waiting.length === 1 ? 'card' : 'cards' }} @if (oldest(); as time) { · Oldest known wait {{ waitDays(time) }} d }</span>
+  </div>
+  <div class="verification">
+    <strong>{{ data.branch || 'Integration branch' }}</strong> <code>{{ data.tip?.slice(0, 9) || 'Tip not observed' }}</code>
+    <sui-status-indicator [compact]="true" [tone]="data.verification.state === 'red' ? 'danger' : data.verification.state === 'green' ? 'success' : 'neutral'"
+      [label]="'Verification ' + data.verification.state" />
+    <span>{{ data.verification.source }} @if (data.verification.atUtc; as time) { · {{ age(time) }} ago }</span>
+  </div>
+  @if (data.detail) { <p>{{ data.detail }}</p> }
+  @for (area of areas(); track area.name) {
+    <h4>{{ area.name }}</h4>
+    @for (card of area.entries; track card.key) {
+      <div class="delivery"><button type="button" class="card-link" (click)="openCard.emit(card.key)"><code>{{ card.key }}</code> {{ card.title }}</button>
+        <span>{{ card.flags?.join(' · ') || (card.flags === null ? 'Paths not observed. Requires an attributed Git diff.' : '') }}</span>
+      </div>
+    }
+  } @empty { @if (!data.detail) { <p>No integrated cards are waiting for this installation.</p> } }
+</section>
+<section aria-labelledby="history-heading">
+  <div class="section-heading"><h2 id="history-heading">History</h2><span>{{ usingRecords() ? 'Deploy records' : 'Release facts' }} · UTC</span></div>
+  @if (hasRecords() && records()?.error) { <p>Showing release facts. The operations journal could not be read.</p> }
+  @for (entry of history(); track entry.id) {
+    <details class="attempt" [attr.data-testid]="'deploy-attempt-' + entry.id" #attempt (toggle)="changeDetector.markForCheck()"><summary><sui-disclosure-marker [open]="attempt.open" />
+      <time [attr.datetime]="entry.atUtc || entry.startedAtUtc">{{ (entry.atUtc || entry.startedAtUtc) | date:'d MMM HH:mm':'UTC' }}</time>
+      <span><code>{{ entry.fromCommit?.slice(0, 9) || 'Unknown' }} → {{ entry.toCommit.slice(0, 9) || 'Unknown' }}</code></span>
+      <strong>{{ outcome(entry.outcome) }}</strong>
+      <span class="duration">@if (duration(entry); as seconds) { <i aria-hidden="true" [style.height.%]="100 * seconds / maxDuration()"></i> }{{ elapsed(duration(entry)) }}</span>
+      <span>{{ entry.cardCount === null ? 'Card count not observed' : entry.cardCount + (entry.cardCount === 1 ? ' card' : ' cards') }}</span>
+    </summary>
+      @if (entry.steps.length) {
+        <ol class="steps">@for (step of entry.steps; track $index) {
+          <li><span>{{ step.name }} · {{ outcome(step.outcome) }}</span>
+            <span>{{ elapsed(duration(step)) }}</span>
+            @if (stepBar(entry, step); as bar) {
+              <span class="step-track" aria-hidden="true"><i [style.inset-inline-start.%]="bar.start" [style.width.%]="bar.width"></i></span>
+            }
+          </li>
+        }</ol>
+      } @else { <p>Steps not observed. A timed deploy report supplies steps, duration and outcome.</p> }
+    </details>
+  } @empty { @if (!records()?.error) { <p>{{ hasRecords() && !records() ? 'Loading deploy records…' : 'No history observed. Report a deploy or observe a running revision.' }}</p> } }
+  @if (total() > 25) {
+    <nav aria-label="Deployment history pages"><button class="btn" [disabled]="offset() === 0" (click)="offset.set(offset() - 25)">Newer</button>
+      {{ offset() + 1 }} to {{ offset() + history().length }} of {{ total() }}
+      <button class="btn" [disabled]="offset() + 25 >= total()" (click)="offset.set(offset() + 25)">Older</button></nav>
+  }
+</section>
