@@ -5,6 +5,7 @@ import type {
   AccessGroup,
   AccessOverview,
   AccessProject,
+  CreatedEnrollment,
   EnrolledRunner,
   EnrollmentKind,
   IamGrant,
@@ -12,11 +13,12 @@ import type {
   IamScope,
   InvitationResult,
   OneTimeServiceAccountToken,
+  IssuedRunnerCredential,
   RoleBinding,
   RunnerEnrollment,
   ServiceAccount,
 } from '../models/access.model';
-import { RUN_HOST_SCOPE } from '../models/access.model';
+import { RUN_HOST_SCOPE, withRepositoryAccess } from '../models/access.model';
 
 const IAM = '/api/auth/iam';
 
@@ -132,11 +134,26 @@ export class AccessService {
    * A runner or run host code names its projects; none named binds none. The
    * engine is not project-bound. A run host code carries only runner.deploy (F4).
    */
-  createEnrollment(name: string, kind: EnrollmentKind, projects: readonly string[] = []): Promise<{ enrollmentCode: string } | null> {
-    const scopes = kind === 'orchestrator' ? ['orchestration.write'] : kind === 'deploy' ? [RUN_HOST_SCOPE] : undefined;
-    return this.mutate(this.http.post<{ enrollmentCode: string }>('/api/auth/runner-enrollments', {
+  createEnrollment(name: string, kind: EnrollmentKind, projects: readonly string[] = []): Promise<CreatedEnrollment | null> {
+    const scopes = kind === 'orchestrator' ? ['orchestration.write']
+      : kind === 'deploy' ? [RUN_HOST_SCOPE]
+        : withRepositoryAccess(kind === 'coding' ? 'write' : 'read');
+    return this.mutate(this.http.post<CreatedEnrollment>('/api/auth/runner-enrollments', {
       name, scopes, projects: kind === 'orchestrator' ? undefined : projects,
     }));
+  }
+
+  issueRunnerCredential(id: string, scopes?: readonly string[]): Promise<IssuedRunnerCredential | null> {
+    return this.mutate(this.http.post<IssuedRunnerCredential>(
+      `/api/auth/runners/${encodeURIComponent(id)}/credentials`, { scopes }), issued => {
+        // The POST already supplied the authoritative new credential metadata.
+        // A second request must not prevent the Owner from seeing its one-time value.
+        this.runners.update(runners => runners.map(runner => runner.id !== issued.runnerId ? runner : {
+          ...runner, credentials: [...runner.credentials, {
+            id: issued.credentialId, scopes: issued.scopes, expiresAt: issued.expiresAt,
+          }],
+        }));
+      });
   }
 
   updateRunnerProjects(id: string, projects: readonly string[]): Promise<unknown> {
@@ -168,12 +185,13 @@ export class AccessService {
   }
 
   /** Runs one mutation, reloads the overview on success, and keeps the server's message on failure. */
-  private async mutate<T>(request: Observable<T>): Promise<T | null> {
+  private async mutate<T>(request: Observable<T>, update?: (result: T) => void): Promise<T | null> {
     this.busy.set(true);
     this.error.set(null);
     try {
       const result = await firstValueFrom(request);
-      await this.load();
+      if (update) update(result);
+      else await this.load();
       return result;
     } catch (error: unknown) {
       if (error instanceof HttpErrorResponse && (error.status === 401 || error.status === 403)) {

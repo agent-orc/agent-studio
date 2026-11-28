@@ -122,6 +122,23 @@ describe('AccessService', () => {
     expect(await creating).toEqual({ enrollmentCode: 'enr.x.y' });
   });
 
+  it('updates the runner from a successful issuance and exposes its secret only to the caller', async () => {
+    const loading = service.load();
+    await flushLoad();
+    await loading;
+    const scopes = ['runner.claim', 'repository.read'];
+    const issuing = service.issueRunnerCredential('runner_1', scopes);
+    const request = http.expectOne('/api/auth/runners/runner_1/credentials');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ scopes });
+    const secret = ['rnr', 'rotation', 'one-time-value'].join('.');
+    const expiresAt = '2026-11-19T09:00:00Z';
+    request.flush({ runnerId: 'runner_1', credentialId: 'cred_2', secret, scopes, expiresAt });
+
+    expect((await issuing)?.secret).toBe(secret);
+    expect(service.runners()[0].credentials).toEqual([{ id: 'cred_2', scopes, expiresAt }]);
+  });
+
   it('keeps the server message when a mutation is refused', async () => {
     const adding = service.addBinding('user', 'usr_owner', 'owner', { kind: 'project', project: 'PROJ-001' });
     http.expectOne('/api/auth/iam/bindings').flush(

@@ -120,7 +120,8 @@ internal static class RunnerCapabilityProbe
         TaskServerConnectivitySnapshot? connectivity = null,
         ReviewRepositoryReadProbe? repositoryRead = null,
         TimeProvider? clock = null,
-        string? hostBootId = null)
+        string? hostBootId = null,
+        string? repositoryAccessRefusal = null)
     {
         var list = new List<AdvertisedCapabilityDto>
         {
@@ -151,6 +152,9 @@ internal static class RunnerCapabilityProbe
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
             Capability($"platform:{PlatformClass()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
+        if (options.Role is "coding" or "review")
+            list.Add(Capability(CapabilityProtocol.RepositoryCredentialAccess, "source", null, "GitHub App",
+                repositoryAccessRefusal is null ? "ready" : "unavailable", repositoryAccessRefusal));
         if (OperatingSystem.IsWindows())
         {
             AddToolchain(list, "toolchain:msbuild", "msbuild");

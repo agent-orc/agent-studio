@@ -11,6 +11,7 @@ public static class CapabilityProtocol
     public const string ReviewExecutor = "executor:review";
     public const string GitFetch = "git:fetch";
     public const string GitPush = "git:push";
+    public const string RepositoryCredentialAccess = "repository:credential-access";
     public const string GitWorkflowPush = "git:workflow-push";
     public const string RepositoryAccess = "repository:access";
     public const string DotNet = "toolchain:dotnet";

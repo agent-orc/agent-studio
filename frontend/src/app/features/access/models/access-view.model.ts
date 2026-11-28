@@ -1,7 +1,7 @@
 import {
-  ALL_RUNNER_PROJECTS, RUN_HOST_SCOPE, formatAccessTime, scopeLabel,
+  ALL_RUNNER_PROJECTS, RUN_HOST_SCOPE, formatAccessTime, repositoryAccess, scopeLabel,
   type AccessOverview, type AccessProject, type EnrolledRunner, type IamPrincipalKind, type RoleBinding, type RunnerEnrollment,
-  type ServiceAccount, type ServiceAccountToken,
+  type RepositoryAccess, type RunnerCredential, type ServiceAccount, type ServiceAccountToken,
 } from './access.model';
 import type { GridColumn } from '../../../components/data-grid';
 
@@ -105,6 +105,18 @@ export function enrollmentIdentity(enrollment: RunnerEnrollment): RunnerIdentity
   return enrollment.scopes.includes(RUN_HOST_SCOPE) ? 'deploy' : 'runner';
 }
 
+export function runnerCredentialActive(credential: RunnerCredential, now: number): boolean {
+  return !credential.revokedAt && (!credential.expiresAt || Date.parse(credential.expiresAt) > now);
+}
+
+/** During rotation, every valid credential can still grant access. */
+export function runnerRepositoryAccess(runner: EnrolledRunner, now: number): RepositoryAccess {
+  if (runner.revokedAt) return 'none';
+  return repositoryAccess(runner.credentials
+    .filter(credential => runnerCredentialActive(credential, now))
+    .flatMap(credential => credential.scopes));
+}
+
 export function projectNames(projects: readonly string[] | null | undefined, known: readonly AccessProject[]): string {
   const list = projects ?? [];
   if (list.includes(ALL_RUNNER_PROJECTS)) return 'All projects';
@@ -143,9 +155,10 @@ export function runnerExpiry(runner: EnrolledRunner, now: number): RunnerExpiry 
   const active = runner.credentials.filter(credential => !credential.revokedAt);
   const unexpiring = active.find(credential => !credential.expiresAt);
   if (unexpiring) return { label: 'No expiry', tone: 'neutral', notice: unexpiring.expiryNotice ?? null };
-  const ends = active.map(credential => Date.parse(credential.expiresAt!)).filter(value => !Number.isNaN(value));
+  const ends = active.map(credential => Date.parse(credential.expiresAt!)).filter(Number.isFinite);
   if (ends.length === 0) return { label: '', tone: null, notice: null };
-  const soonest = Math.min(...ends);
+  const upcoming = ends.filter(end => end > now);
+  const soonest = Math.min(...(upcoming.length ? upcoming : ends));
   const days = Math.ceil((soonest - now) / DAY_MS);
   if (days <= 0) return { label: 'Expired', tone: 'danger', notice: null };
   if (days <= EXPIRY_WARNING_DAYS)

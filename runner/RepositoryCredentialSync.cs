@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts.GitHubApp;
 
@@ -108,6 +107,7 @@ public sealed class RepositoryCredentialSync(
     private readonly SemaphoreSlim _round = new(1, 1);
     private string? _lastState;
     private string? _writtenFingerprint;
+    private volatile string? _accessRefusal;
     private bool _legacyRemoved;
 
     /// <summary>
@@ -116,6 +116,8 @@ public sealed class RepositoryCredentialSync(
     /// preflight at once when it sees a new value.
     /// </summary>
     public string Generation { get; private set; } = Guid.NewGuid().ToString("N");
+
+    public string? AccessRefusal => _accessRefusal;
 
     /// <summary>Review hosts only ever read. Everything else that publishes writes.</summary>
     private string Access => options.Role is "coding" or "integration" ? RepositoryAccess.Write : RepositoryAccess.Read;
@@ -145,7 +147,7 @@ public sealed class RepositoryCredentialSync(
     public async Task<bool> RefreshAsync(CancellationToken ct)
     {
         await SyncOnceAsync(ct);
-        return File.Exists(RepositoryCredentialPaths.GitStore(options.StateDir, options.Role));
+        return AccessRefusal is null && File.Exists(RepositoryCredentialPaths.GitStore(options.StateDir, options.Role));
     }
 
     /// <summary>One round, never throwing for a server or file problem. Returns the wait before the next round.</summary>
@@ -161,7 +163,19 @@ public sealed class RepositoryCredentialSync(
         try
         {
             RemoveLegacyOnce();
-            var response = await client.GetRepositoryCredentialsAsync(options.RunnerId, Access, ReadHostKey(), ct);
+            RepositoryCredentialsResponse? response;
+            try
+            {
+                response = await client.GetRepositoryCredentialsAsync(options.RunnerId, Access, ReadHostKey(), ct);
+            }
+            catch (TaskServerException exception) when (exception.StatusCode is 401 or 403)
+            {
+                ReportRefusal(exception);
+                // Revoked access clears the role's token files before their expiry.
+                Clear();
+                return TimeSpan.FromSeconds(GitHubAppBroker.HostRefreshSeconds);
+            }
+            _accessRefusal = null;
             if (response is null)
             {
                 Clear();
@@ -173,13 +187,6 @@ public sealed class RepositoryCredentialSync(
             return TimeSpan.FromSeconds(Math.Clamp(response.RefreshAfterSeconds, 60, 900));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (HttpRequestException exception) when (exception.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-        {
-            // A revoked host loses its tokens at once, not at their expiry.
-            Clear();
-            Report("refused", $"refused status={(int)exception.StatusCode.Value}; check {RunnerOptions.RepositoryKeyFileVariable}");
-            return TimeSpan.FromSeconds(GitHubAppBroker.HostRefreshSeconds);
-        }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException
                                               or UnauthorizedAccessException or ArgumentException
                                               or JsonException or NotSupportedException)
@@ -188,6 +195,27 @@ public sealed class RepositoryCredentialSync(
             Report("deferred:" + exception.GetType().Name, $"deferred type={exception.GetType().Name}");
             return FailureRetry;
         }
+    }
+
+    private void ReportRefusal(TaskServerException exception)
+    {
+        var required = Access == RepositoryAccess.Write ? "read and push" : "read";
+        var grant = exception.ErrorCode == RepositoryCredentialErrors.WriteDenied && client.UsesDurableTaskServer
+            ? "Use a Task Server coding enrollment with repository write access and install its credential on this host."
+            : $"In Studio, open Access > Runners, issue a new credential with repository access to {required}, and install it on this host.";
+        var refusal = exception.ErrorCode switch
+        {
+            RepositoryCredentialErrors.NoAccess => "This runner's credential has no repository access.",
+            RepositoryCredentialErrors.WriteDenied => "This runner's credential has read-only repository access.",
+            _ => null,
+        };
+        // A temporary authentication failure does not erase a known scope refusal.
+        if (refusal is not null) _accessRefusal = refusal;
+        var detail = refusal is not null ? $"{refusal} {grant}"
+            : exception.ErrorCode is RepositoryCredentialErrors.HostKeyRequired or RepositoryCredentialErrors.HostKeyWriteDenied
+            ? $"Check {RunnerOptions.RepositoryKeyFileVariable} for a host key with permission to {required}."
+            : "Check this host's runner credential.";
+        Report($"refused:{exception.StatusCode}:{exception.ErrorCode}", $"refused status={exception.StatusCode}. {detail}");
     }
 
     private void Write(IReadOnlyList<RepositoryCredential> credentials)
@@ -286,6 +314,8 @@ internal static class RepositoryCredentialRouting
 
     /// <summary>Null in a process that renews no tokens.</summary>
     public static string? Generation => _sync?.Generation;
+
+    public static string? AccessRefusal => _sync?.AccessRefusal;
 
     /// <summary>False when this process renews no tokens or holds none afterwards.</summary>
     public static Task<bool> RefreshAsync(CancellationToken ct) => _sync?.RefreshAsync(ct) ?? Task.FromResult(false);

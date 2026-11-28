@@ -18,14 +18,14 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Who gets a repository token over HTTP. The local API has no sign-in, so the
 /// token route must fail closed on its own, in every profile.
-/// Every test shares one local and one tunnel host (<see cref="SharedHostFixture"/>):
-/// key files carry a fresh runner id, the vault keeps its connection file in the
-/// test's own folder, and the platform's fixed secret names are written before
-/// they are read.
+/// The local, tunnel, and networked hosts are shared fixtures. Key files carry
+/// a fresh runner id, the vault keeps its connection file in the test's own
+/// folder, and the platform's fixed secret names are written before they are read.
 /// </summary>
 [TestCaseOrderer(SharedHostTestOrder.TypeName, SharedHostTestOrder.AssemblyName)]
-public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost local, GitHubAppEndpointTests.TunnelHost tunnel)
-    : IClassFixture<GitHubAppEndpointTests.LocalHost>, IClassFixture<GitHubAppEndpointTests.TunnelHost>, IDisposable
+public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost local, GitHubAppEndpointTests.TunnelHost tunnel,
+    GitHubAppEndpointTests.NetworkedHost networked)
+    : IClassFixture<GitHubAppEndpointTests.LocalHost>, IClassFixture<GitHubAppEndpointTests.TunnelHost>, IClassFixture<GitHubAppEndpointTests.NetworkedHost>, IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "github-app-endpoints-" + Guid.NewGuid().ToString("N"));
 
@@ -49,6 +49,38 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
     {
         protected override IEnumerable<KeyValuePair<string, string?>> Settings()
             => [.. base.Settings(), new(OperatorListener.PortSetting, "5999")];
+    }
+
+    public sealed class NetworkedHost : LocalHost
+    {
+        protected override IEnumerable<KeyValuePair<string, string?>> Settings()
+            => [.. base.Settings(), new("Security:Profile", "networked")];
+    }
+
+    [Theory]
+    [InlineData(RunnerScopes.RepositoryWrite, RepositoryAccess.Write, HttpStatusCode.NoContent, null)]
+    [InlineData(RunnerScopes.RepositoryWrite, RepositoryAccess.Read, HttpStatusCode.NoContent, null)]
+    [InlineData(RunnerScopes.RepositoryRead, RepositoryAccess.Read, HttpStatusCode.NoContent, null)]
+    [InlineData(RunnerScopes.RepositoryRead, RepositoryAccess.Write, HttpStatusCode.Forbidden, RepositoryCredentialErrors.WriteDenied)]
+    [InlineData(null, RepositoryAccess.Read, HttpStatusCode.Forbidden, RepositoryCredentialErrors.NoAccess)]
+    [InlineData(null, RepositoryAccess.Write, HttpStatusCode.Forbidden, RepositoryCredentialErrors.NoAccess)]
+    public async Task An_authenticated_runner_receives_only_the_repository_access_on_its_credential(
+        string? scope, string access, HttpStatusCode status, string? error)
+    {
+        using var client = networked.CreateClient();
+        client.BaseAddress = new Uri("https://localhost");
+        var security = networked.Services.GetRequiredService<AccessSecurityStore>();
+        var enrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("repository-host",
+            scope is null ? null : [.. RunnerScopes.Minimum, scope], null, null));
+        var enrolled = security.EnrollRunner(enrollment.Code);
+        using var response = await client.SendAsync(Ask(access, enrolled.Secret, enrolled.Runner.Id));
+
+        Assert.Equal(status, response.StatusCode);
+        if (error is not null)
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(error, body.GetProperty("error").GetString());
+        }
     }
 
     /// <summary>A runner id of this test alone: the host keeps its key files beside those of every other test.</summary>

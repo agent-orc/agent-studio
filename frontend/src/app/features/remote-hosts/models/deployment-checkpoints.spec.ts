@@ -58,6 +58,22 @@ describe('deployment checkpoint projections', () => {
     ] }), NOW)).toMatchObject({ state: 'connected', action: expect.stringContaining('task branches') });
   });
 
+  it.each(['coding', 'review'] as const)('shows a fresh repository credential refusal for %s', serviceRole => {
+    const required = serviceRole === 'coding' ? 'read and push' : 'read';
+    const detail = `This runner's credential has no repository access. Grant access to ${required}.`;
+    const repository = capability('repository:credential-access');
+    const otherCapabilities = [
+      capability(`executor:${serviceRole}`), capability('git:push'), capability('provider-auth:codex'),
+    ];
+    expect(hostReadiness(host({ serviceRole, capabilityHealth: [
+      ...otherCapabilities, { ...repository, advertisedStatus: 'unavailable', detail },
+    ] }), NOW)).toEqual({
+      state: 'connected', reason: detail, action: 'Issue and install a new runner credential from Access > Runners.',
+    });
+    expect(hostReadiness(host({ serviceRole, capabilityHealth: [...otherCapabilities, repository] }), NOW).state)
+      .toBe('capability-ready');
+  });
+
   it('uses only the latest repository receipt per runner and does not treat a disconnected host as proven now', () => {
     const status: RepositoryStatus = {
       registration: { projectId: 'project-a', repositoryUrl: 'https://example.test/a.git',

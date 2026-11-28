@@ -51,36 +51,34 @@ public static class GitHubAppEndpoints
                 return Error(StatusCodes.Status400BadRequest, "invalid-access", "Access must be 'read' or 'write'.");
             // Fail closed in every profile, as for secret values: the local API has
             // no sign-in, so only a host key or a service credential gets a token.
-            var granted = Granted(context, runnerId, security, hostKeys, configuration);
-            if (granted is null)
-                return Error(StatusCodes.Status401Unauthorized, "host-key-required", "A host key or Runner service credential is required.");
+            RunnerPrincipal? runner = null;
+            string? granted;
+            if (SecurityProfiles.IsLocal(configuration))
+            {
+                granted = hostKeys.Granted(runnerId, ReadBearer(context));
+                if (granted is null)
+                    return Error(StatusCodes.Status401Unauthorized, RepositoryCredentialErrors.HostKeyRequired, "A repository host key is required.");
+            }
+            else
+            {
+                runner = BoundRunner(context, security);
+                if (runner is null || !string.Equals(runner.RunnerId, runnerId, StringComparison.Ordinal))
+                    return Error(StatusCodes.Status401Unauthorized, "runner-authentication-required", "This runner's service credential is required.");
+                granted = RunnerScopes.RepositoryAccess(runner.Scopes);
+                if (granted is null)
+                    return Error(StatusCodes.Status403Forbidden, RepositoryCredentialErrors.NoAccess, "This runner's credential has no repository access.");
+            }
             if (access == RepositoryAccess.Write && granted != RepositoryAccess.Write)
-                return Error(StatusCodes.Status403Forbidden, "write-access-denied", "This host may only read repositories.");
+                return Error(StatusCodes.Status403Forbidden,
+                    runner is null ? RepositoryCredentialErrors.HostKeyWriteDenied : RepositoryCredentialErrors.WriteDenied,
+                    "This host may only read repositories.");
             // SM-9: a runner credential receives tokens only for the repositories of its bound projects.
-            var runner = SecurityProfiles.IsLocal(configuration) ? null : BoundRunner(context, security);
             var credentials = await broker.IssueAllAsync(access, runnerId, ct,
                 admits: runner is null ? null : repository => RunnerProjectBinding.Allows(runner, repository.Project, projects));
             return credentials.Count == 0
                 ? Results.NoContent()
                 : Results.Ok(new RepositoryCredentialsResponse(credentials, GitHubAppBroker.HostRefreshSeconds));
         }));
-    }
-
-    /// <summary>
-    /// What the presented credential grants this host. A credential of another host
-    /// grants nothing. Locally only a host key counts: anyone who reaches the open
-    /// API could mint a Runner credential, but nobody can place a key on this machine.
-    /// </summary>
-    private static string? Granted(HttpContext context, string runnerId, AccessSecurityStore security,
-        GitHubAppHostKeys hostKeys, IConfiguration configuration)
-    {
-        var bearer = ReadBearer(context);
-        if (SecurityProfiles.IsLocal(configuration)) return hostKeys.Granted(runnerId, bearer);
-        var runner = context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] as RunnerPrincipal
-                     ?? security.AuthenticateRunner(bearer);
-        if (runner is null || !string.Equals(runner.RunnerId, runnerId, StringComparison.Ordinal)) return null;
-        if (runner.Scopes.Contains(RunnerScopes.RepositoryWrite)) return RepositoryAccess.Write;
-        return runner.Scopes.Contains(RunnerScopes.RepositoryRead) ? RepositoryAccess.Read : null;
     }
 
     private static RunnerPrincipal? BoundRunner(HttpContext context, AccessSecurityStore security)

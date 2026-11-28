@@ -11,6 +11,7 @@ export const json = (route: Route, body: unknown, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 /** One-time values are assembled at runtime so no credential-shaped literal lands in source. */
 export const pilotToken = ['sat', 'tok_pilot', 'one-time-value-shown-once'].join('.');
+export const pilotRunnerCredential = ['rnr', 'review', 'one-time-rotation'].join('.');
 export const pilotEnrollmentCode = ['enr', 'pilot', 'one-time-code'].join('.');
 
 const roles = [
@@ -195,7 +196,12 @@ export async function stubPilotOwner(page: Page, options: { empty?: boolean } = 
   await page.route('**/api/auth/runner-enrollments', route => {
     if (route.request().method() !== 'POST') return json(route, runners.enrollments);
     record(route);
-    return json(route, { enrollmentCode: pilotEnrollmentCode, name: 'new-host', scopes: [], expiresAt: '2026-11-24T09:15:00Z' });
+    const { name, scopes, projects } = route.request().postDataJSON() as { name: string; scopes: string[]; projects?: string[] };
+    const repositoryAccess = scopes.includes('repository.write') ? 'write' : scopes.includes('repository.read') ? 'read' : 'none';
+    const expiresAt = '2026-11-24T09:15:00Z';
+    runners.enrollments.push({ id: `enr_${runners.enrollments.length}`, name, scopes, projects: projects ?? [],
+      createdAt: PILOT_NOW.toISOString(), expiresAt, usedAt: null });
+    return json(route, { enrollmentCode: pilotEnrollmentCode, name, scopes, projects, repositoryAccess, expiresAt });
   });
   await page.route('**/api/auth/runner-enrollments/*', route => {
     record(route);
@@ -212,6 +218,17 @@ export async function stubPilotOwner(page: Page, options: { empty?: boolean } = 
     const runner = runners.runners.find(candidate => candidate.id === id);
     if (runner) runner.revokedAt = PILOT_NOW.toISOString();
     return json(route, {});
+  });
+
+  await page.route('**/api/auth/runners/runner_review/credentials', route => {
+    record(route);
+    const { scopes } = route.request().postDataJSON() as { scopes: string[] };
+    const runner = runners.runners.find(candidate => candidate.id === 'runner_review')!;
+    const credential = { id: 'cred_review_second', scopes, createdAt: PILOT_NOW.toISOString(),
+      expiresAt: day('2026-12-24'), lastUsedAt: '', revokedAt: null };
+    runner.credentials.push(credential);
+    return json(route, { runnerId: runner.id, runnerName: runner.name, credentialId: credential.id,
+      scopes, expiresAt: credential.expiresAt, secret: pilotRunnerCredential });
   });
 
   await page.route('**/api/auth/iam/service-accounts', route => {

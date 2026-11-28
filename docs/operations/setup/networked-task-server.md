@@ -119,10 +119,17 @@ and session storage contain no password, session token, or Runner bearer.
 
 ## Enroll a Runner
 
-As an owner, create the code in Settings > Access, or call
-`POST /api/auth/runner-enrollments` from an authenticated same-origin
-administration client with its CSRF header. Choose only the scopes the daemon
-needs. The default set is:
+As an Owner, open **Settings > Access > Runners > New enrollment code**.
+Choose **Coding – read and push** for a coding service or **Review only – read**
+for a separate review service. Coding can read and push to its projects'
+repositories. Review only can read them. The connected GitHub App supplies
+short-lived repository tokens automatically. There is no repository token to
+create by hand. Run host (deploy) and Orchestration engine codes carry no
+repository access.
+
+An authenticated same-origin administration client can call
+`POST /api/auth/runner-enrollments` with its CSRF header. Omitting `scopes`
+returns `repositoryAccess: "none"` and grants the following runner scopes:
 
 ```text
 runner.claim runner.lease runner.logs runner.events runner.artifacts runner.completion
@@ -159,13 +166,24 @@ Set `RUNNER_ENROLLMENT_CONFIG_DIR` to an absolute path before enrollment when
 the service uses a different private configuration directory; both files are
 written there.
 
-For an existing host, stop only its daemon, have the owner issue a code for its
-existing display name and required scopes, enroll on that host, switch
-`RUNNER_SERVER_URL` to the installation's HTTPS origin, and restart. Verify
-`GET /api/auth/runner` and a claim or idle claim response with the new bearer,
-then remove the reverse SSH tunnel and its keeper. Repeat separately for every
-Review and Gate service identity. The tunnel is supported only by the `local`
-profile; a `networked` installation returns 426 on its cleartext loopback URL.
+For an already enrolled runner, open its details in **Access > Runners**
+and choose **New credential**. Select **Read and push to repositories** for
+coding or **Read repositories** for review. Copy the credential while it is
+shown, replace the contents of the service's `RUNNER_AUTH_TOKEN_FILE` with it,
+and keep the file readable only by the service account. If the service uses
+`RUNNER_AUTH_TOKEN` directly, move to an owner-only credential file and set
+only `RUNNER_AUTH_TOKEN_FILE`. Restart that service and check its readiness
+in **Execution Hosts**. Its runner ID and project
+bindings stay the same. The previous credential works until it expires or an
+Owner revokes it through `DELETE /api/auth/runners/{id}/credentials/{credentialId}`
+using the credential ID shown in the detail.
+
+When moving a host from a local tunnel to the networked installation, enroll
+each service identity on the networked installation first and switch
+`RUNNER_SERVER_URL` to its HTTPS origin. Restart the service and verify
+`GET /api/auth/runner` and a claim or idle claim response before removing
+the reverse SSH tunnel and its keeper. A `networked` installation returns 426
+on its cleartext loopback URL.
 
 Enroll the engine separately with only `orchestration.write`, save its token in
 `ENGINE_CREDENTIAL_FILE`, and set `ENGINE_CLIENT_ID` to its enrolled `engine_<id>`.

@@ -281,6 +281,7 @@ public static class AccessSecurityEndpoints
                 RequireOwner(context, store);
                 RequireKnownProjects(request.Projects, projects);
                 var created = store.CreateEnrollment(request);
+                context.Response.Headers.CacheControl = "no-store";
                 return Results.Ok(new OneTimeEnrollmentResponse(created.Code, created.Enrollment.Name, created.Enrollment.Scopes,
                     created.Enrollment.ExpiresAt, created.Enrollment.Projects));
             }));
@@ -361,6 +362,7 @@ public static class AccessSecurityEndpoints
             {
                 RequireOwner(context, store);
                 var rotated = store.RotateRunner(id, request);
+                context.Response.Headers.CacheControl = "no-store";
                 return Results.Ok(new OneTimeSecretResponse(rotated.Runner.Id, rotated.Runner.Name, rotated.Credential.Id,
                     rotated.Secret, rotated.Credential.Scopes, rotated.Credential.ExpiresAt));
             }));

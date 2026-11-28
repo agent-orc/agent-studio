@@ -4,6 +4,7 @@
 .runners__access { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; }
 .runners__access app-chip { flex: 0 1 auto; }
 .runners__access app-status-indicator { flex: 0 0 auto; }
+.runners__repository { display: block; margin-block-start: var(--studio-spacing-1); color: var(--studio-fg-dim); }
 .runners__numeric { font-variant-numeric: tabular-nums; }
 .runners__none { color: var(--studio-fg-muted); }
 

@@ -408,6 +408,7 @@ test('owner invites a developer through the invitation flow and issues a service
   await expect(panel.getByTestId('access-token-list')).toContainText('deploy-bot token');
 
   await access.getByTestId('access-enrollment-open').click();
+  await panel.getByTestId('access-enrollment-kind').selectOption('coding');
   await panel.getByTestId('access-enrollment-name').fill('build-host');
   await panel.getByTestId('access-enrollment-create').click();
   await expect(panel.getByTestId('access-enrollment-code')).toContainText(enrollmentCode);
@@ -519,12 +520,15 @@ test('owner binds runners to projects and sees credential expiry and pre-binding
   }
 
   await access.getByTestId('access-enrollment-open').click();
+  await panel.getByTestId('access-enrollment-kind').selectOption('coding');
   await expect(panel.getByTestId('access-enrollment-no-project')).toContainText('claims and reads nothing');
   await panel.getByTestId('access-enrollment-name').fill('build-host');
   await panel.getByTestId('access-enrollment-project-PROJ-001').check();
   await panel.getByTestId('access-enrollment-create').click();
   await expect(panel.getByTestId('access-enrollment-code')).toContainText('expires 30 days after enrollment');
-  expect(enrollmentBodies).toEqual([{ name: 'build-host', projects: ['PROJ-001'] }]);
+  expect(enrollmentBodies).toEqual([{ name: 'build-host', projects: ['PROJ-001'], scopes: [
+    'runner.claim', 'runner.lease', 'runner.logs', 'runner.events', 'runner.artifacts', 'runner.completion', 'repository.write',
+  ] }]);
 
   await openRow(access, 'access-runner-runner_old');
   await expect(panel).toContainText('Rotate it to adopt the default');

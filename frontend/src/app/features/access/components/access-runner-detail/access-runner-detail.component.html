@@ -36,14 +36,59 @@
       }
     </app-page-section>
 
-    <app-page-section level="sub" anchor="access-runner-credential" title="Credential" purpose="A new credential expires 30 days after enrollment.">
+    <app-page-section level="sub" anchor="access-runner-credential" title="Credentials">
+      @if (!item.runner.revokedAt && credentialDraft() === null && !issuedCredential()) {
+        <button sectionAction type="button" class="btn" data-testid="access-runner-new-credential"
+          [disabled]="access.busy()" (click)="editCredential()">New credential</button>
+      }
       <div class="access-facts">
-        <app-row variant="default"><span appRowLabel>Active</span><span appRowValue class="access-numeric">{{ item.credentials }}</span></app-row>
+        <app-row variant="default"><span appRowLabel>Repository access</span><span appRowValue>{{ repositoryLabels[item.repositoryAccess] }}</span></app-row>
+        <app-row variant="default"><span appRowLabel>Active</span><span appRowValue class="access-numeric">{{ item.credentials.length }}</span></app-row>
         <app-row variant="default"><span appRowLabel>Expiry</span><span appRowValue class="access-numeric">
           @if (item.expiry.tone) { <app-status-indicator [tone]="item.expiry.tone" [label]="item.expiry.label" [compact]="true" /> } @else { {{ item.expiry.label || '–' }} }
         </span></app-row>
       </div>
       @if (item.expiry.notice; as notice) { <p class="access-hint">{{ notice }}</p> }
+      @if (item.credentials.length > 1) {
+        <ul class="access-list" aria-label="Active credentials">
+          @for (credential of item.credentials; track credential.id) {
+            <li class="access-list__item">
+              <span class="access-mono">{{ credential.id }}</span>
+              <span>{{ repositoryLabels[repositoryAccess(credential.scopes)] }}</span>
+            </li>
+          }
+        </ul>
+      }
+      @if (issuedCredential(); as issued) {
+        <app-secret-reveal #credentialReveal tabindex="-1" testId="access-runner-credential-reveal" title="New runner credential"
+          [value]="issued.secret" copyLabel="Copy credential"
+          (dismissed)="issuedCredential.set(null)">
+          <p class="access-hint">{{ repositoryLabels[repositoryAccess(issued.scopes)] }}.
+            @if (issued.expiresAt) { Expires {{ time(issued.expiresAt) }}. }
+          </p>
+          <p class="access-hint">On the host, replace the contents of the service's <code>RUNNER_AUTH_TOKEN_FILE</code> with this value. Keep the file readable only by the service user, then restart the service.</p>
+          <p class="access-hint">The previous credential continues working until it is revoked or expires.</p>
+        </app-secret-reveal>
+      } @else if (credentialDraft(); as chosen) {
+        <div class="access-form" data-testid="access-runner-credential-form">
+          @if (item.canChooseRepositoryAccess) {
+            <label class="access-field">Repository access
+              <select data-testid="access-runner-credential-access" [value]="chosen" [disabled]="issuing()"
+                (change)="credentialDraft.set($any($event.target).value)">
+                <option value="none">{{ repositoryLabels.none }}</option>
+                <option value="read">{{ repositoryLabels.read }}</option>
+                <option value="write">{{ repositoryLabels.write }}</option>
+              </select>
+            </label>
+          }
+          <p class="access-hint">The previous credential continues working until it is revoked or expires.</p>
+          <div class="access-form__actions">
+            <button type="button" class="btn btn--primary" data-testid="access-runner-issue-credential"
+              [appPendingButton]="issuing()" pendingLabel="Issuing…" [disabled]="access.busy()" (click)="issueCredential()">Issue credential</button>
+            <button type="button" class="btn btn--ghost" [disabled]="issuing()" (click)="credentialDraft.set(null)">Cancel</button>
+          </div>
+        </div>
+      }
     </app-page-section>
 
     @if (!item.runner.revokedAt) {
@@ -60,6 +105,7 @@
     <div class="access-facts">
       <app-row variant="default"><span appRowLabel>State</span><span appRowValue><app-status-indicator [tone]="item.tone" [label]="item.status" [compact]="true" /></span></app-row>
       <app-row variant="default"><span appRowLabel>Identity</span><span appRowValue>{{ item.identity }}</span></app-row>
+      <app-row variant="default"><span appRowLabel>Repository access</span><span appRowValue>{{ repositoryLabels[item.repositoryAccess] }}</span></app-row>
       <app-row variant="default"><span appRowLabel>Projects</span><span appRowValue>{{ item.projects || '–' }}</span></app-row>
       <app-row variant="default"><span appRowLabel>Created</span><span appRowValue class="access-numeric">{{ time(item.enrollment.createdAt) }}</span></app-row>
       <app-row variant="default"><span appRowLabel>Expires</span><span appRowValue class="access-numeric">{{ time(item.enrollment.expiresAt) }}</span></app-row>

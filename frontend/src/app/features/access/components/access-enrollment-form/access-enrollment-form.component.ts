@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { CopyableCommandComponent } from '@studio/ui/components/copyable-command/copyable-command.component';
 import { SecretRevealComponent } from '../../../../components/secret-reveal/secret-reveal.component';
-import { ALL_RUNNER_PROJECTS, runHostCommand, type EnrollmentKind } from '../../models/access.model';
+import { ALL_RUNNER_PROJECTS, REPOSITORY_ACCESS_LABELS, runHostCommand, type CreatedEnrollment, type EnrollmentKind } from '../../models/access.model';
 import { toggleProject } from '../../models/access-view.model';
 import { AccessService } from '../../services/access.service';
 
@@ -22,8 +22,9 @@ import { AccessService } from '../../services/access.service';
 export class AccessEnrollmentFormComponent {
   readonly access = inject(AccessService);
   readonly name = signal('');
-  readonly kind = signal<EnrollmentKind>('runner');
-  readonly code = signal<string | null>(null);
+  readonly kind = signal<EnrollmentKind | null>(null);
+  readonly issued = signal<CreatedEnrollment | null>(null);
+  readonly repositoryLabels = REPOSITORY_ACCESS_LABELS;
   /** Set with a run host code: the host commands that enroll it and start its deploy service (F4). */
   readonly hostCommand = signal<string | null>(null);
   /** Projects of the next enrollment code; none chosen binds none. */
@@ -40,11 +41,12 @@ export class AccessEnrollmentFormComponent {
     const name = this.name().trim();
     if (!name || this.access.busy()) return;
     const kind = this.kind();
+    if (!kind) return;
     const created = kind === 'orchestrator'
       ? await this.access.createEnrollment(name, 'orchestrator')
       : await this.access.createEnrollment(name, kind, this.selected());
-    if (created) {
-      this.code.set(created.enrollmentCode);
+    if (created && this.access.state() !== 'denied') {
+      this.issued.set(created);
       this.hostCommand.set(kind === 'deploy' ? runHostCommand(location.origin, created.enrollmentCode) : null);
       this.name.set('');
       this.selected.set([]);
@@ -52,12 +54,12 @@ export class AccessEnrollmentFormComponent {
   }
 
   done(): void {
-    this.code.set(null);
+    this.issued.set(null);
     this.hostCommand.set(null);
   }
 
   setKind(value: string): void {
-    this.kind.set(value === 'orchestrator' || value === 'deploy' ? value : 'runner');
+    this.kind.set(value === 'coding' || value === 'review' || value === 'orchestrator' || value === 'deploy' ? value : null);
   }
 
   toggle(project: string): void {

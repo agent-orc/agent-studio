@@ -1168,6 +1168,11 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (hostKey is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", hostKey);
         using var response = await _http.SendAsync(request, ct);
         if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new TaskServerException((int)response.StatusCode, "Repository credentials refused.", TryReadApiErrorCode(body, repositoryCredentials: true));
+        }
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.GitHubApp.RepositoryCredentialsResponse>(
             TaskServerContractJson, ct);
@@ -2555,11 +2560,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     internal static TimeSpan EffectiveRequestTimeout(int configuredSeconds)
         => TimeSpan.FromSeconds(Math.Clamp(configuredSeconds, 1, 90));
 
-    private static string? TryReadApiErrorCode(string response)
+    private sealed record RepositoryCredentialError(string? Error);
+
+    private static string? TryReadApiErrorCode(string response, bool repositoryCredentials = false)
     {
         try
         {
-            return JsonSerializer.Deserialize<Contract.ApiError>(response, TaskServerContractJson)?.Code;
+            return repositoryCredentials
+                ? JsonSerializer.Deserialize<RepositoryCredentialError>(response, TaskServerContractJson)?.Error
+                : JsonSerializer.Deserialize<Contract.ApiError>(response, TaskServerContractJson)?.Code;
         }
         catch (JsonException)
         {

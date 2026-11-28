@@ -80,6 +80,10 @@ public static class RunnerScopes
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
     public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release, Gate, RepositoryRead, RepositoryWrite], StringComparer.Ordinal);
 
+    public static string? RepositoryAccess(IEnumerable<string> scopes)
+        => scopes.Contains(RepositoryWrite, StringComparer.Ordinal) ? TaskServer.Contracts.GitHubApp.RepositoryAccess.Write
+            : scopes.Contains(RepositoryRead, StringComparer.Ordinal) ? TaskServer.Contracts.GitHubApp.RepositoryAccess.Read : null;
+
     /// <summary>Replay, engine, deploy, release, and pull gate credentials each have one role; none is also an execution credential.</summary>
     public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release or Gate;
 }
@@ -350,7 +354,10 @@ public sealed record RunnerEnrollRequest(string Code);
 public sealed record RunnerRotateRequest(IReadOnlyList<string>? Scopes, DateTime? ExpiresAt);
 public sealed record OneTimeSecretResponse(string RunnerId, string RunnerName, string CredentialId, string Secret, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);
 public sealed record OneTimeEnrollmentResponse(string EnrollmentCode, string Name, IReadOnlyList<string> Scopes, DateTime ExpiresAt,
-    IReadOnlyList<string>? Projects = null);
+    IReadOnlyList<string>? Projects = null)
+{
+    public string RepositoryAccess => RunnerScopes.RepositoryAccess(Scopes) ?? "none";
+}
 public sealed record PasswordResetResponse(string UserId, string TemporaryPassword, bool MustChangePassword);
 
 internal sealed record LoginAttempt(int Failures, DateTime WindowStartedAt, DateTime? LockedUntil);

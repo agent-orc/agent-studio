@@ -130,7 +130,7 @@ public static class GitHubAppEndpoints
             // Every Runner principal may claim runs, so that scope says nothing about the
             // host's role. A review host's principal is enrolled without this one.
             if (access == RepositoryAccess.Write && !principal.Scopes.Contains(TaskServerScopes.RepositoriesWrite))
-                return Error(StatusCodes.Status403Forbidden, "write-access-denied", "This host may only read repositories.");
+                return Error(StatusCodes.Status403Forbidden, RepositoryCredentialErrors.WriteDenied, "This host may only read repositories.");
             // SM-9: a host receives tokens only for the repositories of its bound projects.
             var binding = await RunnerRouteAuthorization.BindingAsync(context, principal, store);
             if (binding.Projects.IsEmpty) return Results.NoContent();

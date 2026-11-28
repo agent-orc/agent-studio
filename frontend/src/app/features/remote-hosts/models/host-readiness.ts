@@ -34,6 +34,14 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
     state: 'enrolled', reason: 'The enrolled daemon has no fresh connection.',
     action: 'Restore its Task Server route and refresh the host.',
   };
+  const capabilities = host.capabilityHealth ?? [];
+  const credentialAccess = capabilities.find(item => item.key === 'repository:credential-access');
+  if ((host.serviceRole === 'coding' || host.serviceRole === 'review')
+      && credentialAccess?.isFresh && credentialAccess.advertisedStatus === 'unavailable') return {
+    state: 'connected',
+    reason: credentialAccess.detail || 'The runner credential lacks the repository access this role needs.',
+    action: 'Issue and install a new runner credential from Access > Runners.',
+  };
   if (host.hostAdmission?.admissionState !== 'open') return {
     state: 'connected', reason: `Host admission is ${host.hostAdmission?.admissionState ?? 'unreported'}.`,
     action: 'Inspect the drain or admission reason before resuming claims.',
@@ -41,7 +49,6 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
   const role = host.serviceRole === 'review' ? 'review' : 'coding';
   // Review executors read candidate code; only coding executors publish task branches.
   const needed = role === 'review' ? ['executor:review'] : ['executor:coding', 'git:push'];
-  const capabilities = host.capabilityHealth ?? [];
   for (const key of needed) {
     const capability = capabilities.find(item => item.key === key);
     if (!capability || !ready(capability)) return {

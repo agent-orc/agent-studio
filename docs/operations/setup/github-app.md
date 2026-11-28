@@ -67,8 +67,12 @@ Hosts present their service credential, so no key is needed.
   `POST /api/v1/management/enrolments` takes `repositoryWrite` directly. Every Runner
   principal may read. A host enrolled before this feature reads only; enroll it
   again with its role to change that.
-- Monolith: enroll the runner with the scope `repository.write` or
-  `repository.read` in addition to its other scopes.
+- Monolith: in **Access > Runners > New enrollment code**, choose
+  **Coding – read and push** (`repository.write`) for coding or
+  **Review only – read** (`repository.read`) for review. Access is limited to
+  the chosen projects. The GitHub App issues short-lived repository tokens
+  automatically. To fix an already enrolled runner, use **New credential**
+  in its details and follow the [host installation steps](networked-task-server.md#enroll-a-runner).
 
 A Task Server needs `TaskServer:AttemptCredentialWrappingKeyFile`, because the
 connection lives in its encrypted root store.

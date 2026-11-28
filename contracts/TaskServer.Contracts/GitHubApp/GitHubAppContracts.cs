@@ -103,6 +103,14 @@ public sealed record GitHubAppFlowStep(string? NextUrl, string? Message, GitHubA
 
 public sealed record RepositoryCredentialsRequest(string? Access);
 
+public static class RepositoryCredentialErrors
+{
+    public const string HostKeyRequired = "host-key-required";
+    public const string HostKeyWriteDenied = "host-key-write-access-denied";
+    public const string NoAccess = "repository-access-required";
+    public const string WriteDenied = "write-access-denied";
+}
+
 /// <summary>One short-lived token scoped to exactly one repository.</summary>
 public sealed record RepositoryCredential(
     string RepositoryUrl,

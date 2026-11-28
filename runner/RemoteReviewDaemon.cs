@@ -360,7 +360,8 @@ public sealed class RemoteReviewDaemon
                         RunnerCapabilityProbe.Advertise(
                             _options,
                             gitPushReady: false,
-                            connectivity: connectivity.Snapshot),
+                            connectivity: connectivity.Snapshot,
+                            repositoryAccessRefusal: RepositoryCredentialRouting.AccessRefusal),
                         RunnerCapabilityProbe.Telemetry(
                             TakeTelemetry(force: true),
                             planeBudget,

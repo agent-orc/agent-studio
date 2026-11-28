@@ -71,8 +71,42 @@ export interface ServiceAccount {
 /** The project entry that binds a runner to every project. */
 export const ALL_RUNNER_PROJECTS = '*';
 
-/** The identity an enrollment code issues: coding and review, the orchestration engine, or a run host. */
-export type EnrollmentKind = 'runner' | 'orchestrator' | 'deploy';
+export type EnrollmentKind = 'coding' | 'review' | 'orchestrator' | 'deploy';
+export type RepositoryAccess = 'none' | 'read' | 'write';
+
+export const REPOSITORY_ACCESS_LABELS: Record<RepositoryAccess, string> = {
+  none: 'No repository access',
+  read: 'Read repositories',
+  write: 'Read and push to repositories',
+};
+
+const REPOSITORY_READ = 'repository.read';
+const REPOSITORY_WRITE = 'repository.write';
+const RUNNER_MINIMUM = ['runner.claim', 'runner.lease', 'runner.logs', 'runner.events', 'runner.artifacts', 'runner.completion'];
+
+export function repositoryAccess(scopes: readonly string[]): RepositoryAccess {
+  if (scopes.includes(REPOSITORY_WRITE)) return 'write';
+  return scopes.includes(REPOSITORY_READ) ? 'read' : 'none';
+}
+
+export function withRepositoryAccess(access: RepositoryAccess, scopes: readonly string[] = RUNNER_MINIMUM): string[] {
+  const base = scopes.filter(scope => scope !== REPOSITORY_READ && scope !== REPOSITORY_WRITE);
+  if (access !== 'none') base.push(access === 'read' ? REPOSITORY_READ : REPOSITORY_WRITE);
+  return base;
+}
+
+export interface CreatedEnrollment {
+  enrollmentCode: string;
+  repositoryAccess: RepositoryAccess;
+}
+
+export interface IssuedRunnerCredential {
+  runnerId: string;
+  credentialId: string;
+  secret: string;
+  scopes: readonly string[];
+  expiresAt: string | null;
+}
 
 /** The one scope of a run host credential; deploy credentials carry no other scope. */
 export const RUN_HOST_SCOPE = 'runner.deploy';

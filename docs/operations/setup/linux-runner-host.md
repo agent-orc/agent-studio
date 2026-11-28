@@ -3539,8 +3539,11 @@ the outbox converge.
 This section applies only to the loopback or protected-tunnel `local` profile.
 For an internet-facing `networked` Task Server, open registration is disabled;
 use the owner-authorized enrollment and `RUNNER_AUTH_TOKEN_FILE` flow in
-[networked-task-server.md](./networked-task-server.md). In both profiles,
-`X-Client-Id` is attribution and never authentication.
+[networked-task-server.md](./networked-task-server.md#enroll-a-runner). In
+Studio, **Coding – read and push** grants repository write access and
+**Review only – read** grants repository read access. The connected GitHub App
+supplies the repository tokens. In both profiles, `X-Client-Id` is attribution
+and never authentication.
 
 The local-profile Task Server guards every mutation behind an `X-Client-Id` registration
 boundary (`ClientIdentityMiddleware`): a POST from an id the server has never

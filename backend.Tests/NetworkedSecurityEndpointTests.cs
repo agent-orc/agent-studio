@@ -504,6 +504,13 @@ public sealed class NetworkedSecurityEndpointTests
         enrollmentResponse.EnsureSuccessStatusCode();
         var enrollment = await enrollmentResponse.Content.ReadFromJsonAsync<OneTimeEnrollmentResponse>();
         Assert.StartsWith("enr.", enrollment!.EnrollmentCode);
+        Assert.Equal(RunnerScopes.Minimum, enrollment.Scopes);
+        using var enrollmentJson = System.Text.Json.JsonDocument.Parse(await enrollmentResponse.Content.ReadAsStringAsync());
+        Assert.Equal("none", enrollmentJson.RootElement.GetProperty("repositoryAccess").GetString());
+        Assert.True(enrollmentResponse.Headers.CacheControl?.NoStore);
+
+        var openCodes = await browser.GetFromJsonAsync<RunnerEnrollmentResponse[]>("/api/auth/runner-enrollments");
+        Assert.Equal(RunnerScopes.Minimum, Assert.Single(openCodes!).Scopes);
 
         var enrolledResponse = await anonymous.PostAsJsonAsync("/api/auth/runner-enroll", new { code = enrollment.EnrollmentCode });
         enrolledResponse.EnsureSuccessStatusCode();
@@ -521,6 +528,23 @@ public sealed class NetworkedSecurityEndpointTests
         Assert.Equal(enrolled.RunnerName,
             new ClientIdentityStore(factory.Services.GetRequiredService<IConfiguration>(),
                 NullLogger<ClientIdentityStore>.Instance).Find(enrolled.RunnerId)?.DisplayName);
+
+        using var rotateRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/auth/runners/{enrolled.RunnerId}/credentials")
+        {
+            Content = JsonContent.Create(new { scopes = RunnerScopes.Minimum.Append(RunnerScopes.RepositoryWrite) })
+        };
+        rotateRequest.Headers.Add("X-CSRF-Token", auth.CsrfToken);
+        using var rotateResponse = await browser.SendAsync(rotateRequest);
+        rotateResponse.EnsureSuccessStatusCode();
+        Assert.True(rotateResponse.Headers.CacheControl?.NoStore);
+        var rotated = await rotateResponse.Content.ReadFromJsonAsync<OneTimeSecretResponse>();
+        Assert.Contains(RunnerScopes.RepositoryWrite, rotated!.Scopes);
+        Assert.NotEqual(enrolled.CredentialId, rotated.CredentialId);
+        Assert.Equal(enrolled.RunnerId, rotated.RunnerId);
+
+        var runnerList = await browser.GetStringAsync("/api/auth/runners");
+        Assert.DoesNotContain(rotated.Secret, runnerList, StringComparison.Ordinal);
+        Assert.Contains(rotated.CredentialId, runnerList, StringComparison.Ordinal);
 
         var replay = await anonymous.PostAsJsonAsync("/api/auth/runner-enroll", new { code = enrollment.EnrollmentCode });
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);

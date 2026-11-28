@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
 import { sampleColours, setTheme } from '../helpers/theme';
-import { expandToFullPage, pilotEnrollmentCode, pilotToken, stubPilotOwner } from './access-pilot.fixture';
+import { expandToFullPage, pilotEnrollmentCode, pilotRunnerCredential, pilotToken, stubPilotOwner } from './access-pilot.fixture';
 
 /**
  * AGT-4029: Settings > Access as the pilot page of the UI standard. Every
@@ -14,6 +14,7 @@ import { expandToFullPage, pilotEnrollmentCode, pilotToken, stubPilotOwner } fro
  */
 const results = process.env.JOB_RESULTS_DIR ?? 'test-results';
 const DESKTOP = { width: 1440, height: 900 } as const;
+const runnerScopes = ['runner.claim', 'runner.lease', 'runner.logs', 'runner.events', 'runner.artifacts', 'runner.completion'];
 const PHONE = { width: 390, height: 844 } as const;
 
 async function openAccess(page: Page, viewport: { width: number; height: number } = DESKTOP): Promise<Locator> {
@@ -203,17 +204,28 @@ test('every earlier action stays reachable: invite, group, binding, enrollment c
   await expect.poll(last).toMatchObject({ method: 'DELETE', path: '/api/auth/iam/service-accounts/sa_tok_laptop/tokens/tok_laptop' });
 
   await access.getByTestId('access-enrollment-open').click();
+  await panel.getByTestId('access-enrollment-kind').selectOption('coding');
   await panel.getByTestId('access-enrollment-name').fill('build-host-03');
   await panel.getByTestId('access-enrollment-project-PROJ-001').check();
   await panel.getByTestId('access-enrollment-create').click();
   await expect(panel.getByTestId('access-enrollment-code-value')).toHaveText(pilotEnrollmentCode);
-  await expect.poll(last).toEqual({ method: 'POST', path: '/api/auth/runner-enrollments', body: { name: 'build-host-03', projects: ['PROJ-001'] } });
+  await expect.poll(last).toEqual({ method: 'POST', path: '/api/auth/runner-enrollments', body: { name: 'build-host-03', projects: ['PROJ-001'], scopes: [...runnerScopes, 'repository.write'] } });
   await panel.getByTestId('access-enrollment-code-done').click();
   await panel.getByTestId('access-enrollment-kind').selectOption('deploy');
   await panel.getByTestId('access-enrollment-name').fill('stage-host-02');
   await panel.getByTestId('access-enrollment-create').click();
   await expect(panel.getByTestId('access-run-host-command-text')).toContainText(`--enroll`);
   await expect(panel.getByTestId('access-run-host-command-text')).toContainText(pilotEnrollmentCode);
+  await expect.poll(last).toEqual({ method: 'POST', path: '/api/auth/runner-enrollments',
+    body: { name: 'stage-host-02', projects: [], scopes: ['runner.deploy'] } });
+  await panel.getByTestId('access-enrollment-code-done').click();
+  await panel.getByTestId('access-enrollment-kind').selectOption('orchestrator');
+  await panel.getByTestId('access-enrollment-name').fill('engine-host-02');
+  await panel.getByTestId('access-enrollment-create').click();
+  await expect(panel.getByTestId('access-enrollment-code')).toContainText('No repository access');
+  await expect.poll(last).toEqual({ method: 'POST', path: '/api/auth/runner-enrollments',
+    body: { name: 'engine-host-02', scopes: ['orchestration.write'] } });
+
 
   await access.getByTestId('access-enrollment-menu-enr_build').click();
   await page.getByTestId('access-enrollment-menu-enr_build-item-revoke').click();
@@ -467,3 +479,64 @@ test('pattern shots for the pilot document, light and dark', async ({ page }) =>
   await access.getByTestId('access-enrollment-open').click();
   await shoot('create-form', panel);
 });
+
+for (const mode of ['light', 'dark'] as const) {
+  for (const [size, viewport] of [['desktop', DESKTOP], ['phone', PHONE]] as const) {
+    test(`review enrollment and credential rotation in ${mode} on ${size}`, async ({ page }) => {
+      const { calls } = await stubPilotOwner(page);
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      const access = await openAccess(page, viewport);
+      await theme(page, mode);
+      const panel = access.getByTestId('access-detail-panel');
+      const folder = join(results, 'runner-repository-access');
+      mkdirSync(folder, { recursive: true });
+
+      if (size === 'desktop') await access.getByTestId('access-outline-access-runners').click();
+      await access.getByTestId('access-enrollment-open').click();
+      await panel.getByTestId('access-enrollment-name').fill('second-review-host');
+      await expect(panel.getByTestId('access-enrollment-create')).toBeDisabled();
+      await panel.getByTestId('access-enrollment-kind').selectOption('review');
+      await panel.getByTestId('access-enrollment-project-PROJ-001').check();
+      await page.screenshot({ path: join(folder, `enrollment-${size}-${mode}.png`) });
+      await panel.getByTestId('access-enrollment-create').click();
+      await expect(panel.getByTestId('access-enrollment-code')).toContainText('Read repositories');
+      expect(calls.at(-1)?.body).toEqual({
+        name: 'second-review-host', projects: ['PROJ-001'], scopes: [...runnerScopes, 'repository.read'],
+      });
+      await panel.getByTestId('access-enrollment-code-done').click();
+      await panel.getByTestId('sidesheet-close').click();
+      const code = access.getByTestId('access-enrollment-enr_3');
+      await expect(code).toContainText('Read repositories');
+      await rowOpen(access, 'access-enrollment-enr_3').click();
+      await expect(panel.getByTestId('access-enrollment-detail')).toContainText('Read repositories');
+      await panel.getByTestId('sidesheet-close').click();
+
+      const runner = access.getByTestId('access-runner-runner_review');
+      await expect(runner).toContainText('No repository access');
+      await rowOpen(access, 'access-runner-runner_review').click();
+      await expect(panel).toContainText('No repository access');
+      await panel.getByTestId('access-runner-new-credential').click();
+      await panel.getByTestId('access-runner-credential-access').selectOption('read');
+      await panel.getByTestId('access-runner-issue-credential').click();
+      const reveal = panel.getByTestId('access-runner-credential-reveal');
+      await expect(reveal.locator('..')).toBeFocused();
+      await expect(reveal).toContainText('Shown once');
+      await expect(reveal).toContainText('RUNNER_AUTH_TOKEN_FILE');
+      await expect(reveal).toContainText('continues working until it is revoked or expires');
+      await expect(reveal.getByTestId('access-runner-credential-reveal-value')).toHaveText(pilotRunnerCredential);
+      expect(calls.at(-1)).toEqual({ method: 'POST', path: '/api/auth/runners/runner_review/credentials',
+        body: { scopes: ['runner.claim', 'repository.read'] } });
+      await expect(runner).toContainText('Read repositories');
+      await reveal.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(folder, `credential-${size}-${mode}.png`) });
+      await reveal.getByTestId('access-runner-credential-reveal-done').click();
+      await expect(panel).not.toContainText(pilotRunnerCredential);
+      await panel.getByTestId('sidesheet-close').click();
+      await rowOpen(access, 'access-runner-runner_review').click();
+      await expect(panel.getByTestId('access-runner-credential-reveal')).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+      expect(errors).toEqual([]);
+    });
+  }
+}

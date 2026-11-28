@@ -6,9 +6,9 @@ import type { MenuItem } from '@studio/ui/components/menu/index';
 import { OverflowMenuComponent } from '../../../../components/overflow-menu/overflow-menu.component';
 import { PageSectionComponent } from '../../../../components/page-section/page-section.component';
 import { StatusIndicatorComponent, type StatusTone } from '@studio/ui/components/status-indicator/status-indicator.component';
-import { formatAccessTime, type EnrolledRunner, type RunnerEnrollment } from '../../models/access.model';
+import { REPOSITORY_ACCESS_LABELS, formatAccessTime, repositoryAccess, type EnrolledRunner, type RunnerEnrollment } from '../../models/access.model';
 import {
-  accessColumns, enrollmentIdentity, enrollmentOpen, enrollmentStatus, enrollmentTone, identityLabel, projectNames, runnerExpiry, runnerIdentity,
+  accessColumns, enrollmentIdentity, enrollmentOpen, enrollmentStatus, enrollmentTone, identityLabel, projectNames, runnerExpiry, runnerIdentity, runnerRepositoryAccess,
   type EnrollmentStatus, type RunnerExpiry,
 } from '../../models/access-view.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
@@ -22,6 +22,7 @@ export interface RunnerRow {
   runner: EnrolledRunner;
   identity: string;
   projects: string;
+  repositoryAccess: string;
   revoked: boolean;
   expiry: RunnerExpiry;
   menu: readonly MenuItem[];
@@ -34,6 +35,7 @@ export interface EnrollmentRow {
   enrollment: RunnerEnrollment;
   identity: string;
   projects: string;
+  repositoryAccess: string;
   status: EnrollmentStatus;
   tone: StatusTone;
   expires: string;
@@ -61,8 +63,8 @@ export class AccessRunnersComponent {
   readonly access = inject(AccessService);
   readonly selection = inject(AccessSelectionService);
   private readonly now = inject(ACCESS_CLOCK);
-  readonly runnerColumns = accessColumns('Runner', 'Identity and projects', 'Credential');
-  readonly enrollmentColumns = accessColumns('Code for', 'Identity and projects', 'Expires');
+  readonly runnerColumns = accessColumns('Runner', 'Access', 'Credential');
+  readonly enrollmentColumns = accessColumns('Code for', 'Access', 'Expires');
 
   readonly runners = computed<RunnerRow[]>(() => this.access.runners().map(runner => {
     const identity = runnerIdentity(runner);
@@ -70,6 +72,7 @@ export class AccessRunnersComponent {
     return {
       id: runner.id, name: runner.name, sub: runner.id, runner, revoked, identity: identityLabel(identity),
       projects: identity === 'orchestrator' ? 'Not project-bound' : projectNames(runner.projects, this.access.projects()),
+      repositoryAccess: REPOSITORY_ACCESS_LABELS[runnerRepositoryAccess(runner, this.now())],
       expiry: runnerExpiry(runner, this.now()),
       menu: revoked ? [OPEN] : [
         OPEN,
@@ -85,6 +88,7 @@ export class AccessRunnersComponent {
     return {
       id: enrollment.id, name: enrollment.name, sub: '', enrollment, status, tone: enrollmentTone(status), identity: identityLabel(identity),
       projects: identity === 'orchestrator' ? 'Not project-bound' : enrollment.projects ? projectNames(enrollment.projects, this.access.projects()) : '',
+      repositoryAccess: REPOSITORY_ACCESS_LABELS[repositoryAccess(enrollment.scopes)],
       expires: formatAccessTime(enrollment.expiresAt),
       menu: enrollmentOpen(enrollment, this.now())
         ? [OPEN, { kind: 'separator' }, { kind: 'row', id: 'revoke', label: 'Revoke…', danger: true }] : [OPEN],

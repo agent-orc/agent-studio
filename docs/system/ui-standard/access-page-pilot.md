@@ -167,8 +167,8 @@ in the product's monospace font, a copy control and Done. It stays until the
 reader dismisses it and is dropped when another row is opened or access is
 refused.
 
-- The same place serves a service account token, an enrollment code, an
-  invitation link and a temporary password.
+- The same place serves a service account token, a replacement runner
+  credential, an enrollment code, an invitation link and a temporary password.
 - Component: `<app-secret-reveal>`; host commands under an enrollment code use
   the existing `<app-copyable-command>`.
 
@@ -222,8 +222,8 @@ Shared SCSS mixins in `frontend/src/styles/_mixins.scss`:
 | Groups | Group, Roles, State, Members | Members with add and remove, roles, Delete |
 | Service accounts | Service account, Roles, State, Tokens | Tokens with New token and Revoke, roles, Disable |
 | API tokens | API token, Role, State, Token | Role with its description, creator, the token with Revoke, Disable |
-| Runners: enrolled runners | Runner, Identity and projects, State, Credential | Identity, projects with edit, credential and expiry, Revoke |
-| Runners: enrollment codes | Code for, Identity and projects, State, Expires | Facts of the code, Revoke |
+| Runners: enrolled runners | Runner, Access, State, Credential | Identity, projects with edit, repository access, expiry, New credential, Revoke |
+| Runners: enrollment codes | Code for, Access, State, Expires | Identity, projects, repository access, expiry, Revoke |
 | Role bindings by scope | Principal, Role, Source | A row opens its principal |
 | Factor activity | Event, Actor, Session, Time | None: an audit list |
 

@@ -10,6 +10,7 @@
           <app-chip [label]="row.identity" [detail]="row.projects" />
           @if (row.runner.projectsNotice; as notice) { <app-status-indicator tone="neutral" label="Before binding" [detail]="notice" [compact]="true" /> }
         </span>
+        <span class="runners__repository">{{ row.repositoryAccess }}</span>
       </ng-template>
       <ng-template appGridCell="state" [appGridCellOf]="runners()" let-row>
         <app-status-indicator [tone]="row.revoked ? 'neutral' : 'success'" [label]="row.revoked ? 'Revoked' : 'Active'" [compact]="true" testId="access-runner-status" />
@@ -36,6 +37,7 @@
                    [selectedId]="selection.selectedId('enrollment')" (rowSelect)="selection.open('enrollment', $event.id)">
       <ng-template appGridCell="access" [appGridCellOf]="enrollments()" let-row>
         <app-chip [label]="row.identity" [detail]="row.projects || null" />
+        <span class="runners__repository">{{ row.repositoryAccess }}</span>
       </ng-template>
       <ng-template appGridCell="state" [appGridCellOf]="enrollments()" let-row>
         <app-status-indicator [tone]="row.tone" [label]="row.status" [compact]="true" testId="access-enrollment-status" />

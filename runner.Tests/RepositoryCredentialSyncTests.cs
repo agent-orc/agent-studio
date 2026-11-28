@@ -33,7 +33,7 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
     private RepositoryCredential Credential(string url, string token, string access = RepositoryAccess.Write)
         => new(url, GitHubAppBroker.CredentialUsername, token, _clock.GetUtcNow().UtcDateTime.AddHours(1), access);
 
-    private (RepositoryCredentialSync Sync, StubServer Server) Build(string role, string? keyFile = null)
+    private (RepositoryCredentialSync Sync, StubServer Server) Build(string role, string? keyFile = null, Action<string>? log = null)
     {
         var server = new StubServer();
         var options = new RunnerOptions
@@ -50,7 +50,7 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
             RepositoryKeyFile = keyFile,
         };
         var client = new TaskServerClient(new HttpClient(server) { BaseAddress = new Uri(options.ServerUrl) }, options.RunnerId);
-        return (new RepositoryCredentialSync(options, client, _ => { }, _clock), server);
+        return (new RepositoryCredentialSync(options, client, log ?? (_ => { }), _clock), server);
     }
 
     [Theory]
@@ -68,6 +68,38 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         Assert.Equal("/api/v1/runners/runner-1/repository-credentials", server.LastPath);
         using var body = JsonDocument.Parse(server.LastBody!);
         Assert.Equal(access, body.RootElement.GetProperty("access").GetString());
+    }
+
+    [Theory]
+    [InlineData("coding", HttpStatusCode.Unauthorized, RepositoryCredentialErrors.HostKeyRequired, "Check RUNNER_REPOSITORY_KEY_FILE", null)]
+    [InlineData("coding", HttpStatusCode.Forbidden, RepositoryCredentialErrors.HostKeyWriteDenied, "Check RUNNER_REPOSITORY_KEY_FILE", null)]
+    [InlineData("coding", HttpStatusCode.Forbidden, RepositoryCredentialErrors.NoAccess, "has no repository access", "read and push")]
+    [InlineData("coding", HttpStatusCode.Forbidden, RepositoryCredentialErrors.WriteDenied, "has read-only repository access", "read and push")]
+    [InlineData("review", HttpStatusCode.Forbidden, RepositoryCredentialErrors.NoAccess, "has no repository access", "read")]
+    [InlineData("review", HttpStatusCode.Unauthorized, null, "Check this host's runner credential", null)]
+    public async Task Repository_refusals_report_the_right_fix_and_recover_after_a_success(
+        string role, HttpStatusCode status, string? errorCode, string message, string? expectedGrant)
+    {
+        var log = new List<string>();
+        var (sync, server) = Build(role, log: log.Add);
+        server.Respond(status, errorCode);
+        await sync.SyncOnceAsync(default);
+
+        var refusalLog = Assert.Single(log);
+        Assert.Contains($"refused status={(int)status}", refusalLog, StringComparison.Ordinal);
+        Assert.Contains(message, refusalLog, StringComparison.Ordinal);
+        if (expectedGrant is not null)
+        {
+            Assert.DoesNotContain("RUNNER_REPOSITORY_KEY_FILE", refusalLog, StringComparison.Ordinal);
+            Assert.Contains($"Access > Runners, issue a new credential with repository access to {expectedGrant},", refusalLog, StringComparison.Ordinal);
+            Assert.Contains(message, sync.AccessRefusal, StringComparison.Ordinal);
+        }
+        else
+            Assert.Null(sync.AccessRefusal);
+
+        server.Respond(HttpStatusCode.NoContent);
+        await sync.SyncOnceAsync(default);
+        Assert.Null(sync.AccessRefusal);
     }
 
     [Fact]
@@ -539,10 +571,10 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         public string? LastBody { get; private set; }
         public string? LastAuthorization { get; private set; }
 
-        public void Respond(HttpStatusCode status)
+        public void Respond(HttpStatusCode status, string? error = null)
         {
             _status = status;
-            _body = null;
+            _body = error is null ? null : JsonSerializer.Serialize(new { error });
         }
 
         public void RespondRaw(string body)

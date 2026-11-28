@@ -61,7 +61,8 @@ describe('AccessEnrollmentFormComponent', () => {
   });
 
   it('binds a runner enrollment code to the chosen projects and warns that none binds nothing', async () => {
-    const { fixture, element, name, create } = mount();
+    const { fixture, element, name, kind, create } = mount();
+    kind('coding');
     expect(element.querySelector('[data-testid="access-enrollment-no-project"]')?.textContent).toContain('claims and reads nothing');
     name('build-host');
     (element.querySelector('[data-testid="access-enrollment-project-PROJ-001"]') as HTMLInputElement).click();
@@ -69,7 +70,7 @@ describe('AccessEnrollmentFormComponent', () => {
     expect(element.querySelector('[data-testid="access-enrollment-no-project"]')).toBeNull();
     await create();
 
-    expect(access.createEnrollment).toHaveBeenCalledWith('build-host', 'runner', ['PROJ-001']);
+    expect(access.createEnrollment).toHaveBeenCalledWith('build-host', 'coding', ['PROJ-001']);
   });
 
   it('chooses all projects in place of single projects', () => {

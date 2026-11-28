@@ -1491,12 +1491,17 @@ decide the route family; the binding decides which work inside it.
   gate. Studio, board, workspace and management reads are not runner reads.
 - **Repository tokens.** `POST /api/v1/runners/{runnerId}/repository-credentials`
   mints GitHub App tokens only for the repositories of bound projects; a
-  credential without projects receives none.
+  credential without projects receives none. In the networked monolith,
+  **Coding – read and push** adds `repository.write` and **Review only – read**
+  adds `repository.read`. An enrollment API request without scopes grants
+  neither. A signed-in runner with neither scope gets `403 repository-access-required`.
 - **Lifetime.** A new runner credential expires 30 days after issue
   (`TaskServer:RunnerCredentialLifetimeDays`, `Security:RunnerCredentialLifetimeDays`).
   Rotation keeps the existing overlap: the new credential starts its own 30
   days and the previous one stays valid until its overlap deadline (Task
-  Server) or until the Owner revokes it (monolith). Every authenticated answer
+  Server) or until it expires or the Owner revokes it (monolith). In the
+  monolith the Owner can issue a replacement in Settings > Access > Runners.
+  Every authenticated answer
   to an expiring runner credential carries `X-Principal-Credential-Expires-At`,
   and the host logs a warning once a day in its last 7 days. Settings > Access
   and the credential inventory mark a credential as expiring within 14 days. A
