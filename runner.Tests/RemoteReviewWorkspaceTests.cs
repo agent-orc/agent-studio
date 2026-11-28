@@ -308,19 +308,22 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("elapsed 1 ms", "elapsed 2 ms")]
-    [InlineData("2026-11-28T03:50:00Z", "2026-11-28T03:51:00Z")]
-    [InlineData("03:50:00", "03:51:00")]
-    [InlineData("12345678-1234-1234-1234-123456789abc", "12345678-1234-1234-1234-123456789abd")]
-    [InlineData("http://localhost:5030", "http://localhost:5031")]
-    [InlineData("port 5030", "port 5031")]
-    [InlineData("a  b", "a b")]
-    [InlineData("a\tb", "a b")]
-    [InlineData("a\rb", "ab")]
-    [InlineData("a\nb", "a b")]
-    [InlineData("a\n\nb", "a\nb")]
-    [InlineData(" value ", "value")]
-    public void Assertion_fingerprints_preserve_asserted_values(string firstValue, string repeatValue)
+    [Trait("Category", "Guard")]
+    [InlineData("elapsed 1 ms", "elapsed 2 ms", false)]
+    [InlineData("2026-11-28T03:50:00Z", "2026-11-28T03:51:00Z", false)]
+    [InlineData("03:50:00", "03:51:00", false)]
+    [InlineData("12345678-1234-1234-1234-123456789abc", "12345678-1234-1234-1234-123456789abd", false)]
+    [InlineData("http://localhost:5030", "http://localhost:5031", false)]
+    [InlineData("port 5030", "port 5031", false)]
+    [InlineData("a  b", "a b", false)]
+    [InlineData("a\tb", "a b", false)]
+    [InlineData("a\rb", "ab", false)]
+    [InlineData("a\nb", "a b", false)]
+    [InlineData("a\n\nb", "a\nb", false)]
+    [InlineData(" value ", "value", false)]
+    [InlineData("a  b", "a  b", true)]
+    [InlineData("Passed Product.Tests.B [1 ms]", "Passed Product.Tests.B [2 ms]", null)]
+    public void Assertion_fingerprints_preserve_asserted_values(string firstValue, string repeatValue, bool? reproduced)
     {
         static string? Fingerprint(string value) => ReviewTestFailureAttribution.AssertionFingerprint(
             "/review", "verify", "Product.Tests.A", new(1,
@@ -330,13 +333,20 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var first = Fingerprint(firstValue);
         var repeat = Fingerprint(repeatValue);
 
-        Assert.NotNull(first);
-        Assert.NotNull(repeat);
-        Assert.NotEqual(first, repeat);
+        if (reproduced is null)
+        {
+            Assert.Null(first);
+            Assert.Null(repeat);
+        }
+        else
+        {
+            Assert.NotNull(first);
+            Assert.NotNull(repeat);
+            Assert.Equal(reproduced.Value, first == repeat);
+        }
         var proof = new ReviewAssertionEvidenceDto("Product.Tests.A", "FullyQualifiedName=Product.Tests.A",
             first, repeat, null, null, null);
-        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence,
-            ReviewTestFailureAttribution.DiagnoseAssertions([proof]).Classification);
+        Assert.Equal(reproduced == true, ReviewTestFailureAttribution.DiagnoseAssertions([proof]).ChargesCard);
     }
 
     [Theory]
@@ -385,6 +395,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Theory]
+    [Trait("Category", "Guard")]
     [InlineData("Failed Product.Tests.Again [1 ms]")]
     [InlineData("Product.Tests.Again [FAIL]")]
     [InlineData("Failed Product.Tests.A(value: 1) [1 ms]")]

@@ -478,6 +478,54 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(["pass", "fail"], attempts["outer > inner > second"]);
     }
 
+    [Theory]
+    [Trait("Category", "Guard")]
+    [InlineData("not ok", "ok", false, 1, "red", "fail")]
+    [InlineData("ok", "not ok", true, 1, "red", "pass")]
+    [InlineData("ok", "ok", true, 0, "green", "pass")]
+    [InlineData("skip", "ok", true, 0, "red", "unknown")]
+    public async Task Tap_retry_receipt_tracks_same_named_children_through_aggregate_summaries(
+        string firstRetry, string secondRetry, bool summaries, int exitCode, string status, string firstResult)
+    {
+        const string first = "outer > suite A > renewal";
+        const string second = "outer > suite B > renewal";
+        string Tap(string a, string b)
+        {
+            string Suite(string label, int index, string result)
+            {
+                var failed = result == "not ok";
+                var point = result == "skip" ? "ok 1 - renewal # SKIP disabled" : $"{result} 1 - renewal";
+                return $"    # Subtest: suite {label}\n        {point}\n"
+                    + (failed ? $"          ---\n          error: '{label} error'\n          ...\n" : "")
+                    + "        1..1\n"
+                    + (failed && !summaries ? "" : $"    {(failed ? "not ok" : "ok")} {index} - suite {label}\n");
+            }
+
+            var failed = a == "not ok" || b == "not ok";
+            return "TAP version 13\n# Subtest: outer\n" + Suite("A", 1, a) + Suite("B", 2, b)
+                + "    1..2\n"
+                + (failed && !summaries ? "" : failed
+                    ? "not ok 1 - outer\n  ---\n  failureType: 'subtestsFailed'\n  error: '1 subtest failed'\n  ...\n"
+                    : "ok 1 - outer\n");
+        }
+
+        var receipt = await LintReceiptAsync("lint", Tap("not ok", "ok"), exitCode, Tap(firstRetry, secondRetry));
+        Assert.Equal(status, receipt.Status);
+        var verdict = Assert.Single(receipt.Verdicts);
+        Assert.Equal(firstResult != "pass" ? [first] : secondRetry == "not ok" ? [second] : [], verdict.FailedTests);
+        Assert.Equal(firstResult == "pass" ? [first] : [], verdict.FlakyTests);
+        var tests = receipt.TestVerdicts!.ToDictionary(test => test.Test,
+            test => test.Attempts.Select(attempt => attempt.Result).ToArray());
+        Assert.Equal(secondRetry == "not ok" ? 2 : 1, tests.Count);
+        Assert.Equal(["fail", firstResult], tests[first]);
+        if (secondRetry == "not ok")
+        {
+            Assert.Equal(["pass", "fail"], tests[second]);
+            Assert.Equal("B error", verdict.FailureMessages![second]);
+        }
+        Assert.Equal("A error", verdict.FailureMessages![first]);
+    }
+
     [Fact]
     public async Task SummaryOnlyRepeatLeavesMissingChildUnresolved()
     {

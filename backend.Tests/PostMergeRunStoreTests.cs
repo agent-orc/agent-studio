@@ -136,6 +136,7 @@ public sealed class PostMergeRunStoreTests : IDisposable
     }
 
     [Theory]
+    [Trait("Category", "Guard")]
     [InlineData("valid")]
     [InlineData("fixed-valid")]
     [InlineData("fixed-missing")]
@@ -159,6 +160,8 @@ public sealed class PostMergeRunStoreTests : IDisposable
     [InlineData("extra-argument")]
     [InlineData("extra-positional")]
     [InlineData("valid-quoted-path")]
+    [InlineData("valid-windows-path")]
+    [InlineData("posix-literal-backslash")]
     [InlineData("leading-zero")]
     [InlineData("plus-sign")]
     [InlineData("index-whitespace")]
@@ -177,6 +180,16 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.Equal(2, shardCommands.Count);
         var shard = new PostMergeCommandVerdict(shardCommands[0], 0, false) { SuiteId = "tests" };
         var second = shard with { Command = shardCommands[1] };
+        if (evidence == "valid-windows-path")
+        {
+            shard = shard with { Command = @"dotnet test tests.csproj --no-build --settings 'C:\runner\post-merge-shards\shard-0.runsettings'" };
+            second = second with { Command = @"dotnet test tests.csproj --no-build --settings 'C:\runner\post-merge-shards\shard-1.runsettings'" };
+        }
+        if (evidence == "posix-literal-backslash")
+        {
+            shard = shard with { Command = "dotnet test tests.csproj --no-build --settings '/runner/post-merge-shards/shard-0.runsettings'" };
+            second = second with { Command = @"dotnet test tests.csproj --no-build --settings '/runner/post-merge-shards\shard-1.runsettings'" };
+        }
         var receipt = run with { Status = "green", FinishedAtUtc = Now,
             Verdicts = [new("build", 0, false), shard, second],
             Envelope = envelope with { ShardPlan = "tests=2" },
@@ -240,7 +253,7 @@ public sealed class PostMergeRunStoreTests : IDisposable
                 ? verdict : verdict with { Command = verdict.Command.Replace(" --settings '",
                     " --settings '/tmp/ignored'" + extra + " '", StringComparison.Ordinal) }).ToArray() };
         }
-        if (evidence is not ("valid" or "fixed-valid" or "valid-quoted-path"))
+        if (evidence is not ("valid" or "fixed-valid" or "valid-quoted-path" or "valid-windows-path"))
         {
             Assert.Null(store.Record(Project, receipt));
             Assert.Null(store.Read(Project).LastGreenSha);
@@ -251,14 +264,23 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.NotNull(new PostMergeRunStore(_root).Record(Project, receipt));
     }
 
-    [Fact]
-    public void PersistedDuplicatePlanReceiptCanReplayExactlyWithoutRevalidatingCoverage()
+    [Theory]
+    [Trait("Category", "Guard")]
+    [InlineData(true, "exact", true)]
+    [InlineData(false, "exact", true)]
+    [InlineData(true, "reason", false)]
+    [InlineData(true, "id", false)]
+    [InlineData(true, "command-spacing", false)]
+    [InlineData(true, "verdict-order", false)]
+    public void PersistedReceiptRequiresExactReplay(bool duplicate, string change, bool accepted)
     {
         var store = new PostMergeRunStore(_root);
         var receipt = Run("legacy", First, "window") with
         {
-            Commands = ["build", "build"], Status = "green", FinishedAtUtc = Now,
-            Verdicts = [new("build", 0, false), new("build", 0, false)],
+            Commands = duplicate ? ["build", "dotnet test", "build"] : ["build", "dotnet test"],
+            Status = "green", FinishedAtUtc = Now,
+            Verdicts = duplicate ? [new("build", 0, false), new("dotnet test", 0, false), new("build", 0, false)]
+                : [new("build", 0, false), new("dotnet test", 0, false)],
         };
         Directory.CreateDirectory(_root);
         var state = PostMergeProjectState.Empty(Project) with
@@ -267,11 +289,19 @@ public sealed class PostMergeRunStoreTests : IDisposable
         };
         File.WriteAllText(Path.Combine(_root, Project + ".json"),
             System.Text.Json.JsonSerializer.Serialize(state, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
-        Assert.NotNull(store.Record(Project, receipt));
-        Assert.Null(store.Record(Project, receipt with { Reason = "changed receipt" }));
-        Assert.Null(store.Record(Project, receipt with { Id = "new-receipt" }));
+        var replay = change switch
+        {
+            "exact" => receipt,
+            "reason" => receipt with { Reason = "changed receipt" },
+            "id" => receipt with { Id = "new-receipt" },
+            "command-spacing" => receipt with { Commands = ["build", "dotnet  test", "build"] },
+            "verdict-order" => receipt with { Verdicts = [receipt.Verdicts[1], receipt.Verdicts[0], receipt.Verdicts[2]] },
+            _ => throw new ArgumentOutOfRangeException(nameof(change)),
+        };
+        Assert.Equal(accepted, store.Record(Project, replay) is not null);
         Assert.Equal(First, store.Read(Project).LastGreenSha);
-        Assert.Single(store.Read(Project).Runs);
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(receipt),
+            System.Text.Json.JsonSerializer.Serialize(Assert.Single(store.Read(Project).Runs)));
     }
 
     [Fact]
