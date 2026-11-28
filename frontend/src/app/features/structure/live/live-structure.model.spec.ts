@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canvasFacts, canvasGaps, containerScale, levelOf, nodeFacts, sourceGap } from './live-structure.facts';
-import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture } from './live-structure.fixtures';
+import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture, sharedRunnerSourcesFixture, sharedRunnerStructureFixture } from './live-structure.fixtures';
 import { layoutLiveScene } from './live-structure.layout';
 import { NOT_OBSERVED, buildLiveScene, descendants, subtreeWarnings, type LiveNode, type LiveRect } from './live-structure.model';
 import { NO_SOURCES } from './live-structure.sources';
@@ -152,6 +152,81 @@ describe('live structure unique execution capacity (AGT-4203)', () => {
     const data = { ...projectedCapacityFixture, nodes: projectedCapacityFixture.nodes.map(item =>
       item.facts?.hostId === 'shared-host' ? { ...item, observation: { difference: 'stale' as const, health: 'stale' } } : item) };
     expect(buildLiveScene(data, NO_SOURCES).totals.reporting).toBe(1);
+  });
+});
+
+describe('live structure runner identity (AGT-4219)', () => {
+  const factsOf = (s: ReturnType<typeof buildLiveScene>, id: string) => nodeFacts(node(id, s), s);
+  const processId = (role: string) => `component:shared-host:shared-${role}`;
+
+  for (const reverse of [false, true]) {
+    it(`keeps each process image, restarts, uptime and events with its runner (reversed: ${reverse})`, () => {
+      const runners = [...sharedRunnerSourcesFixture.runners!];
+      const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture, runners: reverse ? runners.reverse() : runners });
+      for (const [role, version, restarts, uptime] of [['coding', '2.1', 0, '4 h'], ['review', '2.2', 2, '60 min']] as const) {
+        const id = processId(role), facts = factsOf(s, id);
+        const fact = (key: string) => facts.find(item => item.key === key);
+        expect(node(id, s).runner?.runnerId).toBe(`shared-${role}`);
+        expect(fact('image')?.values[0]).toBe(`registry.example/studio/${role}-host:${version}`);
+        expect(fact('version')?.values.at(-1)).toBe(version);
+        expect(fact('restarts')?.values[0]).toBe(`${restarts} of the review daemon`);
+        expect(fact('uptime')?.values.at(-1)).toBe(uptime);
+        expect(facts.filter(item => item.key.startsWith('event:'))).toHaveLength(restarts);
+        if (role === 'review') expect(fact('event:0')?.values[0]).toContain('3 reviews lost');
+      }
+    });
+  }
+
+  it('distinguishes both roles on the host without selecting a representative runner', () => {
+    const s = buildLiveScene(sharedRunnerStructureFixture, sharedRunnerSourcesFixture);
+    const facts = factsOf(s, 'machine:shared-host');
+    expect(node('machine:shared-host', s).runner).toBeNull();
+    expect(facts.find(item => item.key === 'runners')?.values[0]).toBe('coding (shared-coding) · review (shared-review)');
+    for (const [role, version, count] of [['coding', '2.1', 0], ['review', '2.2', 2]] as const) {
+      const image = facts.find(item => item.key === `runner:shared-${role}:image`);
+      expect(image?.label).toBe(`${role} (shared-${role}) image`);
+      expect(image?.values[0]).toBe(`registry.example/studio/${role}-host:${version}`);
+      expect(facts.find(item => item.key === `runner:shared-${role}:restarts`)?.values[0]).toBe(`${count} of the review daemon`);
+      expect(facts.find(item => item.key === `runner:shared-${role}:version`)?.values.at(-1)).toBe(version);
+      expect(facts.find(item => item.key === `runner:shared-${role}:uptime`)?.values.at(-1)).toBe(role === 'coding' ? '4 h' : '60 min');
+      expect(facts.filter(item => item.key.startsWith(`runner:shared-${role}:event:`))).toHaveLength(count);
+    }
+    expect(facts.some(item => ['image', 'version', 'restarts', 'uptime'].includes(item.key))).toBe(false);
+    const reversed = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture,
+      runners: [...sharedRunnerSourcesFixture.runners!].reverse() });
+    for (const id of ['machine:shared-host', processId('coding'), processId('review')])
+      expect(factsOf(reversed, id)).toEqual(factsOf(s, id));
+  });
+
+  it('distinguishes runner facts on a host projected as a virtual machine', () => {
+    const data = { ...sharedRunnerStructureFixture, nodes: sharedRunnerStructureFixture.nodes.map(item =>
+      item.id === 'machine:shared-host' ? { ...item, kind: 'vm' } : item) };
+    const s = buildLiveScene(data, sharedRunnerSourcesFixture);
+    expect(node('machine:shared-host', s).kind).toBe('vm');
+    expect(factsOf(s, 'machine:shared-host').find(item => item.key === 'runners')?.observed).toBe(true);
+  });
+
+  it('uses its own registration time when a runner has no restart timestamp', () => {
+    const runners = sharedRunnerSourcesFixture.runners!.map(runner => ({ ...runner, restartedAt: null }));
+    const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture, runners });
+    expect(factsOf(s, processId('review')).find(item => item.key === 'uptime')?.values.at(-1)).toBe('15 d');
+  });
+
+  it('does not fall back to a host peer when the declared runner is absent', () => {
+    const s = buildLiveScene(sharedRunnerStructureFixture, { ...sharedRunnerSourcesFixture,
+      runners: [sharedRunnerSourcesFixture.runners![0]] });
+    expect(node(processId('review'), s).runner).toBeNull();
+    const facts = factsOf(s, processId('review'));
+    expect(facts.find(item => item.key === 'uptime')?.observed).toBe(false);
+    expect(facts.filter(item => item.key.startsWith('event:'))).toEqual([]);
+    expect(node('machine:shared-host', s).runner?.runnerId).toBe('shared-coding');
+  });
+
+  it('joins declared runner identities case-insensitively even without host facts', () => {
+    const data = { ...sharedRunnerStructureFixture, nodes: sharedRunnerStructureFixture.nodes.map(item =>
+      item.unitId === 'shared-review' ? { ...item, unitId: 'SHARED-REVIEW', facts: { ...item.facts, hostId: null } } : item) };
+    const s = buildLiveScene(data, sharedRunnerSourcesFixture);
+    expect(node(processId('review'), s).runner?.runnerId).toBe('shared-review');
   });
 });
 
