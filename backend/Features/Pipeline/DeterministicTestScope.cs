@@ -279,7 +279,7 @@ public static partial class DeterministicTestScope
     /// <c>dotnet test</c> command. <paramref name="classes"/> narrows the filter.
     /// </summary>
     internal static VerifyCommand? DotNetProjectCommand(
-        VerifyPlan plan, string project, IReadOnlyList<string>? classes)
+        VerifyPlan plan, string project, IReadOnlyList<string>? classes, bool excludeMachineBound = false)
     {
         var dotnet = plan.Commands.Where(command => command.Kind == VerifyCommandKind.Test
                 && (command.Ecosystem == VerifyEcosystem.DotNet || IsDotNetTest(command.Command)))
@@ -294,6 +294,7 @@ public static partial class DeterministicTestScope
             var expression = filter.Success
                 ? filter.Groups["value"].Value.Trim().Trim('"', '\'')
                 : TestSelectionPlanner.DotNetFilterExpression(plan).Expression;
+            if (excludeMachineBound) expression = WithMachineBoundExclusion(expression);
             var value = $"\"{DotNetReferenceSelectionPlanner.FilterValue(expression, classes)}\"";
             return declared with
             {
@@ -310,8 +311,9 @@ public static partial class DeterministicTestScope
         for (var index = 0; index < arguments.Count; index++)
         {
             var token = arguments[index];
-            if (token == "--filter") { index++; continue; }
-            if (token.StartsWith("--filter=", StringComparison.Ordinal)) continue;
+            if (token is "--filter" or "-f") { index++; continue; }
+            if (token.StartsWith("--filter=", StringComparison.Ordinal)
+                || token.StartsWith("-f=", StringComparison.Ordinal)) continue;
             var bare = token.Trim('"', '\'');
             if (bare.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
                 || bare.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
@@ -320,11 +322,17 @@ public static partial class DeterministicTestScope
         }
         return new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "",
             $"dotnet test \"{project}\"{string.Concat(inherited.Select(token => " " + token))}"
-            + TestSelectionPlanner.DotNetFilterSuffix(plan, classes))
+            + (excludeMachineBound && classes is { Count: > 0 }
+                ? $" --filter \"{DotNetReferenceSelectionPlanner.FilterValue(
+                    WithMachineBoundExclusion(TestSelectionPlanner.DotNetFilterExpression(plan).Expression), classes)}\""
+                : TestSelectionPlanner.DotNetFilterSuffix(plan, classes)))
         {
             Shell = template.Shell,
         };
     }
+
+    private static string WithMachineBoundExclusion(string expression)
+        => expression == "Category!=MachineBound" ? expression : $"({expression})&Category!=MachineBound";
 
     private sealed record ClassSelection
     {
@@ -431,7 +439,7 @@ public static partial class DeterministicTestScope
     [GeneratedRegex("\"[^\"]*\"|'[^']*'|\\S+", RegexOptions.CultureInvariant)]
     private static partial Regex CommandToken();
 
-    [GeneratedRegex("(?:^|\\s)--filter(?:\\s+|=)(?<value>\"[^\"]*\"|'[^']*'|\\S+)",
+    [GeneratedRegex("(?:^|\\s)(?:--filter|-f)(?:\\s+|=)(?<value>\"[^\"]*\"|'[^']*'|\\S+)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FilterArgument();
 

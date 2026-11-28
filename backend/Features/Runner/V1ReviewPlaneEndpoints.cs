@@ -3056,13 +3056,14 @@ public static class V1ReviewPlaneEndpoints
         BuildProfile? profile,
         string? integrationRef,
         IReadOnlyList<string>? changedFiles = null,
-        VerifyPlan? verifyOverride = null)
+        VerifyPlan? verifyOverride = null,
+        IReadOnlyList<string>? dotNetReviewReasons = null)
     {
         var declared = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var shared = ProjectAffectedVerifyPlanner.TryPlan(repositoryPath ?? string.Empty,
             declared, changedFiles, "remote-review", TestExecutionLevels.WorkPackage);
         var fixedChecks = verifyOverride?.Commands.Any(command => command.TestScope
-            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope) == true;
+            is ReviewBaseChecks.Scope or FrontendWorkPackagePlanner.ReviewScope or PerCardVerifyPlanner.DotNetReviewScope) == true;
         var verify = fixedChecks || shared is null
             ? VerifyCommandPlanner.WithCompiledBuild(repositoryPath ?? string.Empty,
                 verifyOverride ?? declared, changedFiles)
@@ -3156,8 +3157,11 @@ public static class V1ReviewPlaneEndpoints
                     .Select(suite => suite.Key).ToArray(),
                 OmittedSuites = suiteAudit.SuiteCommands.Where(suite => !commands.Any(command => command.Arguments.Contains(suite.Value)))
                     .Select(suite => suite.Key).ToArray(),
-                Reasons = [.. suiteAudit.Reasons, "Fast review runs fixed checks; narrowed checks do not complete routine suites."],
+                Reasons = [.. suiteAudit.Reasons, .. dotNetReviewReasons ?? [],
+                    "Fast review runs fixed checks; narrowed checks do not complete routine suites."],
             };
+        else if (suiteAudit is not null && dotNetReviewReasons is { Count: > 0 })
+            suiteAudit = suiteAudit with { Reasons = [.. suiteAudit.Reasons, .. dotNetReviewReasons] };
         return new Contract.ReviewPlanDto(
             commands,
             commands.Select(command => command.Aspect)
