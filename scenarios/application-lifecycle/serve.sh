@@ -13,7 +13,4 @@ studio="https://localhost:$port"
 curl --retry 12 --retry-connrefused --retry-delay 1 --silent --fail --cacert "$PW_E2E_TLS_CERT" -o /dev/null "$studio/"
 (umask 077; echo "${workspace##*/}-owner-code" > "${workspace}/code")
 node scripts/release/product-scenario/local-owner.mjs --studio-url "$studio" --bootstrap-code-file "${workspace}/code" --out "${workspace}/owner.json"
-status=0
-node scenarios/application-lifecycle/"$1".mjs "$studio" || status=$?
-node scenarios/application-lifecycle/report.mjs
-exit "$status"
+node scenarios/application-lifecycle/"$1".mjs "$studio"

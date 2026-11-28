@@ -1,11 +1,26 @@
 // Combine completed fixture runs without requiring one scenario to run the other.
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const dir = process.env.JOB_RESULTS_DIR;
 async function read(name) {
   try { return JSON.parse(await readFile(path.join(dir, name), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; return null; }
+}
+const [scenario, action, exitCode, phase] = process.argv.slice(2);
+if (action) {
+  if (!['product', 'lifecycle'].includes(scenario)) throw Error('Unknown scenario');
+  const output = path.join(dir, scenario);
+  const attemptFile = path.join(output, 'attempt.json');
+  if (action === 'start') {
+    // This subdirectory contains only this scenario's generated evidence.
+    await rm(output, { recursive: true, force: true });
+    await mkdir(output);
+    await writeFile(attemptFile, JSON.stringify({ startedAtUtc: new Date().toISOString() }));
+  } else if (action === 'finish') {
+    const attempt = await read(scenario + '/attempt.json');
+    await writeFile(attemptFile, JSON.stringify({ ...attempt, endedAtUtc: new Date().toISOString(), exitCode: Number(exitCode), phase }));
+  } else throw Error('Unknown report action');
 }
 const cell = value => String(value).replace(/\x1b\[[0-9;]*m/g, '').replaceAll('|', '\\|').replace(/\s+/g, ' ').trim();
 const table = ['| Step and action | UTC start | Seconds | Outcome and product response | Screenshot |',
@@ -34,7 +49,21 @@ function row(step, response, screenshots) {
 }
 for (const [name, title] of [['lifecycle', 'AGT-3178 · Application lifecycle'], ['product', 'AGT-3183 · Product team']]) {
   report.push('## ' + title, '', '`scenarios/application-lifecycle/run.sh ' + name + '`', '');
-  const data = await read(name + (name === 'product' ? '/product.json' : '/steps.json'));
+  let attempt, data;
+  try {
+    attempt = await read(name + '/attempt.json');
+    data = await read(name + (name === 'product' ? '/product.json' : '/steps.json'));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    report.push('The recorded evidence contains incomplete or invalid JSON.', '');
+    continue;
+  }
+  if (attempt) {
+    const outcome = attempt.endedAtUtc
+      ? 'Command exited with code ' + attempt.exitCode + ' at ' + attempt.endedAtUtc + ' while ' + attempt.phase + '.'
+      : 'Completion has not been observed.';
+    report.push('Started ' + attempt.startedAtUtc + '. ' + outcome, '');
+  }
   if (!data) { report.push('No completed run recorded.', ''); continue; }
   const rows = name === 'lifecycle' ? data : data.steps;
   const counts = ['passed', 'failed', 'skipped'].map(status => rows.filter(row => row.status === status).length + ' ' + status);

@@ -1,11 +1,12 @@
 // The AGT-3178 first run, including both sides of a failed production health check.
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadChromium } from '../../scripts/release/product-scenario/browser.mjs';
 import { totp } from '../../scripts/release/product-scenario/session.mjs';
 import { installation, nextTotpWindow, projectName, studio } from './installation.mjs';
+import { waitForCompletion } from './completion.mjs';
 
 const dir = path.join(process.env.JOB_RESULTS_DIR, 'lifecycle');
 await mkdir(dir, { recursive: true });
@@ -36,7 +37,9 @@ async function step(id, title, run) {
   row.endedAtUtc = new Date().toISOString();
   rows.push(row);
   console.log(id, row.status, row.reason ?? '');
-  await writeFile(path.join(dir, 'steps.json'), JSON.stringify(rows, null, 2));
+  const pending = path.join(dir, 'steps.json.tmp');
+  await writeFile(pending, JSON.stringify(rows, null, 2));
+  await rename(pending, path.join(dir, 'steps.json'));
 }
 async function stage(revision, key, note) {
   const release = await site.publish(revision, key);
@@ -115,23 +118,20 @@ try {
     }
   });
   await step('04-coding', '4. Inspect coding, review and quota consumption', async note => {
-    let current;
-    const deadline = Date.now() + 45000;
-    do {
-      current = await site.owner.task(card.id, site.project.id);
-      if (!['2-ready', '3-progress'].includes(current.state)) break;
-      await sleep(2000);
-    } while (Date.now() < deadline);
-    note('Runner readiness: ' + (await site.readiness()).map(c => c.label + ': ' + c.detail).join(' '));
-    const q = await quota();
-    note(current.key + ' is in ' + current.state + '. Quota usage ' + JSON.stringify(q.usage) + '. Meter complete ' + q.meterComplete);
-    await visit('/api/workspaces/' + site.group.id + '/quota');
-    await visit('/');
-    await page.getByTestId('studio-titlebar-settings').press('Enter');
-    await page.getByTestId('workspace-settings-rail-workspaces').click();
-    await page.getByTestId('settings-workspace-quota-' + site.group.id).click();
-    await page.getByTestId('workspace-quota').scrollIntoViewIfNeeded();
-    assert.equal(current.state, '6-completed', 'Coding, review and integration have not produced a completed card');
+    try {
+      await waitForCompletion(() => site.owner.task(card.id, site.project.id),
+        lane => note(card.key + ' observed in ' + lane + '.'));
+    } finally {
+      note('Runner readiness: ' + (await site.readiness()).map(c => c.label + ': ' + c.detail).join(' '));
+      const q = await quota();
+      note('Quota usage ' + JSON.stringify(q.usage) + '. Meter complete ' + q.meterComplete);
+      await visit('/api/workspaces/' + site.group.id + '/quota');
+      await visit('/');
+      await page.getByTestId('studio-titlebar-settings').press('Enter');
+      await page.getByTestId('workspace-settings-rail-workspaces').click();
+      await page.getByTestId('settings-workspace-quota-' + site.group.id).click();
+      await page.getByTestId('workspace-quota').scrollIntoViewIfNeeded();
+    }
   });
   await step('05-stage', '5. Stage the tested local release and exercise the counter', async note => {
     baseline = await stage('feature', card.key, note);
