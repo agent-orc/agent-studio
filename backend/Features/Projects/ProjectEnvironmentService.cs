@@ -210,15 +210,17 @@ public sealed partial class ProjectEnvironmentService
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
+    private readonly SecretProjectKeys _secretKeys;
     private readonly TimeProvider _clock;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _quota;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
         GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null,
-        DeployStore? deployStore = null, AgentStudio.Quota.WorkspaceQuotaService? quota = null)
+        DeployStore? deployStore = null, AgentStudio.Quota.WorkspaceQuotaService? quota = null, SecretProjectKeys? secretKeys = null)
     {
         _configuration = configuration;
+        _secretKeys = secretKeys ?? SecretProjectKeys.Identity;
         _registry = registry ?? new ReleaseArtifactRegistry(configuration);
         _deployStore = deployStore ?? new DeployStore(configuration);
         _scanner = scanner;

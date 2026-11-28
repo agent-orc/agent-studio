@@ -46,6 +46,7 @@ public sealed class SecretEndpointTests : IDisposable
         "GET /api/secrets",
         "GET /api/secrets/audit",
         "PUT /api/secrets/backends",
+        "POST /api/secrets/migrate-project-keys",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -106,6 +107,8 @@ public sealed class SecretEndpointTests : IDisposable
             new { scope = "workspace", kind = "builtin", url = "", mount = (string?)null,
                 vaultId = (string?)null, credentialReference = (string?)null,
                 credentialEnvironmentVariable = (string?)null, ttlSeconds = 30 });
+
+        await Expect(HttpStatusCode.OK, "POST", "/api/secrets/migrate-project-keys", "/api/secrets/migrate-project-keys");
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);
         Assert.Equal(HttpStatusCode.Unauthorized, resolve.Status);

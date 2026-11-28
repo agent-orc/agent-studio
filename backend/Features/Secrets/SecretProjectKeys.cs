@@ -8,7 +8,7 @@ namespace AgentStudio.Secrets;
 /// AGT-3885). A reference created now carries <c>secret://PROJ-002/stage/NAME</c>,
 /// so renaming the project does not break it. References and stored secrets that
 /// still carry the display name stay valid: a reference resolves its literal scope
-/// first, and an id scope also reads the project's current display-name scope.
+/// first, and an id scope also reads retained display-name scopes.
 /// A project the registry does not know keeps its route name as its key.
 /// </summary>
 public sealed class SecretProjectKeys(ProjectRegistry? registry = null)
@@ -24,14 +24,19 @@ public sealed class SecretProjectKeys(ProjectRegistry? registry = null)
     public string DisplayName(string project)
         => Find(project)?.DisplayName ?? project;
 
-    /// <summary>Every key a scope of this project may carry: the id first, then the current display name.</summary>
+    /// <summary>Every key a scope of this project may carry: the id first, then current and prior display names.</summary>
     public IReadOnlyList<string> Keys(string project)
     {
         if (Find(project) is not { } record) return [project];
-        return string.Equals(record.Id, record.DisplayName, StringComparison.OrdinalIgnoreCase)
-            ? [record.Id]
-            : [record.Id, record.DisplayName];
+        var projects = registry!.List();
+        return new[] { record.Id, record.DisplayName }.Concat(record.SecretDisplayNames)
+            .Where(key => key == record.Id || !projects.Any(other => other.Id != record.Id
+                && (string.Equals(other.DisplayName, key, StringComparison.OrdinalIgnoreCase)
+                    || other.SecretDisplayNames.Contains(key, StringComparer.OrdinalIgnoreCase))))
+            .Distinct(StringComparer.Ordinal).ToArray();
     }
+
+    public IReadOnlyList<AgentStudio.Shared.ProjectRecord> Projects() => registry?.List() ?? [];
 
     public bool Owns(string project, string? scopeProject)
         => scopeProject is not null && Keys(project).Contains(scopeProject, StringComparer.OrdinalIgnoreCase);
@@ -69,7 +74,11 @@ public sealed class SecretProjectKeys(ProjectRegistry? registry = null)
     private AgentStudio.Shared.ProjectRecord? Find(string project)
     {
         if (registry is null || string.IsNullOrWhiteSpace(project)) return null;
-        try { return registry.FindByIdOrDisplayName(project); }
+        try
+        {
+            return registry.FindByIdOrDisplayName(project)
+                ?? registry.List().SingleOrDefault(record => record.SecretDisplayNames.Contains(project, StringComparer.OrdinalIgnoreCase));
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             SilentCatch.Note(exception, "SecretProjectKeys: project registry unreadable");

@@ -362,6 +362,100 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     /// reference and a binding file written under the display name keep
     /// working; after a rename the project deploys with both.
     /// </summary>
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rename_before_first_binding_read_keeps_the_legacy_deploy_secret(bool migrateAll)
+    {
+        var config = SecretConfig();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var record = registry.EnsureProjectForStorage(Path.Combine(_root, "workspace", "projects", "demo"),
+            "demo", "ws-default", _clock);
+        var (environments, _, _) = Build(registry: registry);
+        var store = new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { }));
+        var provider = new SecretProvider(store, new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance, new SecretProjectKeys(registry));
+        var value = "legacy-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForEnvironment("demo", "production"), "DATABASE_URL", value,
+            SecretActor.Human("owner"));
+        const string reference = "secret://demo/production/DATABASE_URL";
+        new ProjectSecretBindings(config, provider, environments, _clock)
+            .Bind("demo", "production", "DATABASE_URL", reference, "human:owner", "owner");
+        var legacyFile = Assert.Single(Directory.GetFiles(Path.Combine(_root, "workspace", ".security", "secret-bindings")));
+        registry.Rename(record.Id, "shop");
+        // Restart both lookup services before the first read of the old binding.
+        registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock, new SecretProjectKeys(registry));
+        Assert.True(File.Exists(legacyFile));
+        if (migrateAll)
+        {
+            Assert.Equal(1, bindings.MigrateProjectKeys());
+            Assert.Equal(0, bindings.MigrateProjectKeys());
+        }
+        var target = environments.Declarations("shop")!.Single(item => item.Id == "production");
+        Assert.NotNull(environments.QueueDeployment("shop", target, _artifact, "owner", false));
+        var job = environments.Claim("prod-host")!;
+        Assert.True((await bindings.CheckAsync(job.Project, job.EnvironmentId)).Ready);
+        Assert.False(File.Exists(legacyFile));
+        var bound = bindings.ApprovedReferences(job.Project, job.EnvironmentId);
+        var workload = new SecretWorkload(SecretWorkload.DeployJob, job.HostId, job.Project, job.EnvironmentId,
+            job.SecretRefs, bound) { ProjectKeys = bindings.ProjectKeys(job.Project, bound) };
+        Assert.Equal(value, (await provider.GetForWorkloadAsync(SecretReference.Parse(reference), workload, "deploy:production")).Value);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Generated_telemetry_token_survives_rename_without_rotation(bool legacy)
+    {
+        var config = SecretConfig();
+        var registry = new AgentStudio.Registry.ProjectRegistry(config,
+            NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance, clock: _clock);
+        var project = registry.EnsureProjectForStorage(Path.Combine(_root, "workspace", "projects", "demo"),
+            "demo", "ws-default", _clock);
+        var (environments, _, _) = Build(registry: registry);
+        var keys = new SecretProjectKeys(registry);
+        var store = new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { }));
+        var provider = new SecretProvider(store, new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance, keys);
+        var oldBindings = new ProjectSecretBindings(config, provider, environments, _clock, legacy ? null : keys);
+        var security = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock, projectKeys: legacy ? null : keys);
+        var tokens = new AgentStudio.Telemetry.AccessStoreTelemetryIngestCredentials(security);
+        var generator = new AgentStudio.Telemetry.DeployTelemetryCredentials(tokens, oldBindings, provider,
+            new AgentStudio.Telemetry.TelemetryOptions(), _clock,
+            NullLogger<AgentStudio.Telemetry.DeployTelemetryCredentials>.Instance);
+        await generator.EnsureAsync("demo", "stage", CancellationToken.None);
+        var name = DeployTelemetryVocabulary.SecretName;
+        var original = Assert.Single((await provider.ListAsync()).Records);
+        var token = Assert.Single(tokens.List("demo", "stage"));
+        Assert.Equal(legacy ? "demo" : project.Id, token.Project);
+        Assert.Equal(legacy ? "demo/stage" : project.Id + "/stage", original.Scope);
+        registry.Rename(project.Id, "shop");
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock, keys);
+        security = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock, projectKeys: keys);
+        tokens = new AgentStudio.Telemetry.AccessStoreTelemetryIngestCredentials(security);
+        generator = new AgentStudio.Telemetry.DeployTelemetryCredentials(tokens, bindings, provider,
+            new AgentStudio.Telemetry.TelemetryOptions(), _clock,
+            NullLogger<AgentStudio.Telemetry.DeployTelemetryCredentials>.Instance);
+        await generator.EnsureAsync("shop", "stage", CancellationToken.None);
+        var bound = bindings.ApprovedReferences("shop", "stage", [name], "stage");
+        var workload = new SecretWorkload(SecretWorkload.DeployJob, "stage-host", "shop", "stage", [name], bound)
+            { ProjectKeys = bindings.ProjectKeys("shop", bound) };
+        var issued = await provider.GetForWorkloadAsync(SecretReference.Parse(bound[name]), workload, "deploy:stage");
+        Assert.Equal("shop", tokens.Authenticate(issued.Value)!.Project);
+        Assert.Equal(token.Id, Assert.Single(tokens.List("shop", "stage")).Id);
+        Assert.Single((await provider.ListAsync()).Records);
+        var applicationValue = "application-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(original.ParsedScope, "APPLICATION_SECRET", applicationValue, SecretActor.Human("owner"));
+        var masker = new AgentStudio.Telemetry.CredentialTelemetryValueMasker(store, keys);
+        var mask = await masker.ForEnvironmentAsync(new AgentStudio.Telemetry.TelemetryEnvironmentKey("shop", "stage"), CancellationToken.None);
+        Assert.DoesNotContain(applicationValue, mask("application message " + applicationValue));
+    }
+
     [Fact]
     public async Task Secret_references_use_the_project_id_and_a_renamed_project_still_deploys()
     {
@@ -967,6 +1061,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task GateReleaseRoute_LocalProfileAuthenticatesOnlyTheReleaseCredential()
     {
         const string project = "Operator Demo";
@@ -991,6 +1086,11 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(_clock);
+                TestHostFactory.RemoveBackgroundHostedServices(services);
+                services.RemoveAll<AgentStudio.Pipeline.PostMergeRunStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.PostMergeRunStore(Path.Combine(_root, "post-merge")));
+                services.RemoveAll<AgentStudio.Pipeline.TestQuarantineStore>();
+                services.AddSingleton(new AgentStudio.Pipeline.TestQuarantineStore(Path.Combine(_root, "test-quarantines")));
             });
         });
         using var client = factory.CreateClient();
