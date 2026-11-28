@@ -112,6 +112,45 @@ public sealed class HostAgentSupervisorTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_root, "host-state", "roles.json")));
     }
 
+    [Theory]
+    [InlineData("coding-state")]
+    [InlineData("review-state")]
+    [InlineData("post-state")]
+    [InlineData("host-state")]
+    public async Task Gate_rejects_shared_state_with_a_trailing_directory_separator(string sharedDirectory)
+    {
+        var config = CreateConfiguration(withPost: true, withGate: true);
+        var alias = Path.Combine(_root, sharedDirectory) + Path.DirectorySeparatorChar;
+
+        await AssertGateStateAliasRejectedAsync(config, alias);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gate_rejects_state_shared_through_a_symbolic_link(bool linkIsParent)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var config = CreateConfiguration(withGate: true);
+        var codingState = Path.Combine(_root, "coding-state");
+        var link = Path.Combine(_root, "alias");
+        // The coding state may not have been created yet, even when its parent is linked.
+        Directory.CreateSymbolicLink(link, linkIsParent ? _root : "coding-state");
+
+        await AssertGateStateAliasRejectedAsync(config, linkIsParent ? Path.Combine(link, "coding-state") : link);
+        Assert.False(Directory.Exists(codingState));
+    }
+
+    private async Task AssertGateStateAliasRejectedAsync(string config, string alias)
+    {
+        await File.AppendAllLinesAsync(Path.Combine(_root, "gate.env"), [$"RUNNER_STATE_DIR={alias}"]);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => HostAgentSupervisor.ExecuteAsync(
+            ["enable-role", config, "gate"], _ => { }, CancellationToken.None));
+        Assert.Contains("gate adapter needs its own runner identity and state directory", error.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "host-state", "roles.json")));
+    }
+
     private string CreateConfiguration(bool withPost = false, bool withGate = false)
     {
         Directory.CreateDirectory(_root);

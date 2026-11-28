@@ -67,13 +67,8 @@ public static class HostAgentSupervisor
             throw new ArgumentException("A configured coding, review, post or gate role is required.");
         Directory.CreateDirectory(config.StateDirectory);
         var options = roles.ToDictionary(item => item, item => ParseRole(config, item), StringComparer.Ordinal);
-        if (options.TryGetValue("gate", out var gate)
-            && (options.Values.Count(item => item.RunnerId == gate.RunnerId) > 1
-                || options.Values.Count(item => Path.GetFullPath(item.StateDir) == Path.GetFullPath(gate.StateDir)) > 1
-                || Path.GetFullPath(gate.StateDir) == Path.GetFullPath(config.StateDirectory)
-                || !string.Equals(gate.Hostname, options["coding"].Hostname, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(gate.ServerUrl, options["coding"].ServerUrl, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException("The gate adapter needs its own runner identity and state directory on the same host and Task Server.");
+        if (options.TryGetValue("gate", out var gate))
+            ValidateGateIsolation(config, options, gate);
         if (options.TryGetValue("post", out var post)
             && (options.Values.Count(item => item.RunnerId == post.RunnerId) > 1
                 || options.Values.Count(item => Path.GetFullPath(item.StateDir) == Path.GetFullPath(post.StateDir)) > 1
@@ -118,6 +113,43 @@ public static class HostAgentSupervisor
             return 0;
         }
         return EnableRole(config, role!, chosen, log);
+    }
+
+    private static void ValidateGateIsolation(HostAgentConfiguration config,
+        IReadOnlyDictionary<string, RunnerOptions> options, RunnerOptions gate)
+    {
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var gateState = ResolveStateDirectory(gate.StateDir);
+        if (pathComparer.Equals(gateState, ResolveStateDirectory(config.StateDirectory))
+            || options.Any(item => item.Key != "gate" && (item.Value.RunnerId == gate.RunnerId
+                || pathComparer.Equals(gateState, ResolveStateDirectory(item.Value.StateDir))))
+            || !string.Equals(gate.Hostname, options["coding"].Hostname, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(gate.ServerUrl, options["coding"].ServerUrl, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The gate adapter needs its own runner identity and state directory on the same host and Task Server.");
+    }
+
+    private static string ResolveStateDirectory(string path, int linksRemaining = 40)
+    {
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var parent = Path.GetDirectoryName(fullPath);
+        if (parent is null) return fullPath;
+
+        // Resolve the parent first so aliases compare equal even before the state directory exists.
+        var candidate = Path.Combine(ResolveStateDirectory(parent, linksRemaining), Path.GetFileName(fullPath));
+        FileSystemInfo? target;
+        try
+        {
+            target = Directory.ResolveLinkTarget(candidate, returnFinalTarget: false);
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return candidate;
+        }
+
+        if (target is null) return candidate;
+        if (linksRemaining == 0)
+            throw new IOException($"Too many symbolic links in state directory '{path}'.");
+        return ResolveStateDirectory(target.FullName, linksRemaining - 1);
     }
 
     private static RunnerOptions ParseRole(HostAgentConfiguration config, string role)
