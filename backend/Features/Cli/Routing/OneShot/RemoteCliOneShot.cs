@@ -35,7 +35,8 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
         var timeout = (int)Math.Clamp((request.Timeout ?? TimeSpan.FromMinutes(2)).TotalSeconds, 1, 300);
         var jobRequest = new OneShotJobRequest(request.CliType, request.Model, request.Prompt,
             request.ThinkingLevel, timeout, 65_536,
-            request.InlineImages?.Select(image => new OneShotJobImage(image.Base64, image.MediaType)).ToArray());
+            request.InlineImages?.Select(image => new OneShotJobImage(image.Base64, image.MediaType)).ToArray(),
+            request.CliType == "claude" ? request.ClaudeMaxOutputTokens : null);
         try
         {
             var client = standalone ? clients.CreateClient(TaskServerPlaneProxy.ClientName) : null;
@@ -48,7 +49,8 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
             }
             else job = await combinedJobs!.CreateAsync(jobRequest, ct);
             if (job is null) return Failed("Task Server returned no one-shot job.");
-            if (job.Status == "waiting") return Failed(job.Error ?? $"waiting for a host with {job.Capability}");
+            if (job.Status == "waiting")
+                return Failed(job.Error ?? $"waiting for a host with {job.Capability}") with { QuotaDeferred = true };
             // The Task Server owns queue expiry and extends job expiry at claim.
             // Start the caller's run budget only after a poll observes that claim.
             using var runBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan,
@@ -76,11 +78,12 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
                     running = true;
                 }
                 if (current.Status is "pending" or "claimed") continue;
-                if (current.Status != "completed") return Failed(current.Error ?? "Remote one-shot job failed.");
+                var ok = current.Status == "completed";
                 var end = DateTime.UtcNow;
                 var usage = current.Usage;
-                return Finish(new CliOneShotResult(true, 0, current.Text ?? string.Empty, string.Empty,
-                    end - start, current.Text ?? string.Empty,
+                var text = ok ? current.Text ?? string.Empty : string.Empty;
+                return Finish(new CliOneShotResult(ok, ok ? 0 : -1, text, string.Empty,
+                    end - start, text,
                     usage is null ? null : new OrchestratorTokenUsage
                     {
                         Model = usage.Model ?? request.Model,
@@ -90,9 +93,11 @@ public sealed class RemoteCliOneShot(string cliType, IHttpClientFactory clients,
                         CacheCreationTokens = checked((int)usage.CacheCreationTokens),
                         CliType = request.CliType,
                         ThinkingLevel = request.ThinkingLevel,
+                        ReasoningTokens = usage.ReasoningTokens,
                     }, null,
                     new AgentMessageLatency(RequestedAt: start, CompletedAt: end,
-                        TotalMs: (long)(end - start).TotalMilliseconds), null));
+                        TotalMs: (long)(end - start).TotalMilliseconds),
+                    ok ? null : current.Error ?? "Remote one-shot job failed."));
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

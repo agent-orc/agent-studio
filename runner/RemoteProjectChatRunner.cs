@@ -292,7 +292,7 @@ public sealed class RemoteProjectChatRunner
             providerThreadId);
     }
 
-    internal static RemoteProjectChatResult ParseClaude(ProcessResult process, string model)
+    internal static RemoteProjectChatResult ParseClaude(ProcessResult process, string model, bool boundedOutput = false)
     {
         string? reply = null;
         string? error = null;
@@ -315,6 +315,7 @@ public sealed class RemoteProjectChatRunner
                     if (root.TryGetProperty("is_error", out var isError)
                         && isError.ValueKind == JsonValueKind.True)
                         error = "Claude reported is_error=true.";
+                    if (boundedOutput) error = ClaudeOneShotLimits.GetLimitError(root) ?? error;
                     if (root.TryGetProperty("usage", out var usageNode))
                     {
                         var observedModel = root.TryGetProperty("model", out var modelNode)
@@ -326,6 +327,7 @@ public sealed class RemoteProjectChatRunner
                             OutputTokens = ReadInt(usageNode, "output_tokens"),
                             CacheReadTokens = ReadInt(usageNode, "cache_read_input_tokens"),
                             CacheCreationTokens = ReadInt(usageNode, "cache_creation_input_tokens"),
+                            ReasoningTokens = ClaudeOneShotLimits.ReadReasoningTokens(usageNode),
                             InputIncludesCached = false,
                         };
                     }

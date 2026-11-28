@@ -41,6 +41,41 @@ public sealed class OneShotJobClientTests
         finally { Directory.Delete(directory, recursive: true); }
     }
 
+    [Fact]
+    public async Task BoundedClaudeTurnPassesInferenceLimitAndRetainsTruncatedUsage()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "bounded-claude-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var binary = CarStubCli.Write(directory, """
+                cat >/dev/null
+                [ "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" = 512 ] || exit 2
+                case " $* " in *" --max-turns 1 "*) ;; *) exit 3 ;; esac
+                printf '%s\n' '{"type":"result","result":"partial","stop_reason":"max_tokens","usage":{"output_tokens":512,"output_tokens_details":{"thinking_tokens":400}}}'
+                """);
+            var admission = new OneShotJobAdmission(new RunnerOptions
+            {
+                ServerUrl = "http://localhost/", RunnerId = "test-runner", RunnerName = "test-runner",
+                Hostname = "localhost", BackendName = "test", WorkDir = directory,
+                BaseBranch = "develop", ClaudeCliBin = binary,
+            }, null!, _ => { });
+            var request = new OneShotJobRequest("claude", "claude-haiku-4-5", "hello", "low", 10, 65_536,
+                ClaudeMaxOutputTokens: 512);
+
+            var process = await admission.RunBoundedTurnAsync(request, directory, CancellationToken.None);
+            var parsed = RemoteProjectChatRunner.ParseClaude(process, request.Model, boundedOutput: true);
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.False(parsed.Success);
+            Assert.Equal(OneShotJobErrors.OutputTokenLimit, parsed.ErrorMessage);
+            Assert.Equal(512, parsed.TokenUsage?.OutputTokens);
+            Assert.Equal(400, parsed.TokenUsage?.ReasoningTokens);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     private static RunnerOptions PollOptions() => new()
     {
         ServerUrl = "http://task-server/", RunnerId = "runner-a", RunnerName = "runner-a",

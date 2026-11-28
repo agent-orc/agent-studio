@@ -58,6 +58,8 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             if (Encoding.UTF8.GetByteCount(request.Prompt) > 220_000
                 || request.TimeoutSeconds is < 1 or > 300
                 || request.MaxOutputBytes is < 1 or > 65_536
+                || request.ClaudeMaxOutputTokens is < 1 or > 32_768
+                || request.ClaudeMaxOutputTokens != null && request.Cli != "claude"
                 || request.Images is { Count: > 4 }
                 || (request.Images?.Sum(image => (long)image.Base64.Length) ?? 0) > 5_600_000)
                 throw new InvalidDataException("one-shot job exceeds its bounded request envelope");
@@ -65,16 +67,16 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             timeout.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
             var process = await RunBoundedTurnAsync(request, directory, timeout.Token);
             var parsed = request.Cli == "claude"
-                ? RemoteProjectChatRunner.ParseClaude(process, request.Model)
+                ? RemoteProjectChatRunner.ParseClaude(process, request.Model, request.ClaudeMaxOutputTokens != null)
                 : RemoteProjectChatRunner.ParseCodex(process, request.Model);
             var text = parsed.ReplyText;
             var tooLarge = Encoding.UTF8.GetByteCount(text ?? string.Empty) > request.MaxOutputBytes;
             var usage = parsed.TokenUsage;
             completion = new(options.RunnerId, client.RunnerInstanceId, work.JobId, work.ClaimToken,
                 parsed.Success && !tooLarge, tooLarge ? null : text,
-                tooLarge ? "one-shot output exceeds the byte cap" : parsed.ErrorMessage,
+                tooLarge ? OneShotJobErrors.OutputByteLimit : parsed.ErrorMessage,
                 usage is null ? null : new(usage.InputTokens, usage.OutputTokens,
-                    usage.CacheReadTokens, usage.CacheCreationTokens, usage.Model));
+                    usage.CacheReadTokens, usage.CacheCreationTokens, usage.Model, usage.ReasoningTokens));
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
@@ -118,6 +120,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
         if (request.Cli == "claude")
         {
             if (personaIsolation) start.ArgumentList.Add("--restricted");
+            ClaudeOneShotLimits.Apply(start.Environment, start.ArgumentList, request.ClaudeMaxOutputTokens);
             foreach (var arg in new[] { "-p", "--output-format", "stream-json", "--input-format",
                          "stream-json", "--verbose", "--model", request.Model,
                          "--tools", readOnlyTools ? "Read,Glob,Grep" : "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}" })
@@ -161,11 +164,11 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             var write = Task.Run(() => WriteInputAsync(process.StandardInput, input, ct), ct);
             var all = Task.WhenAll(write, process.WaitForExitAsync(ct), stdout, stderr);
             if (ReferenceEquals(await Task.WhenAny(all, outputExceeded.Task), outputExceeded.Task))
-                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+                throw new InvalidDataException(OneShotJobErrors.RawOutputByteLimit);
             try { await all; }
             catch (Exception) when (outputExceeded.Task.IsCompleted)
             {
-                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+                throw new InvalidDataException(OneShotJobErrors.RawOutputByteLimit);
             }
             return new ProcessResult(process.ExitCode, stdout.Result, stderr.Result);
         }
@@ -211,7 +214,7 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
                 outputExceeded.TrySetResult();
                 try { process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { }
-                throw new InvalidDataException("one-shot raw output exceeds the byte cap");
+                throw new InvalidDataException(OneShotJobErrors.RawOutputByteLimit);
             }
             result.Write(buffer, 0, count);
         }

@@ -51,6 +51,29 @@ public sealed class RemoteCliOneShotTests
     }
 
     [Fact]
+    public async Task Truncated_remote_job_keeps_failure_usage_and_sends_the_inference_limit()
+    {
+        var handler = new RecordingHandler { Complete = true, Truncated = true };
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://task-server/") };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskServer:BaseUrl"] = "http://task-server/",
+        }).Build();
+        var oneShot = new RemoteCliOneShot("claude", new ClientFactory(client), config, pollInterval: TimeSpan.Zero);
+
+        var result = await oneShot.RunAsync(new("claude", "claude-haiku-4-5", "Classify this card.")
+        {
+            ClaudeMaxOutputTokens = 512,
+        });
+
+        Assert.Contains("\"claudeMaxOutputTokens\":512", handler.PostBody);
+        Assert.False(result.Ok);
+        Assert.Equal(AgentStudio.TaskServer.Contracts.OneShotJobErrors.OutputTokenLimit, result.Error);
+        Assert.Equal(512, result.Usage?.OutputTokens);
+        Assert.Equal(400, result.Usage?.ReasoningTokens);
+    }
+
+    [Fact]
     public async Task Claim_observed_after_the_queue_deadline_keeps_the_claimed_run_budget()
     {
         var clock = new FakeTimeProvider();
@@ -106,6 +129,8 @@ public sealed class RemoteCliOneShotTests
     private sealed class RecordingHandler : HttpMessageHandler
     {
         public bool Complete { get; init; }
+        public bool Truncated { get; init; }
+        public string? PostBody { get; private set; }
         public string? Path { get; private set; }
         public string Body { get; private set; } = string.Empty;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
@@ -114,10 +139,13 @@ public sealed class RemoteCliOneShotTests
             Path = request.RequestUri?.AbsolutePath;
             Body = request.Content is null ? string.Empty :
                 await request.Content.ReadAsStringAsync(cancellationToken);
+            if (request.Method == HttpMethod.Post) PostBody = Body;
             var responseBody = Complete
                 ? request.Method == HttpMethod.Post
                     ? """{"jobId":"job-1","status":"pending","capability":"model-acceptance:codex:gpt-6-sol"}"""
-                    : """{"jobId":"job-1","status":"completed","capability":"model-acceptance:codex:gpt-6-sol","text":"Remote summary","usage":{"inputTokens":12,"outputTokens":3,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"gpt-6-sol"}}"""
+                    : Truncated
+                        ? """{"jobId":"job-1","status":"failed","capability":"model-acceptance:claude:claude-haiku-4-5","error":"One-shot output reached the token limit.","usage":{"inputTokens":12,"outputTokens":512,"cacheReadTokens":10,"cacheCreationTokens":6,"model":"claude-haiku-4-5","reasoningTokens":400}}"""
+                        : """{"jobId":"job-1","status":"completed","capability":"model-acceptance:codex:gpt-6-sol","text":"Remote summary","usage":{"inputTokens":12,"outputTokens":3,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"gpt-6-sol"}}"""
                 : """
                     {"jobId":"","status":"waiting","capability":"model-acceptance:codex:gpt-6-sol","error":"waiting for a host with model-acceptance:codex:gpt-6-sol"}
                     """;

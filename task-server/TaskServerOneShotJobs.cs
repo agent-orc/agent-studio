@@ -32,6 +32,8 @@ public sealed partial class TaskServerStore
             || request.Model.Length > 100
             || promptBytes is < 1 or > 220_000 || request.TimeoutSeconds is < 1 or > 300
             || request.MaxOutputBytes is < 1 or > 65_536 || images.Count > 4
+            || request.ClaudeMaxOutputTokens is < 1 or > 32_768
+            || request.ClaudeMaxOutputTokens != null && request.Cli != "claude"
             || images.Sum(image => (long)(image.Base64?.Length ?? 0)) > 5_600_000
             || images.Any(image => image.MediaType is not ("image/png" or "image/jpeg" or "image/webp" or "image/gif")
                 || image.Base64 is null || image.Base64.Length > 5_600_000))
@@ -175,7 +177,7 @@ public sealed partial class TaskServerStore
                     );
                 """, ct, transaction, ("$status", successful ? "completed" : "failed"),
                 ("$text", oversized ? null : completion.Text),
-                ("$error", oversized ? "one-shot output exceeds the byte cap"
+                ("$error", oversized ? OneShotJobErrors.OutputByteLimit
                     : successful ? null : completion.Error ?? "one-shot response was empty"),
                 ("$usage", completion.Usage is null ? null : JsonSerializer.Serialize(completion.Usage)),
                 ("$id", completion.JobId), ("$runner", completion.RunnerId),

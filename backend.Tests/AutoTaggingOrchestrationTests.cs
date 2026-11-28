@@ -334,6 +334,77 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         Assert.Equal("tagged", Assert.Single(_service.Read(Project)).Status);
     }
 
+    [Theory]
+    [InlineData(AutoTagOutcome.OutputTokenLimit)]
+    [InlineData(AutoTagOutcome.OutputSizeLimit)]
+    [InlineData(AutoTagOutcome.InvalidClassification)]
+    public async Task DeterministicFailureSurvivesScansAndBackfillRestart(AutoTagOutcome outcome)
+    {
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        AddCard("quarantined");
+        _classifier.Failure = outcome;
+
+        await worker.ScanOnceAsync(CancellationToken.None);
+        _clock.Advance(TimeSpan.FromDays(2));
+        worker.Wake();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        await worker.ScanOnceAsync(CancellationToken.None);
+
+        var restarted = NewService();
+        var report = await restarted.BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+        Assert.Equal(1, report.Deferred);
+        var state = System.Text.Json.JsonSerializer.Deserialize<AutoTagCallState>(
+            File.ReadAllText(Path.Combine(_root, "auto-tag", "call-state.json")), TagMaintenancePolicy.Json);
+        var failure = Assert.Single(state!.Quarantines).Value;
+        Assert.Equal(outcome, failure.Outcome);
+        Assert.Equal(512, failure.Usage?.OutputTokens);
+        Assert.Equal(400, failure.Usage?.ReasoningTokens);
+
+        // Another effective route may run. Returning to the first route still uses its quarantine.
+        _classifier.Fallback = new("codex", "mini", "low");
+        await restarted.BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Equal(2, _classifier.Calls.Count);
+        _classifier.Fallback = null;
+        await restarted.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(2, _classifier.Calls.Count);
+
+        _classifier.Failure = null;
+        _workspace.Items[0] = _workspace.Items[0] with { Text = "Changed classification input." };
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.Equal(3, _classifier.Calls.Count);
+        Assert.Equal("tagged", Assert.Single(_service.Read(Project)).Status);
+    }
+
+    [Fact]
+    public async Task LegacyFailureWithoutAnOutcomeRetainsItsBackoff()
+    {
+        AddCard("legacy");
+        var dir = Path.Combine(_root, "auto-tag");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "call-state.json"), TagMaintenancePolicy.Encode(new
+        {
+            calls = Array.Empty<DateTimeOffset>(),
+            failures = new Dictionary<string, object>
+            {
+                [Project + ":card:legacy"] = new
+                {
+                    fingerprint = AutoTagCallPolicy.ContentFingerprint(Assert.Single(_workspace.Items)),
+                    at = _clock.GetUtcNow(),
+                },
+            },
+        }));
+
+        var deferred = await _service.BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Equal(1, deferred.Deferred);
+        Assert.Empty(_classifier.Calls);
+
+        _clock.Advance(TimeSpan.FromDays(1));
+        await _service.BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Single(_classifier.Calls);
+    }
+
     [Fact]
     public async Task ChangedCardContentClearsFailureBackoff()
     {
@@ -815,15 +886,26 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         public bool Fail { get; set; }
         public Dictionary<string, double> Confidence { get; } = new(StringComparer.Ordinal);
         public List<(string Id, string Thinking)> Calls { get; } = [];
-        public Task<TagClassificationPrediction> ClassifyAsync(string project, TagMaintenanceItem item,
-            TagMaintenanceSnapshot snapshot, string thinkingLevel, CancellationToken ct)
+        public AutoTagOutcome? Failure { get; set; }
+        public AutoTagRoute Route { get; set; } = new("claude", "haiku");
+        public AutoTagRoute? Fallback { get; set; }
+
+        public AutoTagAttempt Prepare(string project, TagMaintenanceItem item, TagMaintenanceSnapshot snapshot,
+            string thinkingLevel, bool recordPrompt = true)
         {
-            Calls.Add((item.Id, thinkingLevel));
-            if (Fail) throw new InvalidOperationException("Injected classification failure.");
-            return Task.FromResult(new TagClassificationPrediction
+            var route = Route with { ThinkingLevel = thinkingLevel };
+            return new(AutoTagCallPolicy.ContentFingerprint(item), route, (beforeLaunch, _) =>
             {
-                Kind = item.Kind, Id = item.Id, Tags = ["execution-and-runner"],
-                Confidence = Confidence.GetValueOrDefault(item.Id, 0.95),
+                beforeLaunch(Fallback ?? route);
+                Calls.Add((item.Id, thinkingLevel));
+                if (Fail || Failure != null)
+                    return Task.FromResult(new AutoTagValidation(Failure ?? AutoTagOutcome.TransientFailure,
+                        Usage: new() { OutputTokens = 512, ReasoningTokens = 400 }));
+                return Task.FromResult(AutoTagValidation.Accepted(new()
+                {
+                    Kind = item.Kind, Id = item.Id, Tags = ["execution-and-runner"],
+                    Confidence = Confidence.GetValueOrDefault(item.Id, 0.95),
+                }));
             });
         }
     }

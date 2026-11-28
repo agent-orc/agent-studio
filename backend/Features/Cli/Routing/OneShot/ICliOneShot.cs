@@ -66,6 +66,8 @@ public sealed record CliOneShotRequest(
     /// Defaults to two minutes when null.</summary>
     public TimeSpan? Timeout { get; init; }
 
+    public int? ClaudeMaxOutputTokens { get; init; }
+
     /// <summary>Tag for <see cref="AdHoc.AdHocUsageRecorder"/> so the
     /// per-source usage chart can attribute spend.</summary>
     public string? Source { get; init; }
@@ -238,12 +240,16 @@ public sealed class CliOneShotRegistry
         return impl;
     }
 
-    private async Task<CliOneShotResult> DispatchAsync(
+    internal async Task<CliOneShotResult> DispatchAsync(
         CliOneShotRequest request,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<CliOneShotRequest>? beforeLaunch = null)
     {
         if (_selection is null)
+        {
+            beforeLaunch?.Invoke(request);
             return await _byCli[request.CliType].RunAsync(request, ct).ConfigureAwait(false);
+        }
 
         var source = request.StepId ?? request.Source ?? "one-shot";
         var plan = _selection.Select(SelectionCallFor(request, source) with
@@ -298,6 +304,7 @@ public sealed class CliOneShotRegistry
                 : null,
         };
 
+        beforeLaunch?.Invoke(effective);
         var transientTaskMarker = false;
         if (task is not null)
         {

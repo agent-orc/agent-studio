@@ -119,14 +119,20 @@ apply therefore preserves its pending proposal and does not spend another
 classification call. New eligible items are still classified.
 
 Classification accepts a JSON object in a Markdown fence or surrounded by
-prose, then validates the exact four-field shape and closed tag registry.
-Failed classification calls are recorded in
-`<TaskRepository>/auto-tag/call-state.json` by project, item, and content
-fingerprint. The same content waits 24 hours before another call; changing its
-title or body makes it eligible immediately. A rolling hourly limit of 60
-classification calls covers all projects and both confidence tiers. The limit
-can be set with `AutoTag:HourlyCallLimit`. The creation worker keeps capped
-items pending and writes one aggregate log line per scan.
+prose and validates its exact four-field shape, answer size, identity,
+confidence and closed tag registry. Claude requests use a 512-token inference
+limit and one tool-free turn. The validation outcome is logged separately from
+provider usage, including reasoning tokens when the provider reports them.
+
+`<TaskRepository>/auto-tag/call-state.json` stores typed failures and their
+provider counters. Prompt, output-limit and invalid-answer failures quarantine
+the rendered input and effective route, including any quota fallback. Timer
+scans, wakeups and backfills share the quarantine. Edits that change the
+rendered input or a change of route can allow a new attempt. Capacity and
+transient failures retain the 24-hour backoff. A rolling hourly limit of 60
+classification calls covers all projects and both confidence tiers. Configure
+it with `AutoTag:HourlyCallLimit`. The creation worker keeps capped items
+pending and writes one aggregate log line per scan.
 
 For cards and wiki articles, applying an accepted classification persists the
 tags and `taggingStatus` together in one atomic file replacement. Wiki writes

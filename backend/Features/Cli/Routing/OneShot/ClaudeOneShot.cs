@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -100,11 +101,12 @@ public sealed class ClaudeOneShot : ICliOneShot
             // result and its callers apply their own fallback policy.
         }
 
-        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
+        var isolated = request.ClaudeMaxOutputTokens != null;
+        using var workspace = isolated ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = networked ? workspace!.Path : request.WorkingDirectory ?? Directory.GetCurrentDirectory(),
+            WorkingDirectory = request.WorkingDirectory ?? Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -114,11 +116,13 @@ public sealed class ClaudeOneShot : ICliOneShot
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        if (workspace != null) psi.WorkingDirectory = workspace.Path;
         psi.Environment["LC_ALL"] = "C.UTF-8";
         psi.Environment["LANG"] = "C.UTF-8";
         HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs,
-            networked: networked);
+            networked: isolated);
         AddThinkingArguments(psi.ArgumentList, request.Model, request.ThinkingLevel);
+        ClaudeOneShotLimits.Apply(psi.Environment, psi.ArgumentList, request.ClaudeMaxOutputTokens);
         var multimodal = request.InlineImages is { Count: > 0 };
         if (multimodal)
         {
@@ -159,13 +163,13 @@ public sealed class ClaudeOneShot : ICliOneShot
                 if (multimodal)
                 {
                     var envelope = BuildStreamJsonUserMessage(
-                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked), request.InlineImages!);
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, isolated), request.InlineImages!);
                     await p.StandardInput.WriteAsync(envelope.AsMemory(), effectiveCt).ConfigureAwait(false);
                 }
                 else
                 {
                     await p.StandardInput.WriteAsync(
-                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked).AsMemory(), effectiveCt)
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, isolated).AsMemory(), effectiveCt)
                         .ConfigureAwait(false);
                 }
                 await p.StandardInput.FlushAsync(effectiveCt).ConfigureAwait(false);
@@ -182,7 +186,7 @@ public sealed class ClaudeOneShot : ICliOneShot
             var stderr = await stderrTask.ConfigureAwait(false);
             var completedAtOk = DateTime.UtcNow;
 
-            var result = BuildResult(p.ExitCode, stdout, stderr, requestedAt, completedAtOk, request.Model);
+            var result = BuildResult(p.ExitCode, stdout, stderr, requestedAt, completedAtOk, request.Model, request.ClaudeMaxOutputTokens != null);
             if (!result.Ok && !string.IsNullOrWhiteSpace(stderr))
             {
                 _logger.LogWarning(
@@ -228,7 +232,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         }
     }
 
-    private CliOneShotResult BuildResult(int exitCode, string stdout, string stderr, DateTime requestedAt, DateTime completedAt, string fallbackModel)
+    private CliOneShotResult BuildResult(int exitCode, string stdout, string stderr, DateTime requestedAt, DateTime completedAt, string fallbackModel, bool boundedOutput)
     {
         var totalMs = (long)(completedAt - requestedAt).TotalMilliseconds;
         var latency = new AgentMessageLatency(
@@ -246,12 +250,17 @@ public sealed class ClaudeOneShot : ICliOneShot
 
         // Rich usage with context-window snapshot (new bus dimension).
         ParsedTurnUsage? rich = null;
+        string? limitError = null;
         if (!string.IsNullOrWhiteSpace(stdout) && stdout.TrimStart().StartsWith('{'))
         {
             try
             {
                 using var doc = JsonDocument.Parse(stdout);
-                if (_claudeUsage.TryParse(doc.RootElement, fallbackModel, _modelRegistry, out var parsed))
+                var root = doc.RootElement;
+                if (boundedOutput) limitError = ClaudeOneShotLimits.GetLimitError(root);
+                if (usage != null && root.ValueKind == JsonValueKind.Object && root.TryGetProperty("usage", out var counters))
+                    usage = usage with { ReasoningTokens = ClaudeOneShotLimits.ReadReasoningTokens(counters) };
+                if (_claudeUsage.TryParse(root, fallbackModel, _modelRegistry, out var parsed))
                 {
                     rich = parsed;
                 }
@@ -265,10 +274,10 @@ public sealed class ClaudeOneShot : ICliOneShot
             }
         }
 
-        var ok = exitCode == 0;
+        var ok = exitCode == 0 && limitError == null;
         return new CliOneShotResult(
             Ok: ok,
-            ExitCode: exitCode,
+            ExitCode: limitError != null && exitCode == 0 ? -1 : exitCode,
             Stdout: stdout ?? string.Empty,
             Stderr: stderr ?? string.Empty,
             Duration: completedAt - requestedAt,
@@ -276,7 +285,7 @@ public sealed class ClaudeOneShot : ICliOneShot
             Usage: usage,
             RichUsage: rich,
             Latency: latency,
-            Error: ok ? null : $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}");
+            Error: limitError ?? (ok ? null : $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}"));
     }
 
     private void RecordIfRequested(CliOneShotRequest request, CliOneShotResult result)
