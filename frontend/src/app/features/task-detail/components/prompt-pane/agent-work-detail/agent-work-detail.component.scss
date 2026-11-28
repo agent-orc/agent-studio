@@ -9,7 +9,7 @@
   gap: var(--studio-compat-space-7);
   // ADM-17 hit area: the label row, not the marker alone.
   min-height: 24px;
-  padding: var(--studio-compat-space-6) 0;
+  padding: var(--studio-compat-space-6) var(--studio-spacing-0);
   background: none;
   border: none;
   cursor: pointer;
@@ -30,7 +30,7 @@
 }
 
 .awd-note {
-  margin: var(--studio-compat-space-4) 0;
+  margin: var(--studio-compat-space-4) var(--studio-spacing-0);
   font-size: var(--studio-compat-type-6);
   color: var(--studio-fg-dim);
 }
@@ -38,8 +38,8 @@
 .awd-groups,
 .awd-calls {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
 }
 
 .awd-group {
@@ -80,7 +80,7 @@
 }
 
 .awd-calls {
-  padding: var(--studio-compat-space-6) 0 var(--studio-spacing-1) var(--studio-spacing-4);
+  padding: var(--studio-compat-space-6) var(--studio-spacing-0) var(--studio-spacing-1) var(--studio-spacing-4);
 }
 
 .awd-call {

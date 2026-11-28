@@ -51,7 +51,7 @@
 
   &__title {
     min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
-    margin: var(--studio-spacing-2) 0 0;
+    margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
     padding: var(--studio-row-pad-block) var(--studio-spacing-2);
     border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);

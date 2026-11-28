@@ -76,7 +76,7 @@
 }
 
 .prompt-pop__title {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-font-size-sm);
   font-weight: 700;
   text-transform: uppercase;
@@ -90,7 +90,7 @@
   color: var(--studio-fg-dim);
   font-size: var(--studio-compat-type-39);
   line-height: 1;
-  padding: 0 var(--studio-compat-space-4);
+  padding: var(--studio-spacing-0) var(--studio-compat-space-4);
   cursor: pointer;
 
   &:hover,

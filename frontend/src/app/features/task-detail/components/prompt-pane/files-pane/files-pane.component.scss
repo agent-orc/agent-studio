@@ -100,12 +100,12 @@
     background: color-mix(in srgb, var(--studio-bg-hover) 70%, var(--studio-accent) 10%);
   }
   &:focus-visible {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--studio-accent) 60%, transparent);
+    box-shadow: var(--studio-file-focus-ring);
   }
 
   .file-card--expanded > & {
     border-bottom-color: var(--studio-border);
-    border-radius: var(--studio-compat-radius-1) var(--studio-compat-radius-1) 0 0;
+    border-radius: var(--studio-compat-radius-1) var(--studio-compat-radius-1) var(--studio-radius-none) var(--studio-radius-none);
   }
 }
 
@@ -208,12 +208,12 @@
 .file-card__body {
   padding: var(--studio-compat-space-5) var(--studio-compat-space-3) var(--studio-spacing-3);
   background: var(--studio-bg-editor);
-  border-radius: 0 0 var(--studio-compat-radius-1) var(--studio-compat-radius-1);
+  border-radius: var(--studio-radius-none) var(--studio-radius-none) var(--studio-compat-radius-1) var(--studio-compat-radius-1);
 }
 
 .file-card__raw {
   max-height: 62vh;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   padding: var(--studio-spacing-3);
   overflow: auto;
   border: 1px solid var(--studio-border);
@@ -254,7 +254,7 @@
   background: var(--studio-bg-editor);
   cursor: pointer;
   position: relative;
-  border-radius: 0 0 var(--studio-compat-radius-1) var(--studio-compat-radius-1);
+  border-radius: var(--studio-radius-none) var(--studio-radius-none) var(--studio-compat-radius-1) var(--studio-compat-radius-1);
 }
 
 .file-card__preview-rendered {
@@ -268,9 +268,9 @@
   margin-top: var(--studio-compat-space-2);
   background: transparent;
   border: none;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   font-size: var(--studio-compat-type-6);
-  color: var(--studio-accent);
+  color: var(--studio-link-ink);
   cursor: pointer;
   text-decoration: underline;
 
@@ -281,7 +281,7 @@
 
 .file-card__preview-empty,
 .file-card__state {
-  padding: var(--studio-compat-space-2) 0;
+  padding: var(--studio-compat-space-2) var(--studio-spacing-0);
 }
 
 .file-card__state--error {

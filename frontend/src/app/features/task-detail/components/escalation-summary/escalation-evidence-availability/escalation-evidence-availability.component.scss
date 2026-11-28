@@ -12,7 +12,7 @@
   overflow-wrap: anywhere;
 
   strong { @include section.heading; }
-  a { color: var(--studio-accent); text-underline-offset: 2px; }
+  a { color: var(--studio-link-ink); text-underline-offset: 2px; }
 }
 
-p { margin: 0; color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }
+p { margin: var(--studio-spacing-0); color: var(--studio-fg-dim); font-size: var(--studio-compat-type-6); }

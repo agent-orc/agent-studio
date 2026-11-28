@@ -25,16 +25,16 @@
 }
 
 .detail-load-error .detail-load-error__state {
-  margin: 0 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-3);
 }
 
 .detail-load-error h2 {
-  margin: 0 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-3);
   font-size: var(--studio-compat-type-73);
 }
 
 .detail-load-error p {
-  margin: 0 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-3);
   color: var(--studio-fg-muted);
 }
 

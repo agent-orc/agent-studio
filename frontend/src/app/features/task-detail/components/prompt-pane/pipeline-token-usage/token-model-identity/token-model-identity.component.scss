@@ -35,7 +35,7 @@
 
   &__steps {
     flex: 0 0 auto;
-    padding: 0 var(--studio-spacing-1);
+    padding: var(--studio-spacing-0) var(--studio-spacing-1);
     border-radius: var(--studio-compat-radius-6);
     background: var(--studio-bg-hover);
     color: var(--studio-fg-muted);

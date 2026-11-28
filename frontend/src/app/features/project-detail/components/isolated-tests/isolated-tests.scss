@@ -1,7 +1,7 @@
 :host { display: block; min-width: 0; }
 section { display: grid; gap: var(--studio-spacing-3); padding-block: var(--studio-spacing-4); }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--studio-spacing-3); }
-h3, p { margin: 0; }
+h3, p { margin: var(--studio-spacing-0); }
 p, header span, small { color: var(--studio-text-secondary); }
 header span, .ends { font-variant-numeric: tabular-nums; }
 .columns, article { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: var(--studio-spacing-3); align-items: start; }

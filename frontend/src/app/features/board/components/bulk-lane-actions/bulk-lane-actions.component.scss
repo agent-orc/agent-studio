@@ -8,13 +8,13 @@
   display: inline-flex;
   align-items: center;
   min-height: 24px;
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);
-  border-radius: 6px;
+  border-radius: var(--studio-compat-radius-7);
   background: var(--studio-bg-surface);
   color: var(--studio-fg);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -38,9 +38,9 @@
   cursor: not-allowed;
 }
 .bulk-actions__reason {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-muted);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 @media (prefers-reduced-motion: reduce) {
   .bulk-actions__button { transition: none; }

@@ -40,9 +40,9 @@
 }
 .round__input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 
-.round__base { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+.round__base { margin: var(--studio-spacing-0); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 .round__base code { color: var(--studio-fg); }
 .round__sha { font-variant-numeric: tabular-nums; }
-.round__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.round__error { margin: var(--studio-spacing-0); color: var(--studio-error); overflow-wrap: anywhere; }
 
 @include round.actions;

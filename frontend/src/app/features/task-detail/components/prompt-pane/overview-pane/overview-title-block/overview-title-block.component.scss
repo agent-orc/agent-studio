@@ -72,8 +72,9 @@
 }
 
 .ov-title {
-  margin: 0;
-  font-size: var(--studio-compat-type-99);
+  margin: var(--studio-spacing-0);
+  font-size: var(--studio-inspector-title);
+  font-family: var(--font-display, var(--font-ui));
   font-weight: 600;
   line-height: 1.3;
   color: var(--studio-fg-strong);
@@ -86,7 +87,7 @@
   outline: none;
 
   &:focus-visible {
-    box-shadow: 0 0 0 2px var(--studio-accent);
+    box-shadow: var(--studio-title-focus-ring);
     border-radius: var(--studio-compat-radius-6);
   }
 
@@ -124,9 +125,10 @@
 
 .ov-title-input {
   width: 100%;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-family: inherit;
-  font-size: var(--studio-compat-type-99);
+  font-size: var(--studio-inspector-title);
+  font-family: var(--font-display, var(--font-ui));
   font-weight: 600;
   line-height: 1.3;
   color: var(--studio-fg-strong);

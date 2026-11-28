@@ -50,7 +50,7 @@
 .decision-card__num { font-variant-numeric: tabular-nums; }
 
 .decision-card__question {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-strong);
   font-size: var(--studio-compat-type-16);
   line-height: 1.35;
@@ -60,7 +60,7 @@
 .decision-card__blocks,
 .decision-card__notice,
 .decision-card__error {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   font-size: var(--studio-compat-type-11);
 }
 
@@ -73,7 +73,7 @@
 }
 
 .decision-card__link {
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
   background: transparent;
   color: var(--studio-wiki-link);
@@ -107,8 +107,8 @@
 .decision-card__options {
   display: grid;
   gap: var(--studio-spacing-2);
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 
@@ -150,7 +150,7 @@
 }
 
 .decision-card__tag {
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border-radius: var(--studio-compat-radius-2);
   background: color-mix(in srgb, var(--studio-accent-3) 16%, transparent);
   color: var(--studio-accent-3-strong);
@@ -162,11 +162,11 @@
 .decision-card__facets {
   display: grid;
   gap: var(--studio-spacing-1);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 
   div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--studio-spacing-2); }
   dt { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-18); }
-  dd { margin: 0; }
+  dd { margin: var(--studio-spacing-0); }
 }
 
 .decision-card button {
@@ -180,7 +180,7 @@
   cursor: pointer;
 }
 
-.decision-card .decision-card__link { min-height: 0; padding: 0; border: 0; background: transparent; color: var(--studio-wiki-link); }
+.decision-card .decision-card__link { min-height: 0; padding: var(--studio-spacing-0); border: 0; background: transparent; color: var(--studio-wiki-link); }
 
 .decision-card .decision-card__choose,
 .decision-card .decision-card__primary {
@@ -224,8 +224,8 @@
 .decision-card__history {
   display: grid;
   gap: var(--studio-spacing-1);
-  margin: 0;
-  padding: var(--studio-spacing-2) 0 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
   border-top: 1px solid var(--studio-border);
   color: var(--studio-fg-muted);
   font-size: var(--studio-compat-type-18);
@@ -249,7 +249,7 @@
 
 @media (max-width: 700px) {
   .decision-card { margin-inline: var(--studio-spacing-2); padding-inline: var(--studio-spacing-3); }
-  .decision-card__facets div { grid-template-columns: 1fr; gap: 0; }
+  .decision-card__facets div { grid-template-columns: 1fr; gap: var(--studio-spacing-0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

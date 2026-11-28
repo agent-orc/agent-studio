@@ -1,7 +1,7 @@
 :host { display: block; }
 
 .api-stalls {
-  padding: 0 var(--studio-spacing-5) var(--studio-spacing-5);
+  padding: var(--studio-spacing-0) var(--studio-spacing-5) var(--studio-spacing-5);
   color: var(--studio-fg);
 }
 
@@ -12,7 +12,7 @@
 }
 
 .api-stalls__head h2,
-.api-stalls__note { margin: 0; }
+.api-stalls__note { margin: var(--studio-spacing-0); }
 
 .api-stalls__note {
   margin-top: var(--studio-spacing-2);
@@ -48,7 +48,7 @@
 .api-stalls__table th,
 .api-stalls__table td {
   text-align: left;
-  padding: var(--studio-spacing-1) var(--studio-spacing-3) var(--studio-spacing-1) 0;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3) var(--studio-spacing-1) var(--studio-spacing-0);
   border-bottom: 1px solid var(--studio-border);
 }
 

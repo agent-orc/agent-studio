@@ -86,7 +86,7 @@
   }
 
   &__panel-title {
-    margin: 0 0 var(--studio-spacing-2);
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2);
   }
 
   &__table {
@@ -122,7 +122,7 @@
   &__facts {
     display: grid;
     gap: var(--studio-compat-space-11);
-    margin: 0;
+    margin: var(--studio-spacing-0);
 
     div {
       display: grid;
@@ -133,7 +133,7 @@
     }
 
     dd {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       min-width: 0;
       color: var(--studio-fg);
       overflow-wrap: anywhere;
@@ -141,7 +141,7 @@
   }
 
   &__note {
-    margin: var(--studio-spacing-2) 0 0;
+    margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
     color: var(--studio-fg-dim);
     font-size: var(--studio-font-size-sm);
     line-height: 1.45;

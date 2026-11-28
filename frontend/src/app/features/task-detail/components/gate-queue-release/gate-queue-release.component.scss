@@ -10,7 +10,7 @@
 
   &__copy {
     flex: 1 1 320px;
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg);
     font-size: var(--studio-font-size-sm);
     line-height: 1.45;
@@ -36,7 +36,7 @@
 
     &:hover:not(:disabled) {
       background: var(--studio-bg-hover);
-      border-color: var(--studio-border-strong, var(--studio-fg-dim));
+      border-color: var(--studio-border-strong);
       color: var(--studio-fg-strong);
     }
 
@@ -54,7 +54,7 @@
   &__status {
     flex: 1 1 100%;
     min-width: 0;
-    margin: 0;
+    margin: var(--studio-spacing-0);
   }
 
   @media (prefers-reduced-motion: reduce) {

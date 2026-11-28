@@ -5,7 +5,7 @@
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
   border: 1px solid color-mix(in srgb, var(--studio-accent-4) 30%, var(--studio-border));
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: color-mix(in srgb, var(--studio-accent-4) 9%, var(--studio-bg-elevated));
   color: var(--studio-fg);
 }
@@ -14,30 +14,30 @@
   display: inline-flex;
   align-items: center;
   min-height: 24px;
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border: 1px solid color-mix(in srgb, var(--studio-accent-4) 42%, var(--studio-border));
-  border-radius: 999px;
+  border-radius: var(--studio-radius-pill);
   background: color-mix(in srgb, var(--studio-accent-4) 16%, transparent);
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .create-dialog__legacy-copy {
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   line-height: 1.45;
 }
 
 .create-dialog__chat-btn {
   min-height: 32px;
-  padding: 0 var(--studio-spacing-3);
+  padding: var(--studio-spacing-0) var(--studio-spacing-3);
   border: 1px solid color-mix(in srgb, var(--studio-accent-4) 55%, var(--studio-border));
-  border-radius: 7px;
+  border-radius: var(--studio-compat-radius-1);
   background: color-mix(in srgb, var(--studio-accent-4) 18%, var(--studio-bg-elevated));
   color: var(--studio-fg-strong);
-  font: 600 12px/1 var(--font-ui);
+  font: 600 var(--studio-font-size-sm)/1 var(--font-ui);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -47,11 +47,11 @@
 }
 
 .create-dialog__section-title {
-  margin: var(--studio-spacing-2) 0 0;
+  margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
   padding-bottom: var(--studio-spacing-2);
   border-bottom: 1px solid var(--studio-border);
   color: var(--studio-fg-strong);
-  font-size: 11px;
+  font-size: var(--studio-compat-type-6);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -101,7 +101,7 @@
   margin-top: var(--studio-spacing-2);
   padding: var(--studio-spacing-3);
   border: 1px solid color-mix(in srgb, var(--studio-error) 35%, var(--studio-border));
-  border-radius: 8px;
+  border-radius: var(--studio-compat-radius-5);
   background: color-mix(in srgb, var(--studio-error) 8%, var(--studio-bg-elevated));
   color: var(--studio-fg);
 }

@@ -31,7 +31,7 @@
   font-size: var(--studio-font-size-sm);
   line-height: 1.55;
 
-  p { margin: 0 0 var(--studio-spacing-2); }
+  p { margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2); }
   code {
     font-family: var(--font-mono);
     padding: var(--studio-compat-space-6) var(--studio-compat-space-7);
@@ -42,15 +42,15 @@
 }
 
 .desc-meta-bar {
-  padding: var(--studio-spacing-2) var(--studio-spacing-3) 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3) var(--studio-spacing-0);
 }
 
 .desc-meta {
   display: flex;
   align-items: baseline;
-  gap: 0;
-  margin: 0;
-  padding: 0;
+  gap: var(--studio-spacing-0);
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   font-size: var(--studio-font-size-sm);
   color: var(--studio-fg-dim);
   min-width: 0;
@@ -107,7 +107,7 @@
   flex-direction: column;
   gap: var(--studio-compat-space-8);
   max-width: 820px;
-  margin: 0 auto;
+  margin: var(--studio-spacing-0) auto;
   // Pane already gives us a full-height flex column; claim the rest of
   // it so the empty-state placeholder can vertically center inside the
   // panel rather than floating at the top of a huge white gap.
@@ -126,7 +126,7 @@
 }
 
 .evidence-view[hidden], .code-review-view[hidden] { display: none; }
-.evidence-view--quality { flex: 0 0 auto; padding-bottom: 0; }
+.evidence-view--quality { flex: 0 0 auto; padding-bottom: var(--studio-spacing-0); }
 
 .ev-section {
   display: flex;
@@ -159,7 +159,7 @@
 }
 
 .ev-section-dot--test {
-  color: var(--studio-accent);
+  color: var(--studio-link-ink);
 }
 
 .ev-section-title {
@@ -232,8 +232,8 @@
 
 .ev-card-refs {
   list-style: none;
-  padding: 0;
-  margin: var(--studio-compat-space-2) 0 0;
+  padding: var(--studio-spacing-0);
+  margin: var(--studio-compat-space-2) var(--studio-spacing-0) var(--studio-spacing-0);
   display: flex;
   flex-wrap: wrap;
   gap: var(--studio-spacing-1);
@@ -359,8 +359,8 @@
 
 .title-history__list {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   display: flex;
   flex-direction: column;
   gap: var(--studio-spacing-1);

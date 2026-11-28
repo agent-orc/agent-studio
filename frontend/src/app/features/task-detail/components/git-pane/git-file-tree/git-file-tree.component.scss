@@ -1,8 +1,8 @@
 :host { display: block; min-width: 0; min-height: 0; overflow: hidden; }
 .git-tree {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   width: 100%;
   min-width: 0;
   max-height: 30vh;

@@ -31,7 +31,7 @@
   &__badge { flex: 0 0 auto; }
 
   &__summary {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg);
     line-height: 1.5;
     word-break: break-word;
@@ -39,8 +39,8 @@
 
   &__metrics {
     list-style: none;
-    margin: 0;
-    padding: 0;
+    margin: var(--studio-spacing-0);
+    padding: var(--studio-spacing-0);
     display: flex;
     flex-wrap: wrap;
     gap: var(--studio-compat-space-2);

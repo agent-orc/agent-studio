@@ -15,7 +15,7 @@
     justify-content: center;
     width: 20px;
     height: 20px;
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 1px solid var(--studio-border);
     border-radius: var(--studio-compat-radius-13);
     background: transparent;
@@ -25,7 +25,7 @@
 
     &:hover {
       color: var(--studio-fg);
-      border-color: var(--studio-border-strong, var(--studio-border));
+      border-color: var(--studio-border-strong);
       background: var(--studio-bg-hover);
     }
 
@@ -55,7 +55,7 @@
     // --studio-bg), which made `background` fall back to its `transparent`
     // initial value and rendered the result unreadable.
     background: var(--studio-bg-elevated);
-    box-shadow: var(--elevation-modal, 0 12px 32px var(--studio-compat-shadow-ink-2));
+    box-shadow: var(--elevation-modal);
     overflow: auto;
   }
 
@@ -113,7 +113,7 @@
   &__chip {
     display: inline-flex;
     align-items: center;
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border: 0;
     color: inherit;
     font-family: var(--font-mono);
@@ -140,7 +140,7 @@
   }
 
   &__state {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--studio-fg-dim);
     font-size: var(--studio-font-size-sm);
   }

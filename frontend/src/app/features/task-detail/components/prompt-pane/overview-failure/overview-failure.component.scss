@@ -28,7 +28,7 @@
   }
 
   &__primary {
-    margin: 0;
+    margin: var(--studio-spacing-0);
     color: var(--severity-high);
     font-size: var(--studio-font-size-sm);
     font-weight: 600;
@@ -55,7 +55,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--studio-spacing-2) var(--studio-spacing-4);
-    margin: 0 0 var(--studio-spacing-2);
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2);
 
     div {
       display: flex;
@@ -67,14 +67,14 @@
     }
 
     dd {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       color: var(--studio-fg);
     }
   }
 
   pre {
     max-width: 100%;
-    margin: 0;
+    margin: var(--studio-spacing-0);
     padding: var(--studio-spacing-2);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
