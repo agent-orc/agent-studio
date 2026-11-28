@@ -322,6 +322,81 @@ public sealed class CompletionContentEvidenceTests : IDisposable
         Assert.Equal(finding, File.ReadAllText(findingPath));
     }
 
+    [Theory]
+    [InlineData("requirement-fit", "concerns", "pass")]
+    [InlineData("requirement-fit", "concerns", "block")]
+    [InlineData("requirement-fit", "pass", "concerns")]
+    [InlineData("concept-fit", "concerns", "block")]
+    public void Mismatched_local_finding_keeps_promotion_pending_until_the_review_is_repaired(
+        string aspect, string reviewedStatus, string savedStatus)
+    {
+        var budget = LocalAdmission("Consider clearer wording.", status: reviewedStatus,
+            aspect: aspect, writeAdmission: false);
+        var contextPath = Path.Combine(_root, CompletionContentEvidence.LocalContextFile);
+        var context = File.ReadAllText(contextPath);
+        var findingPath = Path.Combine(_root, $"aspect-{aspect}.json");
+        var reviewedFinding = File.ReadAllText(findingPath);
+        var finding = System.Text.Json.Nodes.JsonNode.Parse(reviewedFinding)!;
+        finding["status"] = savedStatus;
+        File.WriteAllText(findingPath, finding.ToJsonString());
+        var mismatchedFinding = File.ReadAllText(findingPath);
+        var logger = new AdmissionLogger();
+
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+        Assert.Contains("original finding", Assert.Single(logger.Errors).Exception!.Message);
+        Assert.Equal(context, File.ReadAllText(contextPath));
+        Assert.Equal(mismatchedFinding, File.ReadAllText(findingPath));
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+
+        File.WriteAllText(findingPath, reviewedFinding);
+        Assert.True(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), budget.RoundBudget.ContentAdmissions, logger));
+        Assert.True(CompletionContentPolicy.Decide(CompletionContentEvidence.Read(_card with {
+            Mode = aspect == "concept-fit" ? "concept" : "coding",
+        }, null)).Accepted);
+        Assert.Equal(reviewedFinding, File.ReadAllText(findingPath));
+    }
+
+    [Fact]
+    public void Local_admission_validates_every_content_finding_before_writing()
+    {
+        var budget = LocalAdmission("Consider clearer wording.", writeAdmission: false);
+        File.WriteAllText(Path.Combine(_root, "aspect-concept-fit.json"),
+            JsonSerializer.Serialize(new { status = "block", summary = "Required concept missing." }));
+        var dispositions = budget.RoundBudget.ContentAdmissions!.Concat([
+            new AgentStudio.OrchestrationDecisions.ReviewContentAdmission("concept-fit", "concerns",
+                "advisory", "Consider clearer wording."),
+        ]).ToArray();
+        var contextPath = Path.Combine(_root, CompletionContentEvidence.LocalContextFile);
+        var context = File.ReadAllText(contextPath);
+
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root, "local-review-1",
+            new string('a', 40), dispositions, new AdmissionLogger()));
+        Assert.Equal(context, File.ReadAllText(contextPath));
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+    }
+
+    [Theory]
+    [InlineData("stale-brief")]
+    [InlineData("missing-brief")]
+    [InlineData("blank-review")]
+    public void Local_admission_requires_current_brief_and_review_identity_before_writing(string damage)
+    {
+        var budget = LocalAdmission("Consider clearer wording.", writeAdmission: false);
+        if (damage == "stale-brief") BriefVersionStore.Record(_root, "A different brief.");
+        if (damage == "missing-brief")
+            CompletionContentEvidence.WriteLocalContext(_root, null, null, ReviewedAt);
+        var contextPath = Path.Combine(_root, CompletionContentEvidence.LocalContextFile);
+        var context = File.ReadAllText(contextPath);
+
+        Assert.False(CompletionContentEvidence.TryWriteLocalAdmission(_root,
+            damage == "blank-review" ? " " : "local-review-1", new string('a', 40),
+            budget.RoundBudget.ContentAdmissions, new AdmissionLogger()));
+        Assert.Equal(context, File.ReadAllText(contextPath));
+        Assert.False(File.Exists(Path.Combine(_root, CompletionContentEvidence.LocalAdmissionFile)));
+    }
+
     private sealed class FailingAdmissionWriter(string failedPath, Exception failure)
         : AgentStudio.Persistence.IAtomicJsonFileWriter
     {

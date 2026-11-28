@@ -44,14 +44,23 @@ public static class CompletionContentEvidence
         IReadOnlyList<ReviewContentAdmission>? dispositions,
         AgentStudio.Persistence.IAtomicJsonFileWriter? writer = null)
     {
-        if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha))
-            throw new InvalidDataException("Local content admission requires a content disposition and delivery SHA.");
+        if (dispositions is not { Count: > 0 } || string.IsNullOrWhiteSpace(resultSha)
+            || string.IsNullOrWhiteSpace(reviewAttemptId))
+            throw new InvalidDataException("Local content admission requires a content disposition, delivery SHA and review identity.");
         var delivery = ReadLocalDelivery(folder);
         if (delivery is null || !string.Equals(delivery.Value.Sha, resultSha, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Local content admission requires the reviewed delivery to match the current local run.");
-        var local = ReadLocal(folder, dispositions[0].Aspect);
-        if (local is null)
-            throw new InvalidDataException("Local content admission requires readable review context and content evidence.");
+        var currentBrief = BriefVersionStore.ReadCurrent(folder);
+        foreach (var disposition in dispositions)
+        {
+            var local = ReadLocal(folder, disposition.Aspect);
+            if (local is null)
+                throw new InvalidDataException("Local content admission requires readable review context and content evidence.");
+            if (!string.Equals(local.BriefVersion, currentBrief, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Local content admission requires review evidence for the current brief.");
+            if (!string.Equals(local.Status, disposition.OriginalStatus, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Local content admission must match the original finding.");
+        }
         // The context anchors the receipt independently. A lost receipt must
         // not silently turn a transferred literal pass into an unrestricted pass.
         var contextPath = Path.Combine(folder, LocalContextFile);
@@ -62,7 +71,7 @@ public static class CompletionContentEvidence
         var hashes = dispositions.ToDictionary(item => item.Aspect,
             item => LocalEvidenceHash(folder, item.Aspect), StringComparer.OrdinalIgnoreCase);
         writer.ReplaceExisting(Path.Combine(folder, LocalAdmissionFile), JsonSerializer.Serialize(new LocalAdmissionReceipt(
-            reviewAttemptId, resultSha, delivery.Value.Id, local.BriefVersion, hashes, dispositions), AdmissionJson));
+            reviewAttemptId, resultSha, delivery.Value.Id, currentBrief, hashes, dispositions), AdmissionJson));
     }
 
     private static (string? Sha, string Id)? ReadLocalDelivery(string folder)
