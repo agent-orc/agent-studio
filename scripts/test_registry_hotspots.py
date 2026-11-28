@@ -88,7 +88,8 @@ class RegistryHotspotTests(unittest.TestCase):
             # Exact-result review can be detached and can span several commits.
             git("update-ref", "refs/remotes/origin/develop", base)
             git("switch", "--detach", "-q")
-            commit("AGT-9: change registration", path, "// first\n" + content + "// last\n")
+            commit("Integrate AGT-9: change registration", path, "// first\n" + content + "// last\n")
+            self.assertIn("Record the strategy", check(1))
             commit("Finish the card\n\nIntegrate the notes.\n\nAgent-Studio-Task: AGT-9", "notes.txt", "done")
             ninth = git("rev-parse", "HEAD")
             self.assertIn("9 distinct cards", check(1))
@@ -106,6 +107,13 @@ class RegistryHotspotTests(unittest.TestCase):
             check(0)
             git("checkout", "--detach", "-q", ninth)
             self.assertIn("scripts/registry-hotspots.json", check(1))
+
+            # A real single-parent net-change receipt supplies the base in this clone.
+            git("checkout", "--detach", "-q", ninth + "~2")
+            commit(f"Integrate net change from {ninth[:8]}\n\nAgent-Studio-Net-Change-Of: {ninth}",
+                   path, "// first\n" + content + "// last\n")
+            commit("AGT-10: unrelated", "notes.txt", "unrelated")
+            self.assertIn("WARNING", check(0))
 
     def test_ledger_filters_project_target_period_and_deduplicates_collisions(self):
         with tempfile.TemporaryDirectory() as folder:

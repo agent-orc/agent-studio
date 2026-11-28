@@ -20,8 +20,8 @@
       "path": "backend.Tests/DispatchEndpointTests.cs",
       "status": "measured-backlog",
       "strategy": "Split dispatcher tests into partial fixtures for lease and wave control, forecasts and conflict isolation, and review cohorts and weights. Share the existing host factory and disposal.",
-      "lines": 753,
-      "bytes": 51591
+      "lines": 941,
+      "bytes": 61514
     },
     {
       "path": "backend.Tests/PostMergeIncidentServiceTests.cs",
@@ -223,15 +223,15 @@
       "path": "docs/system/domains/review.md",
       "status": "measured-backlog",
       "strategy": "Move plan selection and budgets, host placement and attempt isolation, review material and citations, and retry and gate recovery into linked domain pages. Preserve the map and existing anchors.",
-      "lines": 2251,
-      "bytes": 147332
+      "lines": 2265,
+      "bytes": 148283
     },
     {
       "path": "docs/system/domains/tasks.md",
       "status": "measured-backlog",
       "strategy": "Move onboarding and central storage, board and task detail reads, lifecycle and decisions, and result and Dossier evidence into linked domain pages. Retain the map and stable section anchors.",
-      "lines": 3042,
-      "bytes": 204605
+      "lines": 3047,
+      "bytes": 204882
     },
     {
       "path": "runner/RemoteReviewWorkspace.cs",

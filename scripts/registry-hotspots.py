@@ -62,18 +62,22 @@ def review_change(repo, ref, target, start):
     """Return the integration base and the pending card's net change for exact-subject review."""
     info, _ = git(repo, "show", "-s", "--format=%H%x00%cI%x00%B", ref)
     sha, at, body = info.split("\0", 2)
-    if body.startswith("Integrate "):
-        return ref, None
     refs = (f"refs/heads/{target}", f"refs/remotes/origin/{target}")
     available, _ = git(repo, "for-each-ref", "--format=%(refname)", *refs)
     targets = [branch for branch in available.splitlines() if branch in refs]
-    # Target refs may be stale or absent in detached review clones. Include the
-    # newest reachable receipt, checking its subject since --grep also searches bodies.
-    receipts, _ = git(repo, "log", "--topo-order", "--since=" + start.isoformat(),
-                      "--grep=^Integrate ", "--format=%H %s", sha)
-    for line in receipts.splitlines():
-        revision, _, subject = line.partition(" ")
-        if subject.startswith("Integrate "):
+    # Detached clones can have stale or missing target refs. A receipt needs
+    # either the platform's card merge or a net-change commit with its source trailer.
+    receipts, _ = git(repo, "log", "-z", "--topo-order", "--since=" + start.isoformat(),
+                      "--grep=^Integrate ", "--format=%H%x00%P%x00%s%x00"
+                      "%(trailers:key=Agent-Studio-Net-Change-Of,valueonly,unfold,separator=%x2c)", sha)
+    fields = receipts.split("\0")
+    for i in range(0, len(fields) - 3, 4):
+        revision, parents, subject, source = fields[i:i + 4]
+        card_merge = (len(parents.split()) == 2 and subject.startswith("Integrate ")
+                      and CARD.match(subject, len("Integrate ")))
+        net_change = re.fullmatch(r"Integrate net change from ([0-9a-f]+)", subject)
+        if card_merge or (net_change and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source)
+                          and source.startswith(net_change[1])):
             targets.append(revision)
             break
     if not targets:
