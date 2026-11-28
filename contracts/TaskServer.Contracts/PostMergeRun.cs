@@ -235,7 +235,10 @@ public static class PostMergeClaimProtocol
 
 public sealed record PostMergeClaimRequest(string RepositoryUrl, string Branch, string ReadTip,
     int OccupiedSlots, double? LoadPerCore, string? RecoveryOwner = null);
-public sealed record PostMergeGrant(string Id, DateTimeOffset ExpiresAtUtc);
+public sealed record PostMergeGrant(string Id, DateTimeOffset ExpiresAtUtc)
+{
+    public bool PlacementOnly { get; init; }
+}
 public sealed record PostMergeRunSummary(string Id, string Kind, string Status, string TipSha,
     DateTimeOffset StartedAtUtc, string? ExecutionHost);
 

@@ -81,12 +81,15 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, 0, 0.1, false)]
-    [InlineData(true, 1, 0.1, false)]
-    [InlineData(true, 0, 2.0, false)]
-    [InlineData(true, 10, 8.4, true)]
-    [InlineData(false, 0, 0.1, true)]
-    public async Task SchedulerUsesOnlyGrantedProjectsWithCapacity(bool busy, int occupiedSlots, double load, bool gate)
+    [InlineData(false, 0, 0.1, false, false)]
+    [InlineData(true, 1, 0.1, false, false)]
+    [InlineData(true, 0, 2.0, false, false)]
+    [InlineData(true, 1, 0.1, true, true)]
+    [InlineData(true, 0, 2.0, true, true)]
+    [InlineData(true, 1, 0.1, true, false)]
+    [InlineData(false, 0, 0.1, true, true)]
+    public async Task SchedulerUsesOnlyGrantedProjectsWithCapacity(bool busy, int occupiedSlots, double load,
+        bool gateAvailableAtClaim, bool gateAvailableAtPlacement)
     {
         Directory.CreateDirectory(_root);
         var targets = new List<PostMergeProjectTarget>();
@@ -128,7 +131,13 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             await Git(repository, "commit", "--quiet", "-m", "integrated");
             targets.Add(new(id, id, repository, branch));
         }
-        var host = new FakeHost(targets) { GateConnected = gate, HoldFirstRun = !busy && !gate };
+        var host = new FakeHost(targets)
+        {
+            GateConnected = gateAvailableAtPlacement,
+            DenyPrimaryClaim = busy && !gateAvailableAtClaim,
+            PrimaryPlacementOnly = busy && gateAvailableAtClaim,
+            HoldFirstRun = !busy && !gateAvailableAtPlacement,
+        };
         using var peerHttp = new HttpClient(host, disposeHandler: false) { BaseAddress = new Uri("http://fake/") };
         peerHttp.DefaultRequestHeaders.Add("X-Client-Id", "peer");
         var peerRoot = Path.Combine(_root, "peer-state");
@@ -145,7 +154,7 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
         };
         var scheduler = new PostMergeHostScheduler(http, stateRoot, () => 1, [], new Clock(),
             () => new(load, occupiedSlots), logs.Add, options);
-        if (!busy)
+        if (!host.DenyPrimaryClaim)
         {
             var tick = scheduler.TickAsync(default);
             try
@@ -176,10 +185,13 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             || line.Contains("JsonException", StringComparison.Ordinal));
         Assert.Equal(2, host.Observations.Count);
         Assert.All(targets, target => Assert.True(Directory.Exists(Path.Combine(stateRoot, "post-merge", target.ProjectId, ".git"))));
-        if (gate)
+        if (gateAvailableAtClaim)
         {
             Assert.Empty(host.Runs);
-            Assert.All(host.Observations.Values, observation => Assert.False(observation.Starved));
+            Assert.Equal(4, host.Placements); // A due window and nightly for each project.
+            Assert.All(targets, target =>
+                Assert.False(File.Exists(Path.Combine(stateRoot, "post-merge", target.ProjectId, "tested.sha"))));
+            Assert.All(host.Observations.Values, observation => Assert.Equal(!gateAvailableAtPlacement, observation.Starved));
             return;
         }
         Assert.All(targets, target =>
@@ -246,6 +258,9 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
         public TaskCompletionSource FirstRunStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseFirstRun { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool GateConnected { get; init; }
+        public bool DenyPrimaryClaim { get; init; }
+        public bool PrimaryPlacementOnly { get; init; }
+        public int Placements { get; private set; }
         public bool AllowManual { get; set; }
         public List<PostMergeRunRecord> Runs { get; } = [];
         public Dictionary<string, PostMergeWindowObservation> Observations { get; } = [];
@@ -258,10 +273,11 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
             var project = path.Split('/')[5];
             if (path.EndsWith("/claim", StringComparison.Ordinal))
             {
-                if (_grants.ContainsKey(project)) return new(HttpStatusCode.NoContent);
+                var primary = !request.Headers.Contains("X-Client-Id");
+                if (_grants.ContainsKey(project) || primary && DenyPrimaryClaim) return new(HttpStatusCode.NoContent);
                 var id = Guid.NewGuid().ToString("N");
                 _grants.Add(project, id);
-                return Json(new PostMergeGrant(id, Now.AddMinutes(3)));
+                return Json(new PostMergeGrant(id, Now.AddMinutes(3)) { PlacementOnly = primary && PrimaryPlacementOnly });
             }
             var ownsGrant = request.Headers.TryGetValues(PostMergeClaimProtocol.GrantHeader, out var headers)
                 && _grants.GetValueOrDefault(project) == headers.Single();
@@ -272,7 +288,10 @@ public sealed class PostMergeHostSchedulerTests : IDisposable
                 return new(HttpStatusCode.NoContent);
             }
             if (path.EndsWith("/placement", StringComparison.Ordinal))
+            {
+                Placements++;
                 return Json(new PostMergePlacement(GateConnected ? "gate" : "run"));
+            }
             if (path.EndsWith("/escalation-check", StringComparison.Ordinal)) return new(HttpStatusCode.NoContent);
             if (path.EndsWith("/window", StringComparison.Ordinal))
             {

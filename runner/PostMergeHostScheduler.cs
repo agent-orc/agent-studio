@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -98,9 +97,6 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
     private async Task TryRunAsync(PostMergeProjectTarget project, CancellationToken ct)
     {
         var load = probeHost();
-        if (!PostMergeSchedulingPolicy.CodingHostHasCapacity(
-            load.ActiveSlots, maxSlots(), load.LoadPerCore, PostMergeClaimProtocol.MaxLoadPerCore))
-            return;
         if (!System.Text.RegularExpressions.Regex.IsMatch(project.ProjectId, "^PROJ-[0-9]{3,}$"))
             throw new IOException("Post-merge target has an invalid stable project ID.");
         var tip = await ProbeRepositoryAsync(project, ct);
@@ -165,7 +161,7 @@ public sealed class PostMergeHostScheduler(HttpClient http, string stateDirector
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(mode == "nightly" ? TimeSpan.FromHours(12) : TimeSpan.FromHours(3));
             var observation = ObserveActiveAsync(deadline.Token);
-            try { await command.ExecuteAsync(deadline.Token); }
+            try { await command.ExecuteAsync(deadline.Token, placementOnly: grant.PlacementOnly); }
             finally
             {
                 deadline.Cancel();

@@ -413,7 +413,11 @@ URL differs from Studio. Older gate workers without that capability leave
 execution on the run host until they are upgraded.
 
 The coding grant holder is the fallback. Studio admits a coding grant only
-when the host has free capacity. The window still closes on its merge-count
+when the host has free capacity or a connected gate can take placement.
+A busy coding host receives a placement-only grant and can observe the branch
+and queue work for that gate. Local fallback requires an execution grant.
+See the [after-merge API contract](../contracts/post-merge-api.md).
+The window still closes on its merge-count
 or age threshold. The fallback runs sequentially inside the existing worker
 test envelope. Its receipt retains the execution host, starting occupancy,
 starting load and peak load. Gate queue ordering uses attempt

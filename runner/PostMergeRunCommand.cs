@@ -102,7 +102,7 @@ public sealed class PostMergeRunCommand
         return await new PostMergeRunCommand(options, output, TimeProvider.System, http).ExecuteAsync(ct);
     }
 
-    public async Task<int> ExecuteAsync(CancellationToken ct, bool observeOnly = false)
+    public async Task<int> ExecuteAsync(CancellationToken ct, bool observeOnly = false, bool placementOnly = false)
     {
         if (_options.DryRun)
         {
@@ -137,6 +137,7 @@ public sealed class PostMergeRunCommand
             }
             else
             {
+                if (placementOnly) return 0;
                 if (_journal.Terminal is not null)
                 {
                     await DeliverTerminalAsync(ct);
@@ -158,6 +159,7 @@ public sealed class PostMergeRunCommand
         var admissionReason = host.ActiveSlots >= _options.MaxSlots
             || host.LoadPerCore is { } load && load > CoverageRunOptions.DefaultMaxLoadPerCore
             ? $"{host.ActiveSlots} occupied slots, load {host.LoadPerCore:0.00}" : null;
+        if (placementOnly) admissionReason ??= "coding host has no execution capacity";
         if (readOnlyObservation) admissionReason = "post-merge checkout occupied";
         var freeSlots = Math.Max(0, _options.MaxSlots - host.ActiveSlots);
         if (!readOnlyObservation)
@@ -223,7 +225,7 @@ public sealed class PostMergeRunCommand
             && (_options.Mode == "window" || nightlyChecked))
         {
             await ObserveWindow(tip, null, now, state.WindowMinutes ?? (int)_options.Window.TotalMinutes, null, ct);
-            if (observeOnly || admissionReason is not null || !_options.RecordSkips) return 0;
+            if (observeOnly || placementOnly || admissionReason is not null || !_options.RecordSkips) return 0;
             var skipped = new PostMergeRunRecord(id, _options.Project, _options.Mode, tip,
                 state.LastWindowTipSha, null, null, 0, [], [], "skipped", now, now,
                 nightlyChecked ? "nightly routine suite already green on this tip today"
@@ -278,7 +280,7 @@ public sealed class PostMergeRunCommand
         }
         var promoted = _options.Mode == "window"
             && PostMergeSchedulingPolicy.DeadlineReached(windowOpened, windowMinutes, now);
-        if (observeOnly || !_options.GateExecution && !promoted && admissionReason is not null)
+        if (observeOnly || placementOnly || !_options.GateExecution && !promoted && admissionReason is not null)
         {
             if (admissionReason is not null) _output.WriteLine($"post-merge waiting: {admissionReason}");
             return 0;

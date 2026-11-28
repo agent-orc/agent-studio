@@ -78,7 +78,14 @@ internal static class PostMergeWindowClaims
         finally { guard.Release(); }
     }
 
-    public static async ValueTask<object?> AuthorizeWriteAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+    public static ValueTask<object?> AuthorizeWriteAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+        => AuthorizeWriteAsync(invocation, next, requiresExecution: false);
+
+    public static ValueTask<object?> AuthorizeExecutionAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+        => AuthorizeWriteAsync(invocation, next, requiresExecution: true);
+
+    private static async ValueTask<object?> AuthorizeWriteAsync(EndpointFilterInvocationContext invocation,
+        EndpointFilterDelegate next, bool requiresExecution)
     {
         var context = invocation.HttpContext;
         var services = context.RequestServices;
@@ -90,6 +97,7 @@ internal static class PostMergeWindowClaims
         var grant = store.ReadGrant(project.Id);
         if (Owns(context, grant, now))
         {
+            if (requiresExecution && grant!.Lease.PlacementOnly) return Results.Conflict();
             context.Items[typeof(PostMergeWindowGrant)] = grant;
             return await next(invocation);
         }
@@ -110,32 +118,41 @@ internal static class PostMergeWindowClaims
         return Results.Conflict();
     }
 
-    public static IResult Claim(HttpContext context, ProjectRecord project, PostMergeProjectTarget target,
-        PostMergeClaimRequest request, RunnerCapabilitySnapshotDto host, PostMergeRunStore store, DateTimeOffset now)
+    public static async Task<IResult> ClaimAsync(ProjectRecord project, PostMergeProjectTarget target,
+        PostMergeClaimRequest request, RunnerCapabilitySnapshotDto host, PostMergeRunStore store, TimeProvider clock,
+        IBatchGateSubjectAuthority gates, CancellationToken ct)
     {
         var occupied = Math.Max(request.OccupiedSlots, host.Telemetry?.ActiveSlots ?? 0);
         var slots = host.EffectiveMaxParallelism ?? host.RoleMaxParallelism ?? 1;
         if (request.OccupiedSlots < 0 || !Enabled(host) || host.HostAdmission.AdmissionState != "open"
-            || host.Telemetry?.ClaimLoadGate?.State == "closed"
             || request.RepositoryUrl != target.RepositoryUrl || request.Branch != target.Branch
             || request.ReadTip is not { Length: 40 } || !request.ReadTip.All(Uri.IsHexDigit)
-            || !MonolithTransitionAdapter.PostMergeHostHasCapacity(occupied, slots, request.LoadPerCore, PostMergeClaimProtocol.MaxLoadPerCore))
+            || request.LoadPerCore is { } load && (!double.IsFinite(load) || load < 0))
             return Results.NoContent();
 
+        var codingHasCapacity = host.Telemetry?.ClaimLoadGate?.State != "closed"
+            && MonolithTransitionAdapter.PostMergeHostHasCapacity(occupied, slots, request.LoadPerCore, PostMergeClaimProtocol.MaxLoadPerCore);
+        var gateAvailable = !codingHasCapacity && (await gates.PostMergeHostsAsync(ct)).Gate;
+        var now = clock.GetUtcNow();
         var state = store.Read(project.Id);
         var active = state.ActiveRun;
         var custody = active is null ? null : store.ReadCustody(project.Id);
         var previous = store.ReadGrant(project.Id);
         var live = previous is not null && previous.Lease.ExpiresAtUtc > now;
         var sameInstance = live && previous!.RunnerId == host.RunnerId && previous.InstanceId == host.InstanceId;
+        var mayPlaceOnGate = gateAvailable && (!sameInstance || previous!.Lease.PlacementOnly);
         var recovering = custody is not null && custody.Owner == request.RecoveryOwner && active?.ExecutionHost == host.HostId;
         var replaceable = active is null || MonolithTransitionAdapter.PostMergeCustodyMayReplace(
             active.StartedAtUtc, active.Kind, custody?.ExpiresAtUtc, now);
-        if (!MonolithTransitionAdapter.PostMergeMayClaimWindow(live, sameInstance, recovering, replaceable))
+        if (!MonolithTransitionAdapter.PostMergeMayClaimWindow(live, sameInstance, recovering, replaceable,
+            codingHasCapacity, mayPlaceOnGate))
             return Results.NoContent();
 
         var lease = new PostMergeGrant(sameInstance ? previous!.Lease.Id : Guid.NewGuid().ToString("N"),
-            now + PostMergeClaimProtocol.GrantDuration);
+            now + PostMergeClaimProtocol.GrantDuration)
+        {
+            PlacementOnly = sameInstance ? previous!.Lease.PlacementOnly : !codingHasCapacity,
+        };
         store.WriteGrant(project.Id, new(host.RunnerId, host.InstanceId, host.HostId, lease));
         return Results.Ok(lease);
     }

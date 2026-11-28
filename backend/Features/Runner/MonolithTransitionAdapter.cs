@@ -19,8 +19,10 @@ public static class MonolithTransitionAdapter
     public static int MergeCheckQueuePriority(bool integration) => MergeCheckAdmissionPolicy.Priority(integration);
     public static bool PostMergeHostHasCapacity(int occupiedSlots, int slots, double? load, double maxLoad)
         => PostMergeSchedulingPolicy.CodingHostHasCapacity(occupiedSlots, slots, load, maxLoad);
-    public static bool PostMergeMayClaimWindow(bool grantLive, bool ownsGrant, bool mayRecover, bool mayReplace)
-        => PostMergeSchedulingPolicy.MayClaimWindow(grantLive, ownsGrant, mayRecover, mayReplace);
+    public static bool PostMergeMayClaimWindow(bool grantLive, bool ownsGrant, bool mayRecover, bool mayReplace,
+        bool codingHasCapacity, bool mayPlaceOnGate)
+        => PostMergeSchedulingPolicy.MayClaimWindow(grantLive, ownsGrant, mayRecover, mayReplace,
+            codingHasCapacity, mayPlaceOnGate);
     public static bool PostMergeCustodyMayWrite(string? owner, long fence, string currentOwner,
         long currentFence, DateTimeOffset expires, DateTimeOffset now, bool acquiring, bool settling = false)
         => PostMergeCustodyPolicy.MayWrite(owner, fence, currentOwner, currentFence, expires, now, acquiring, settling);

@@ -1970,12 +1970,15 @@ A coding host probes the configured integration branch with its service
 account's Git credentials. Failed access produces one log line per outage for
 that repository and branch. The host backs off the probe and can resume
 automatically after access is restored. Studio grants only one eligible coding
-host custody of a project's window at a time, subject to host admission and
-free capacity. Only that host observes the window, updates its pending state,
-or runs its tests. A role drain ends new claims and lets the owner finish and
+host custody of a project's window at a time, subject to open host admission.
+When a post-merge gate is connected, a busy coding host can receive a
+placement-only grant to observe the window and queue it on the gate. Local
+execution requires a grant issued with free coding capacity. A role drain ends
+new claims and lets the owner finish and
 release its current grant. Another eligible host can then claim the project.
 After a process loss, the grant expires and the existing exact-tip receipt
-recovery rules apply.
+recovery rules apply. See the
+[after-merge API contract](../../system/contracts/post-merge-api.md).
 
 The host uses its existing Runner service credential, registered client
 identity and TLS settings. When `RUNNER_SERVER_URL` addresses Task Server
@@ -2063,8 +2066,8 @@ enable lingering for the service account). Manual nightly timers retain their
 
 Every project on testing strategy `fast` (the default since AGT-3965) or
 `balanced` needs T3 runs: those strategies integrate before the tests run, and
-T3 is develop's only check. `GET /api/runner/post-merge/projects` lists exactly
-these projects, so the coding daemon's host scheduler picks them up without
+T3 is develop's only check. `GET /api/runner/post-merge/projects` lists the
+eligible projects in the host's scope, so the coding daemon can pick them up without
 timers; this manual pair is only the fallback. A project whose develop
 moved without a receipt for six hours shows "Post-merge runs missing" on its
 settings page and Operations view and a `post-merge.missing` item in Needs

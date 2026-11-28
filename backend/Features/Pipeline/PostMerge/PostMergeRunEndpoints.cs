@@ -62,14 +62,15 @@ public static class PostMergeRunEndpoints
                 .Select(project => PostMergeWindowClaims.Target(project, settings)).OfType<PostMergeProjectTarget>().ToArray());
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/claim", async (string project, PostMergeClaimRequest request,
-            HttpContext context, ProjectRegistry registry, ProjectSettingsService settings, PostMergeRunStore store, TimeProvider clock) =>
+            HttpContext context, ProjectRegistry registry, ProjectSettingsService settings, PostMergeRunStore store,
+            TimeProvider clock, IBatchGateSubjectAuthority gates, CancellationToken ct) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
             if (record is null || PostMergeWindowClaims.Target(record, settings) is not { } target) return Results.NotFound();
             if (PostMergeWindowClaims.Instance(context) is null
                 || await PostMergeWindowClaims.HostAsync(context) is not { } host
                 || !PostMergeWindowClaims.Allows(context, registry, record, host)) return Results.NoContent();
-            return PostMergeWindowClaims.Claim(context, record, target, request, host, store, clock.GetUtcNow());
+            return await PostMergeWindowClaims.ClaimAsync(record, target, request, host, store, clock, gates, ct);
         }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/grant", (string project, bool? release, HttpContext context,
             ProjectRegistry registry, PostMergeRunStore store, TimeProvider clock) =>
@@ -112,7 +113,7 @@ public static class PostMergeRunEndpoints
             store.CloseWindow(record.Id, closure.Reason, clock.GetUtcNow(), closure.TipSha);
             return Results.NoContent();
         }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
-          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeExecutionAsync);
         app.MapPost("/api/runner/post-merge/projects/{project}/window", (string project,
             PostMergeWindowObservation observation, ProjectRegistry registry, PostMergeRunStore store) =>
         {
@@ -227,7 +228,7 @@ public static class PostMergeRunEndpoints
             return state is null ? Results.Conflict(new { error = "post-merge run already claimed or stale" })
                 : Results.Ok(store.Read(record.Id) with { Quarantines = incidents.ActiveQuarantines(record), Holds = incidents.ActiveHolds(record) });
         }).AddEndpointFilter(PostMergeWindowClaims.SerializeAsync)
-          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeWriteAsync);
+          .AddEndpointFilter(PostMergeWindowClaims.AuthorizeExecutionAsync);
     }
 
     // RT-3 (AGT-3988) receipt fields. All are optional, so receipts of older

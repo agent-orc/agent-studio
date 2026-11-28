@@ -116,6 +116,40 @@ public sealed class PostMergeHostEndpointsTests : IDisposable
         var store = factory.Services.GetRequiredService<PostMergeRunStore>();
         Assert.Equal(firstWon ? "host-first" : "host-second", Assert.Single(store.Read(one.Id).Runs).ExecutionHost);
 
+        peer.DefaultRequestHeaders.Add(PostMergeClaimProtocol.GrantHeader, nextGrant.Id);
+        using (var released = await peer.PostAsync($"{route}/one/grant?release=true", null))
+            Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+        hosts.Register("gate", new RegisterRunnerRequest("gate", "idle-gate", "gate-instance", "1", TaskServerProtocol.Current,
+            [GateCapabilities.Executor, GateCapabilities.PostMerge, GateCapabilities.GitMaterialization,
+             CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess]));
+        var dueTip = new string('b', 40);
+        var due = observation with { TipSha = dueTip };
+        using var busyOffer = await peer.PostAsJsonAsync(claimRoute, request with { ReadTip = dueTip, OccupiedSlots = 1 });
+        Assert.Equal(HttpStatusCode.OK, busyOffer.StatusCode);
+        var placementGrant = (await busyOffer.Content.ReadFromJsonAsync<PostMergeGrant>())!;
+        Assert.True(placementGrant.PlacementOnly);
+        peer.DefaultRequestHeaders.Remove(PostMergeClaimProtocol.GrantHeader);
+        peer.DefaultRequestHeaders.Add(PostMergeClaimProtocol.GrantHeader, placementGrant.Id);
+        using (var renewed = await peer.PostAsync($"{route}/one/grant", null))
+        {
+            renewed.EnsureSuccessStatusCode();
+            Assert.Equal(placementGrant, await renewed.Content.ReadFromJsonAsync<PostMergeGrant>());
+        }
+        using (var observed = await peer.PostAsJsonAsync($"{route}/one/window", due))
+            Assert.Equal(HttpStatusCode.NoContent, observed.StatusCode);
+        using (var refused = await peer.PostAsJsonAsync(runsRoute, running with { Id = "busy-window", TipSha = dueTip }))
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        using (var refused = await peer.PostAsJsonAsync($"{route}/one/close-window", new PostMergeWindowClosure(dueTip, now, "busy")))
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        using var placed = await peer.PostAsJsonAsync($"{route}/one/placement", due);
+        placed.EnsureSuccessStatusCode();
+        var placement = await placed.Content.ReadFromJsonAsync<PostMergePlacement>();
+        Assert.Equal("gate", placement!.Executor);
+        var gateClaim = factory.Services.GetRequiredService<MonolithGateStore>().Claim(new("gate", "gate-instance"));
+        Assert.Equal("claimed", gateClaim.Status);
+        Assert.Equal(placement.SubjectId, gateClaim.Subject!.SubjectId);
+        Assert.Equal(dueTip, gateClaim.Subject.ExpectedSha);
+
         HttpClient Host(string machine, string[] bindings, bool enabled = true)
         {
             var enrollment = security.EnrollRunner(security.CreateEnrollment(

@@ -7,8 +7,11 @@ public static class PostMergeSchedulingPolicy
         => occupiedSlots >= 0 && occupiedSlots < slots
            && (loadPerCore is null || double.IsFinite(loadPerCore.Value) && loadPerCore >= 0 && loadPerCore <= maxLoadPerCore);
 
-    public static bool MayClaimWindow(bool grantLive, bool ownsGrant, bool mayRecoverActiveRun, bool mayReplaceActiveRun)
-        => (!grantLive || ownsGrant) && (ownsGrant || mayRecoverActiveRun || mayReplaceActiveRun);
+    public static bool MayClaimWindow(bool grantLive, bool ownsGrant, bool mayRecoverActiveRun, bool mayReplaceActiveRun,
+        bool codingHasCapacity, bool mayPlaceOnGate)
+        => (!grantLive || ownsGrant)
+           && (codingHasCapacity && (ownsGrant || mayRecoverActiveRun || mayReplaceActiveRun)
+               || mayPlaceOnGate && mayReplaceActiveRun);
 
     public static bool DeadlineReached(DateTimeOffset? opened, int minutes, DateTimeOffset now)
         => opened is { } at && now - at >= TimeSpan.FromMinutes(Math.Max(0, minutes));

@@ -71,6 +71,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Access page pilot of the UI standard: section, outline, grid, row detail, action placement, chips, confirm in place, empty state, secret reveal, and the shared components (AGT-4029) | [system/ui-standard/access-page-pilot.md](../system/ui-standard/access-page-pilot.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline, including post-merge gate placement, window deadlines and measurement coverage (AGT-4075) | [domains/pipeline.md](../system/domains/pipeline.md) |
+| After-merge host API, including project discovery, window grants, placement and run history (AGT-4433) | [contracts/post-merge-api.md](../system/contracts/post-merge-api.md) |
 | Dispatcher personas: admission role, replay evidence and testing strategy boundaries | [decision Dossier](../dispatcher-personas/index.html) |
 | Integration conflict history, record version 1, rates and selection evidence (AGT-3969) | [contract](../system/contracts/integration-conflicts.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |

@@ -1157,7 +1157,10 @@ delivery commits in its brief.
 
 `PostMergeSchedulingPolicy` owns window age promotion, the three-window owner
 deadline, gate queue priority and the last supersedable phase. Hosts collect
-clock, window and gate-phase facts. `PostMergeQueueOrder` places attempt age
+clock, window and gate-phase facts. Window grant admission permits gate
+placement while the coding host is busy when custody is available and the
+active run can be replaced. Recovering an active coding run requires coding
+capacity. `PostMergeQueueOrder` places attempt age
 before kind priority and arrival order. Both authorities retain this order
 before each 32-item page and continue past ineligible candidates. The library
 also bounds daemon flights and protects the integration share of host grants.
