@@ -1091,9 +1091,12 @@ Automatic changes use the existing `OperatorDecision` switch through
 default; Engine mode waits for its receipt. The effect compares the frozen
 lease fence before applying, so a later Owner control supersedes pending
 receipts. A pause handoff also depends on the available planners recorded in
-the occurrence. The effect rechecks that set using current scoped grants and
-the original competition evidence, since a resume can leave the fence
-unchanged. If availability changed, the next refresh collects fresh facts.
+the occurrence, since a resume can leave the fence unchanged. Monolith and
+Engine both recheck current scoped grants against the original competition
+evidence and write the fenced lease under the activation store's lock.
+A resume that finishes first invalidates the handoff. A resume that follows
+a committed handoff restores the assigned persona on the next refresh.
+Evidence collection runs outside the activation lock.
 Both pickup paths refresh the scheduler before recording a live
 plan. A change to the active scoped grants invalidates the one-minute refresh
 cache. An existing lease assignment carries its certified project plan grant

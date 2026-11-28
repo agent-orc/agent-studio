@@ -302,10 +302,71 @@ public sealed class DispatchEndpointTests : IDisposable
         Assert.Equal(restored.Fence, store.ReadLease(project)!.Fence);
     }
 
+    // Suspend one scheduler operation on a worker while the Owner completes a real resume.
+    private sealed class HandoffClock(TimeProvider inner) : TimeProvider
+    {
+        private Action? _onRead;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Exchange(ref _onRead, null)?.Invoke();
+            return inner.GetUtcNow();
+        }
+
+        public async Task InterleaveResume(Func<Task> handoff, Action resume)
+        {
+            var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            _onRead = () =>
+            {
+                reached.SetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(30))) throw new TimeoutException("Owner resume did not finish.");
+            };
+            var worker = Task.Run(handoff);
+            try
+            {
+                await reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                resume();
+            }
+            finally
+            {
+                release.Set();
+                await worker;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resume_during_monolith_evidence_collection_preserves_holder_and_fence()
+    {
+        await using var factory = Factory();
+        const string project = "Forecast Project";
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<ProjectRegistry>().FindByIdOrDisplayName(project)!.WorkspaceId;
+        var (clock, activations, owner) = ActivateWarden(workspace);
+        var store = services.GetRequiredService<DispatchStore>();
+        services.GetRequiredService<ProjectSettingsService>().SetDispatchMode(project, "live");
+        var reviewClock = new HandoffClock(clock);
+        var review = ActivatorUtilities.CreateInstance<DispatchReviewService>(services, reviewClock);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, clock, activations, review);
+        store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
+        var holder = scheduler.Refresh(project, "wave")!;
+        activations.Pause(workspace, holder.Persona, new(), owner);
+
+        await reviewClock.InterleaveResume(() =>
+        {
+            Assert.Null(scheduler.Refresh(project, "wave"));
+            return Task.CompletedTask;
+        }, () => activations.Resume(workspace, holder.Persona, new(), owner));
+        Assert.Equal(holder.Persona, store.ReadLease(project)!.Persona);
+        Assert.Equal(holder.Fence, scheduler.Refresh(project, "wave")!.Fence);
+    }
+
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Engine_pause_receipt_only_transfers_a_still_paused_assignment(bool resumeBeforeReceipt)
+    [InlineData("paused")]
+    [InlineData("resumed-before-receipt")]
+    [InlineData("resumed-during-receipt")]
+    public async Task Engine_pause_receipt_only_transfers_a_still_paused_assignment(string state)
     {
         await using var factory = Factory();
         const string project = "Forecast Project";
@@ -317,7 +378,8 @@ public sealed class DispatchEndpointTests : IDisposable
         var runs = services.GetRequiredService<MonolithOrchestrationStore>();
         var mode = new ConfigurationBuilder().AddInMemoryCollection().Build();
         var gateway = new AiOperatorDecisionGateway(mode, runs);
-        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, clock, activations, gateway);
+        var receiptClock = new HandoffClock(clock);
+        var scheduler = ActivatorUtilities.CreateInstance<DispatchLeaseScheduler>(services, receiptClock, activations, gateway);
         store.AcquireLease(project, "area-warden", 0, clock.GetUtcNow(), TimeSpan.FromHours(1), true, true, true);
         var holder = scheduler.Refresh(project, "wave")!;
         Assert.Equal("area-warden", holder.Persona);
@@ -335,16 +397,20 @@ public sealed class DispatchEndpointTests : IDisposable
         var application = new AiOperatorApplication(run.RunId, run.ProjectId, run.TaskId, occurrence.ExpectedSourceState,
             "apply", payload, receipt, occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch);
 
-        if (resumeBeforeReceipt)
+        void Resume() => activations.Resume(workspace, holder.Persona, new(), owner);
+        if (state == "resumed-before-receipt")
         {
-            activations.Resume(workspace, holder.Persona, new(), owner);
+            Resume();
             Assert.Equal(holder.Fence, scheduler.Refresh(project, "wave")!.Fence);
         }
-        await scheduler.ApplyAsync(application, default);
+        if (state == "resumed-during-receipt")
+            await receiptClock.InterleaveResume(() => scheduler.ApplyAsync(application, default), Resume);
+        else
+            await scheduler.ApplyAsync(application, default);
         await scheduler.ApplyAsync(application, default);
         var lease = store.ReadLease(project)!;
-        Assert.Equal(resumeBeforeReceipt ? holder.Persona : "queue-keeper", lease.Persona);
-        Assert.Equal(resumeBeforeReceipt ? holder.Fence : holder.Fence + 1, lease.Fence);
+        Assert.Equal(state == "paused" ? "queue-keeper" : holder.Persona, lease.Persona);
+        Assert.Equal(state == "paused" ? holder.Fence + 1 : holder.Fence, lease.Fence);
     }
 
     [Theory]
