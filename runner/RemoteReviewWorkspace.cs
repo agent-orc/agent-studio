@@ -554,11 +554,9 @@ public sealed class RemoteReviewWorkspace
                 var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                     ? VisualReviewScreenshotBundle.PromptSection(_visualScreenshotEvidence, RepositoryPath)
                     : string.Empty;
-                var authored = command.Prompt!;
-                // Leased plans from older servers can still explicitly forbid tools.
-                if (command.Aspect == "concept-fit"
-                    && !authored.Contains(ConceptRemoteReviewPolicy.WorkspaceInstructions, StringComparison.Ordinal))
-                    authored += "\n\n## Delivery checkout instructions\n\n" + ConceptRemoteReviewPolicy.WorkspaceInstructions;
+                var authored = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                    ? ConceptRemoteReviewPolicy.PrepareCheckoutPrompt(command.Prompt!)
+                    : command.Prompt!;
                 var input = ReviewAspectInputBudget.Compose(
                     authored,
                     reviewMaterial ??= await BuildReviewMaterialAsync(

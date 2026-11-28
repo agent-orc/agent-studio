@@ -3638,6 +3638,15 @@
           <td>Checkout reviews now use the explicit access-failure classification. The reproduced concern survives
             execution and settlement for normal content admission.</td>
         </tr>
+        <tr id="case-concept-review-frozen-prompt">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-frozen-prompt</span></td>
+          <td>A frozen snapshot prompt could produce a content concern for a checkout read failure.</td>
+          <td>The executor appended checkout instructions while the stock prompt still prohibited tools and
+            directed the CLI to report truncated evidence as a concern.</td>
+          <td>The executor replaces the obsolete instructions before the CLI runs. An inaccessible file
+            reaches <code>ReviewInfra / ReviewMaterialUnavailable</code>. A cited content finding keeps its verdict.</td>
+        </tr>
       </tbody>
     </table>
 

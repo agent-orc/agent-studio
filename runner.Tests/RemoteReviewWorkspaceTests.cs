@@ -474,14 +474,44 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
         var capturedPrompt = Path.Combine(_root, "concept-review-prompt.txt");
         var fakeCodex = Path.Combine(_root, "fake-concept-review.sh");
-        // A read failure uses the same marker a live review CLI returns when its sandbox cannot open a file.
+        // Follow the frozen snapshot instructions if they reach the CLI.
+        const string legacyPrompt = """
+            # Aspect review: concept fit
+
+            Review the delivered Concept Dossier against the current task brief. This is a
+            read-only content review. The brief below is `prompt.md` as frozen in the
+            ReviewSubject. The published Dossier snapshot below contains the index and its
+            linked files after delivery. Judge completeness against that snapshot.
+
+            Check each requirement the brief actually makes:
+
+            - Every open decision has a stated recommendation.
+
+            If the exact Dossier content is absent or truncated so a required check cannot
+            be made, return `concerns` and name the missing evidence. Do not claim a pass.
+
+            ## Project and card
+
+            ## Current brief (`prompt.md`)
+
+            Use one card per independently reviewable slice.
+
+            ## Published Dossier
+
+            docs/concept/index.html: linked file is missing.
+
+            End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.
+            """;
         var denied = canRead ? "" : "Read denied";
         var finding = status == "block" ? "Implementation cards contradict the brief."
             : "The Dossier specifies no retry when review material is unavailable.";
         await File.WriteAllTextAsync(fakeCodex, $$$"""
             #!/bin/sh
             cat > '{{{capturedPrompt}}}'
-            if [ -n '{{{denied}}}' ]; then
+            if grep -Eq 'Do not edit files or run tools|name the missing evidence|Judge completeness against that snapshot' '{{{capturedPrompt}}}' ||
+               ! grep -q 'classification=ReviewMaterialUnavailable' '{{{capturedPrompt}}}'; then
+              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=concerns; summary=The published Dossier snapshot is incomplete.; missing=Full index.html]]"}}'
+            elif [ -n '{{{denied}}}' ]; then
               printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=concerns; classification=ReviewMaterialUnavailable; summary=Read denied.; missing=docs/concept/index.html]]"}}'
             elif grep -q 'one card per independently reviewable slice' '{{{capturedPrompt}}}' &&
                test "$(wc -c < docs/concept/index.html)" -eq {{{largeIndex.Length}}} &&
@@ -499,7 +529,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "aspect-concept-fit", "concept-fit", "codex", [],
             TimeoutSeconds: 30,
             ExecutionKind: ReviewCommandKinds.AgentAspect,
-            Prompt: "Current prompt.md: Use one card per independently reviewable slice. Check the delivered Dossier for contradictions.",
+            Prompt: legacyPrompt.ReplaceLineEndings("\r\n"),
             CliType: CliSelection.CodexCli,
             Model: "gpt-5.4-mini",
             ThinkingLevel: "high");
@@ -527,6 +557,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(finding, verdict.Summary);
         Assert.True(verdict.UsesDossierCheckout);
         var prompt = await File.ReadAllTextAsync(capturedPrompt);
+        Assert.Contains("Every open decision has a stated recommendation.", prompt);
+        Assert.Contains("End with `[[TASK_DONE]]` on its own line.", prompt);
         Assert.DoesNotContain(cardText, prompt);
         Assert.DoesNotContain(largeIndex, prompt);
         Assert.Contains("docs/concept/index.html:", prompt);

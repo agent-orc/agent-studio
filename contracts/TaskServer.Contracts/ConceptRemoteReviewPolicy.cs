@@ -21,6 +21,43 @@ public static class ConceptRemoteReviewPolicy
     // Only the old stock prompt instructed the reviewer to judge the snapshot without tools.
     private const string LegacyPromptEnding = "End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.";
 
+    public static string PrepareCheckoutPrompt(string prompt)
+    {
+        // The stock template puts its grading rules before the rendered card data.
+        // Rewrite its instructions without touching a quotation in the frozen brief or Dossier.
+        const string checksHeading = "Check each requirement the brief actually makes:";
+        const string cardHeading = "\n## Project and card";
+        const string missingEvidenceRule = "If the exact Dossier content is absent or truncated so a required check cannot\n"
+            + "be made, return `concerns` and name the missing evidence. Do not claim a pass.";
+        var card = prompt.IndexOf(cardHeading, StringComparison.Ordinal);
+        var ending = prompt.LastIndexOf(LegacyPromptEnding, StringComparison.Ordinal);
+        if (card > 0 && ending > card && prompt.StartsWith("# Aspect review: concept fit", StringComparison.Ordinal))
+        {
+            var header = prompt[..card].ReplaceLineEndings("\n").TrimEnd();
+            var checks = header.IndexOf(checksHeading, StringComparison.Ordinal);
+            if (checks >= 0 && header.EndsWith(missingEvidenceRule, StringComparison.Ordinal))
+            {
+                var grading = header[checks..^missingEvidenceRule.Length].TrimEnd();
+                var material = prompt[card..ending];
+                // The earliest stock footer calls the diff the source of Dossier content.
+                // Limit the replacement to the footer after the card's evidence.
+                const string diffFooter = "\nThe executor appends the authoritative changed-file list and unified diff";
+                var footer = material.LastIndexOf(diffFooter, StringComparison.Ordinal);
+                if (footer >= 0)
+                    material = material[..footer] + material[footer..].Replace(
+                        "That material is the source for Dossier content.", "Use it to check what changed in this round.", StringComparison.Ordinal);
+                return "# Aspect review: concept fit\n\nReview the delivered Concept Dossier against the frozen brief.\n"
+                    + WorkspaceInstructions + "\n\n" + grading + "\n" + material
+                    + "For a checkout read failure, use `[[ASPECT_VERDICT: status=concerns; classification="
+                    + MaterialUnavailable + "; summary=<read failure>; evidence_checked=<inputs checked>; missing=<inaccessible paths>]]`.\n\n"
+                    + "End with `[[TASK_DONE]]` on its own line. Leave the workspace unchanged."
+                    + prompt[(ending + LegacyPromptEnding.Length)..];
+            }
+        }
+        return prompt.Contains(WorkspaceInstructions, StringComparison.Ordinal) ? prompt
+            : prompt + "\n\n## Delivery checkout instructions\n\n" + WorkspaceInstructions;
+    }
+
     private static readonly Regex IncompleteInput = new(
         @"(?:^|, but )(?:the )?(?:supplied diff (?:is|was) insufficient for (?:a full |the )?concept-fit review"
         + @"|(?:published Dossier snapshot|unchanged Dossier sections) (?:is|are|was|were) (?:incomplete|unavailable)"

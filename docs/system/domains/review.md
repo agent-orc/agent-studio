@@ -142,7 +142,10 @@ omission in the delivered tree is a content finding. Earlier concerns that
 identify incomplete review inputs require a fresh review before completion.
 The legacy text check applies only to verdicts from the frozen snapshot-only
 prompt. A runner that supplies checkout instructions records that fact on its
-verdict, including when it executes an older plan. In checkout reviews, only
+verdict, including when it executes an older plan. Before executing a frozen
+stock snapshot prompt, the runner replaces its snapshot grading and tool-use
+directions with checkout reads and the typed read-failure response. It keeps
+the frozen brief, content checks and evidence. In checkout reviews, only
 the explicit material-access classification triggers this recovery. A finding
 about how the concept handles unavailable inputs keeps its content verdict.
 
