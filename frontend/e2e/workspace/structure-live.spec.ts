@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture } from '../../src/app/features/structure/live/live-structure.fixtures';
+import { liveSourcesFixture, liveStructureFixture, projectedCapacityFixture, sharedRunnerSourcesFixture, sharedRunnerStructureFixture } from '../../src/app/features/structure/live/live-structure.fixtures';
 
 // AGT-4024: the live structure view in Operations, Structure. Mocked; role-named fixtures only.
 const results = process.env['JOB_RESULTS_DIR'] ?? path.join(process.cwd(), 'test-results');
@@ -11,7 +11,7 @@ const REVIEW_3 = 'machine:review-3';
 const STUDIO = 'machine:studio-server';
 
 /** What the mocked structure read answers; a test swaps it to let the data change under the view. */
-interface Served { structure: typeof liveStructureFixture }
+interface Served { structure: typeof liveStructureFixture; runners?: typeof liveSourcesFixture.runners }
 
 /** The installation one read later: a container more on the Studio server, which moves the machines around it. */
 const grownStructure: typeof liveStructureFixture = { ...liveStructureFixture, revision: 42, nodes: [...liveStructureFixture.nodes,
@@ -30,7 +30,7 @@ async function mockApi(page: Page, sources: Partial<Record<'backups' | 'hosts' |
     if (url.includes('/api/v1/operations/structure')) return json(served.structure);
     if (url.includes('/api/operator/backups')) return json(liveSourcesFixture.backup, sources.backups ?? 200);
     // The Studio shell reads the same list for its provider status, so each entry carries the full wire shape.
-    if (url.includes('/api/v1/management/remote-hosts')) return json(liveSourcesFixture.runners!.map(runner => ({
+    if (url.includes('/api/v1/management/remote-hosts')) return json((served.runners ?? liveSourcesFixture.runners)!.map(runner => ({
       ...runner, instanceId: `${runner.runnerId}-1`, protocolVersion: 1, capabilities: [], hostAdmission: { state: 'admitted' } })), sources.hosts ?? 200);
     if (url.includes('/api/v1/management/environment')) return json(liveSourcesFixture.environment, sources.environment ?? 200);
     if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
@@ -112,7 +112,8 @@ async function open(page: Page, query = ''): Promise<Locator> {
 async function shot(page: Page, name: string): Promise<void> {
   await page.mouse.move(1, 1);
   await page.waitForTimeout(120);
-  await page.screenshot({ path: path.join(results, `${name}.png`) });
+  const filename = name.endsWith('--mocked') ? name : `${name}--mocked`;
+  await page.screenshot({ path: path.join(results, `${filename}.png`) });
 }
 
 /** Leaves exactly the given layers on, through the visible switches. */
@@ -624,7 +625,7 @@ test('live structure: unique capacity agrees across layers, installation details
   test.setTimeout(120_000);
   fs.mkdirSync(results, { recursive: true });
   const errors = watchErrors(page);
-  await mockApi(page, {}, { structure: projectedCapacityFixture });
+  await mockApi(page, {}, { structure: projectedCapacityFixture, sharedRunnerSourcesFixture, sharedRunnerStructureFixture });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/#/workspace/operations/structure');
   const view = page.getByTestId('live-structure');
@@ -654,3 +655,43 @@ test('live structure: unique capacity agrees across layers, installation details
   }
   expect(errors).toEqual([]);
 });
+
+for (const reverse of [false, true]) {
+  test(`live structure: shared host keeps runner facts by identity (reversed: ${reverse})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    fs.mkdirSync(results, { recursive: true });
+    const errors = watchErrors(page);
+    const runners = [...sharedRunnerSourcesFixture.runners!];
+    await mockApi(page, {}, { structure: sharedRunnerStructureFixture, runners: reverse ? runners.reverse() : runners });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/#/workspace/operations/structure');
+    const view = page.getByTestId('live-structure');
+    await expect(view).toBeVisible({ timeout: 30_000 });
+    await box(view, 'machine:shared-host');
+    const details = view.getByTestId('live-details');
+    for (const [role, version, restarts, uptime] of [['coding', '2.1', 0, '4 h'], ['review', '2.2', 2, '60 min']] as const) {
+      const id = `component:shared-host:shared-${role}`;
+      await view.locator(`[data-outline-id="${id}"]`).click();
+      await expect(details).toHaveAttribute('data-node-id', id);
+      await expect(details.locator('[data-fact="image"]')).toContainText(`registry.example/studio/${role}-host:${version}`);
+      await expect(details.locator('[data-fact="restarts"]')).toContainText(`${restarts} of the review daemon`);
+      await expect(details.locator('[data-fact="uptime"]')).toContainText(uptime);
+      await expect(details.locator('[data-fact^="event:"]')).toHaveCount(restarts);
+      if (role === 'review') await expect(details.locator('[data-fact="event:0"]')).toContainText('3 reviews lost');
+      if (!reverse) await shot(page, `live-structure-${role}-identity--mocked`);
+    }
+    await view.locator('[data-outline-id="machine:shared-host"]').click();
+    await expect(details).toHaveAttribute('data-node-id', 'machine:shared-host');
+    await expect(details.locator('[data-fact="runners"]')).toContainText('coding (shared-coding) · review (shared-review)');
+    await expect(details.locator('[data-fact="image"]')).toHaveCount(0);
+    for (const [role, version, count] of [['coding', '2.1', 0], ['review', '2.2', 2]] as const) {
+      await expect(details.locator(`[data-fact="runner:shared-${role}:image"]`)).toContainText(`${role}-host:${version}`);
+      await expect(details.locator(`[data-fact="runner:shared-${role}:restarts"]`)).toContainText(`${count} of the review daemon`);
+    }
+    if (!reverse) for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await shot(page, `live-structure-shared-runner-host-${theme}--mocked`);
+    }
+    expect(errors).toEqual([]);
+  });
+}

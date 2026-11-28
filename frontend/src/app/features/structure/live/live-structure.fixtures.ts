@@ -371,3 +371,26 @@ export const projectedCapacityFixture: StructureData = {
   "generatedAt": "2026-11-27T12:00:00Z",
   "schemaVersion": 2
 };
+
+/** Two independently released daemons share one host, as identified by the projection's unitId. */
+export const sharedRunnerStructureFixture: StructureData = {
+  ...projectedCapacityFixture,
+  nodes: projectedCapacityFixture.nodes.map(node => {
+    const version = node.unitId === 'shared-review' ? '2.2' : '2.1';
+    return node.facts?.hostId === 'shared-host' ? { ...node, facts: { ...node.facts,
+      release: { ...node.facts.release!, version } } } : node;
+  }),
+};
+export const sharedRunnerSourcesFixture: LiveSources = {
+  backup: null, environment: null,
+  runners: [
+    { ...runner('shared-host', 'coding', 0), runnerId: 'shared-coding',
+      restartedAt: '2026-11-27T08:00:00Z', reviewRestarts: [],
+      release: { version: '2.1', imageRef: 'registry.example/studio/coding-host:2.1' } },
+    { ...runner('shared-host', 'review', 2), runnerId: 'shared-review',
+      restartedAt: '2026-11-27T11:00:00Z',
+      reviewRestarts: [{ restartedAt: '2026-11-27T11:00:00Z', reviewsLost: 3 },
+        { restartedAt: '2026-11-26T09:00:00Z', reviewsLost: 1 }],
+      release: { version: '2.2', imageRef: 'registry.example/studio/review-host:2.2' } },
+  ],
+};
