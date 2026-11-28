@@ -373,4 +373,82 @@ public sealed class CodingCapacityServiceTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    private static readonly RemoteProjectRepository Repository =
+        new("project", "repository", "https://example.invalid/repo.git", "develop", "registry");
+
+    private static RunnerCapabilitySnapshotDto ClassHost(RunnerCapabilitySnapshotDto host) => host with
+    {
+        Capabilities = [.. host.Capabilities, host.Capabilities[0] with { Key = "platform:docker" }],
+    };
+
+    private static ClientIdentity Preflight(string id, string status = "ready") => new()
+    {
+        Id = id, RunnerProjectPreflights = [new RunnerProjectPreflight { ProjectId = "project", Status = status,
+            Detail = "repository read refused", CheckedAt = Now, RegistrationFingerprint = ProjectDeliveryPreflightFingerprint.Create(Repository) }],
+    };
+
+    [Theory]
+    [InlineData(5, 4)]   // the review's case: a draining peer uses four of five shared slots
+    [InlineData(12, 11)] // the installation: one shared host with twelve cores
+    public void Class_routed_project_row_counts_a_draining_peers_occupancy_on_the_shared_host(int ceiling, int peerUsed)
+    {
+        // AGT-4348: the class branch recomputed free slots from the role's own usage only.
+        var healthy = ClassHost(Host(ceiling, ceiling, ceiling));
+        var draining = healthy with { RunnerId = "draining", InstanceId = "draining-instance",
+            Telemetry = healthy.Telemetry! with { ActiveSlots = peerUsed },
+            HostAdmission = new("physical", "automatic-drain", "held", Now, null, null) };
+        var assigned = CodingCapacityService.Hosts(Now, [Preflight("coding")], [healthy, draining]);
+        var config = new ProjectSettings { ExecutionLocation = "class:docker", MaxParallelism = ceiling };
+        Assert.True(CodingCapacityService.Assigned(config, Assert.Single(assigned)));
+
+        var slots = CodingCapacityService.ProjectSlots(config, assigned, 0, Repository, Now);
+
+        Assert.Equal((ceiling, peerUsed, 1), (slots.Total, slots.Used, slots.Admissible));
+        var cards = Enumerable.Range(0, 3).Select(i => new TaskInfo { Id = $"C-{i}", Key = $"C-{i}", State = TaskStates.Ready }).ToArray();
+        var fact = CodingCapacityProjection.Project("studio", cards, TaskReferenceIndex.Build(cards), slots.Total, slots.Used,
+            _ => [], admissibleSlots: slots.Admissible, admissionBlocks: slots.Blocks);
+        Assert.Equal((1, 1), (fact.FreeSlots, fact.AdmissibleSlots));
+    }
+
+    [Theory]
+    [InlineData("failed", "preflight failed: repository read refused")]
+    [InlineData("missing", "preflight is missing or stale")]
+    public void Host_rejected_by_the_project_preflight_adds_no_admissible_slot_and_is_named(string condition, string reason)
+    {
+        var ready = Host(5, 5, 5) with { HostId = "ready-host", Name = "ready-runner" };
+        var rejected = Host(5, 5, 5) with { RunnerId = "rejected", Name = "rejected-runner", HostId = "rejected-host" };
+        var identities = new List<ClientIdentity> { Preflight("coding") };
+        if (condition == "failed") identities.Add(Preflight("rejected", "failed"));
+        var assigned = CodingCapacityService.Hosts(Now, identities, [ready, rejected]);
+        Assert.Equal((10, 0, 10), CodingCapacityService.Totals(assigned));
+
+        var slots = CodingCapacityService.ProjectSlots(new ProjectSettings { ExecutionLocation = "remote" }, assigned, 0, Repository, Now);
+
+        Assert.Equal((10, 0, 5), (slots.Total, slots.Used, slots.Admissible));
+        var block = Assert.Single(slots.Blocks);
+        Assert.Equal("admission", block.Class);
+        Assert.StartsWith("rejected-runner: ", block.Reason);
+        Assert.Contains(reason, block.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Ramp_limited_capacity_names_the_ramp_and_its_limit_instead_of_advising_more_work()
+    {
+        var snapshot = Host(5, 5, 5);
+        snapshot = snapshot with { RuntimeCapacity = snapshot.RuntimeCapacity! with { RampStrategy = "conservative" } };
+        var host = Assert.Single(CodingCapacityService.Hosts(Now, [], [snapshot]));
+        Assert.Equal(1, host.AdmissibleSlots);
+        Assert.Contains(host.AdmissionLimits, limit => limit.Contains("conservative ramp") && limit.Contains("1 of 5"));
+        var cards = Enumerable.Range(0, 2).Select(i => new TaskInfo { Id = $"C-{i}", Key = $"C-{i}", State = TaskStates.Ready }).ToArray();
+        var fact = CodingCapacityProjection.Project("studio", cards, TaskReferenceIndex.Build(cards), 5, 0,
+            _ => [], admissibleSlots: host.AdmissibleSlots, admissionLimits: host.AdmissionLimits);
+
+        Assert.Equal((5, 1, 2), (fact.FreeSlots, fact.AdmissibleSlots, fact.ClaimableNow));
+        Assert.Contains("conservative ramp", fact.Cause);
+        Assert.Contains("1 of 5", fact.Cause);
+        Assert.DoesNotContain("plan more", fact.Cause);
+        Assert.DoesNotContain("plan independent", fact.Cause);
+    }
+
 }

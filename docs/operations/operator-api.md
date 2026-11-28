@@ -92,6 +92,26 @@ Review and gate roles, stale or closed hosts, retired and read-only clients,
 and fixture cards are excluded. A project-scoped reader sees only its project
 cards and matching host pool; subscription rows require `workspace.operate`.
 
+Each `fleet` and `projects[]` row also carries four admission fields:
+
+- `admissibleSlots`: free slots the central host policy admits now. It never
+  exceeds `freeSlots` or the claimable cards. A project row sums only hosts that
+  pass that project's repository preflight; a rejected host adds no admissible
+  slot and is named with its reason in the cause (`<host>: <reason>`).
+- `runnableNow`: Ready cards whose only blocks are `admission` holds.
+- `lastProgressAt`: the latest claim progress on the row's hosts, or null.
+- `allocations[]`: per runner `runnerId`, `bootstrapSlots`, `configuredSlots`,
+  `adoptedSlots` and `state` (`adopted` or `pending adoption`).
+
+Used slots on a shared physical host include every coding role on that host,
+draining peers included. A class-routed project row is bounded by both its
+project limit and the free slots of the shared host, so a host full with other
+projects' or classes' work is never reported as free. When the ramp or the
+target-load brake admits fewer slots than are free and no admission hold
+applies, the cause names that limit (for example `conservative ramp admits one
+run every 60s and limits admission to 1 of 5 free slots`) instead of advising
+more cards.
+
 `subscriptions[]` reports used percent, elapsed percent and projected percent
 left at reset for each subscription window. The rate is the average usage
 since the observed or inferred window start. A missing `resetAt` says
@@ -101,7 +121,10 @@ and the first 5% of a window do not produce a leftover projection.
 The decision stream and Needs you expose `capacity.underused` after coding
 slots have been continuously observed free for more than 20 minutes, when no
 card is claimable or fewer cards are claimable than free slots while Ready is
-nonempty. The fleet also reports projected subscription leftovers above 20%
+nonempty. Admission is also reported as stalled while Ready is nonempty and
+fewer cards are claimable than runnable, `admissibleSlots` is below `freeSlots`,
+or, with no projected subscription leftover, runnable cards fill the free slots
+without being claimed; the item then names the admission cause. The fleet also reports projected subscription leftovers above 20%
 even when enough cards are claimable. The item names the cause and next action.
 The named thresholds live in `CodingCapacityProjection`, not settings. Full
 capacity, loss of the published board, or loss of fresh host capacity resets

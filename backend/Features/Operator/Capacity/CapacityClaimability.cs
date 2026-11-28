@@ -11,7 +11,7 @@ namespace AgentStudio.Operator;
 internal static class CapacityClaimability
 {
     internal static int AdmissibleSlots(HostCapacityTargets targets, HostAdmissionFacts facts,
-        int roleSlots, List<CapacityBlock> blocks)
+        int roleSlots, List<CapacityBlock> blocks, List<string>? limits = null)
     {
         var initial = HostCapacityPolicy.Decide(targets, facts);
         if (!initial.Admitted && !blocks.Any(block => block.Reason == initial.Detail))
@@ -24,6 +24,13 @@ internal static class CapacityClaimability
         while (count < available && HostCapacityPolicy.Decide(targets,
             facts with { ActiveRuns = facts.ActiveRuns + count,
                 LastAdmissionAt = count == 0 ? facts.LastAdmissionAt : facts.Now }).Admitted) count++;
+        if (count < available && limits is not null)
+        {
+            var stop = HostCapacityPolicy.Decide(targets, facts with { ActiveRuns = facts.ActiveRuns + count, LastAdmissionAt = facts.Now });
+            limits.Add(stop.ReasonCode == AgentStudio.Shared.HostAdmissionReasons.RampLimited
+                ? $"{RunnerRampStrategies.Normalize(targets.RampStrategy)} ramp admits one run every {HostCapacityPolicy.RampInterval(targets.RampStrategy).TotalSeconds:0}s and limits admission to {count} of {available} free slots"
+                : $"{stop.Detail}; admission is limited to {count} of {available} free slots");
+        }
         return count;
     }
 
@@ -33,6 +40,14 @@ internal static class CapacityClaimability
         var blocks = host.AdmissionBlocks.ToList();
         if (host.AdmissibleSlots == 0 && blocks.Count == 0)
             blocks.Add(new("admission", "No coding slot is admissible now"));
+        blocks.AddRange(PreflightBlocks(host, repository, now));
+        return blocks;
+    }
+
+    /// <summary>Repository preflight holds of one project on one host; empty for a local host.</summary>
+    internal static IReadOnlyList<CapacityBlock> PreflightBlocks(CapacityHost host, RemoteProjectRepository? repository, DateTime now)
+    {
+        var blocks = new List<CapacityBlock>();
         if (!host.IsLocal)
         {
             if (repository is null)
