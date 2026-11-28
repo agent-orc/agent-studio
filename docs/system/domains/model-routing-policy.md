@@ -82,16 +82,27 @@ typed `execution-disabled` response; reading an existing job remains read-only.
 
 | Method and route | Request | Response |
 |---|---|---|
-| `POST /one-shot-jobs` | `cli` (`claude` or `codex`), `model`, `prompt`, optional `thinkingLevel`, `timeoutSeconds`, `maxOutputBytes`, and optional `images` entries with `base64` and `mediaType`. | `jobId`, `status` (`pending` or `waiting`), `capability`, and optional `error`. Waiting has an empty `jobId` and `error: "waiting for a host with <capability>"`. |
+| `POST /one-shot-jobs` | `cli` (`claude` or `codex`), `model`, `prompt`, optional `thinkingLevel`, `timeoutSeconds`, `maxOutputBytes`, optional `images` entries with `base64` and `mediaType`, and optional `claudeMaxOutputTokens`. | `jobId`, `status` (`pending` or `waiting`), `capability`, and optional `error`. Waiting has an empty `jobId` and `error: "waiting for a host with <capability>"`. |
 | `GET /one-shot-jobs/{jobId}` | No body. | `jobId`, `status` (`pending`, `claimed`, `completed`, or `failed`), `capability`, optional `text`, `error`, and `usage`. An unknown id returns HTTP 200 with an empty body; an expired job reads as `failed` with a timeout error. |
 | `POST /one-shot-jobs/claim` | `runnerId`, `instanceId`. | `jobId`, `claimToken`, and the original `request`, or an empty HTTP 200 response when no eligible job exists. Claim requires a fresh ready `model-acceptance:<cli>:<model>` capability for the runner's current instance. |
-| `POST /one-shot-jobs/complete` | `runnerId`, `instanceId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`). | JSON `true` when the active fenced claim from the runner's current instance is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
+| `POST /one-shot-jobs/complete` | `runnerId`, `instanceId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`, optional `reasoningTokens`). | JSON `true` when the active fenced claim from the runner's current instance is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
 
 The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
 1-300 seconds, an output cap outside 1-65,536 bytes, more than four images,
 unsupported image media types, or over 5.6 million combined base64 characters
-with HTTP 400. A runner identity mismatch or insufficient scope returns HTTP
-403. Pending jobs expire 30 seconds after their requested timeout. Claiming a
+with HTTP 400. A non-null `claudeMaxOutputTokens` must be an integer from 1
+through 32,768 and requires `cli: "claude"`. The Task Server rejects invalid
+values with HTTP 400, and the runner validates the field before launch. When
+set, the runner requests a single Claude turn and passes the cap as
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS`. An omitted or null field uses the default
+launch settings. The output byte cap applies independently.
+
+GET and completion use the same usage shape. Usage can accompany a failed job.
+`outputTokens` is the provider's reported output total. `reasoningTokens` is
+the reasoning count when the provider reports it and may be absent or null.
+
+A runner identity mismatch or insufficient scope returns HTTP 403. Pending
+jobs expire 30 seconds after their requested timeout. Claiming a
 job starts a fresh run deadline: the job expires after its requested timeout
 plus 30 seconds, and its claim token expires after the timeout plus 20 seconds.
 Studio starts its run deadline when it first observes the claim. The runner

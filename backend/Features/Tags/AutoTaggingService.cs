@@ -207,11 +207,26 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     public IReadOnlyList<string> Projects() => workspace.Projects();
     public bool Enabled(string project) => settings.Get(project).AutoTag;
     public IReadOnlySet<string> DueFailedKeys(string project, TagMaintenanceSnapshot snapshot,
-        IEnumerable<TagMaintenanceItem> items)
+        IEnumerable<TagMaintenanceItem> items, CancellationToken ct)
     {
         var context = ProposedGlossaryContext.Apply(project, snapshot);
         return budget.DueFailedKeys(project, items,
-            item => classifier.Prepare(project, item, context, "low", recordPrompt: false));
+            item => TryPrepare(project, item, context, "low", ct, recordPrompt: false));
+    }
+
+    private AutoTagAttempt? TryPrepare(string project, TagMaintenanceItem item, TagMaintenanceSnapshot snapshot,
+        string thinkingLevel, CancellationToken ct, bool recordPrompt = true)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            return classifier.Prepare(project, item, snapshot, thinkingLevel, recordPrompt);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger?.LogWarning(ex, "Auto-tag preparation failed for {Project} {Kind} {Id}", project, item.Kind, item.Id);
+            return null;
+        }
     }
     private string StatePath(string project)
     {
@@ -445,18 +460,39 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             var deferred = 0;
             var capped = 0;
             var cappedKeys = new List<string>();
-            async Task<TagClassificationPrediction?> ClassifyAsync(TagMaintenanceItem item, AutoTagAttempt attempt)
+            async Task<(TagClassificationPrediction? Prediction, string ThinkingLevel)> ClassifyAsync(
+                TagMaintenanceItem item, string thinkingLevel)
             {
+                var attempt = TryPrepare(project, item, snapshot, thinkingLevel, ct);
+                if (attempt != null && thinkingLevel == "low" && budget.HasQuarantinedEscalation(project, item, attempt))
+                {
+                    thinkingLevel = "high";
+                    attempt = TryPrepare(project, item, snapshot, thinkingLevel, ct);
+                }
+
                 AutoTagRoute? route = null;
-                AutoTagValidation validation;
+                var validation = new AutoTagValidation(AutoTagOutcome.TransientFailure);
+                var admitting = false;
                 try
                 {
                     budget.CheckBackoff(project, item, attempt);
-                    validation = await attempt.RunAsync(effective =>
+                    if (attempt != null)
                     {
-                        budget.Admit(project, item, attempt, effective);
-                        route = effective;
-                    }, ct);
+                        try
+                        {
+                            validation = await attempt.RunAsync(effective =>
+                            {
+                                admitting = true;
+                                budget.Admit(project, item, attempt, effective);
+                                admitting = false;
+                                route = effective;
+                            }, ct);
+                        }
+                        catch (Exception ex) when (!admitting && !ct.IsCancellationRequested)
+                        {
+                            logger?.LogWarning(ex, "Auto-tag dispatch failed for {Project} {Kind} {Id}", project, item.Kind, item.Id);
+                        }
+                    }
                 }
                 catch (AutoTagAdmissionDeniedException ex)
                 {
@@ -466,16 +502,11 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                         cappedKeys.Add(item.Kind + ":" + item.Id);
                     }
                     else deferred++;
-                    return null;
-                }
-                catch (Exception ex) when (route != null && !ct.IsCancellationRequested)
-                {
-                    logger?.LogWarning(ex, "Auto-tag provider call failed for {Project} {Kind} {Id}", project, item.Kind, item.Id);
-                    validation = new(AutoTagOutcome.TransientFailure);
+                    return (null, thinkingLevel);
                 }
                 if (route == null) ct.ThrowIfCancellationRequested();
 
-                var effectiveRoute = route ?? attempt.RequestedRoute;
+                var effectiveRoute = route ?? attempt?.RequestedRoute;
                 if (validation.Outcome != AutoTagOutcome.Accepted)
                 {
                     budget.Failed(project, item, attempt, effectiveRoute, validation);
@@ -483,12 +514,12 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 }
                 logger?.LogInformation(
                     "auto-tag-validation project={Project} kind={Kind} id={Id} input={Fingerprint} cli={Cli} model={Model} thinking={Thinking} outcome={Outcome} inputTokens={InputTokens} outputTokens={OutputTokens} cacheReadTokens={CacheReadTokens} cacheCreationTokens={CacheCreationTokens} reasoningTokens={ReasoningTokens}",
-                    project, item.Kind, item.Id, attempt.Fingerprint, effectiveRoute.Cli, effectiveRoute.Model,
-                    effectiveRoute.ThinkingLevel, validation.Outcome, validation.Usage?.InputTokens,
+                    project, item.Kind, item.Id, attempt?.Fingerprint ?? AutoTagCallPolicy.ContentFingerprint(item),
+                    effectiveRoute?.Cli, effectiveRoute?.Model, effectiveRoute?.ThinkingLevel, validation.Outcome, validation.Usage?.InputTokens,
                     validation.Usage?.OutputTokens, validation.Usage?.CacheReadTokens,
                     validation.Usage?.CacheCreationTokens, validation.Usage?.ReasoningTokens);
                 ct.ThrowIfCancellationRequested();
-                return validation.Prediction;
+                return (validation.Prediction, thinkingLevel);
             }
 
             foreach (var existing in eligible)
@@ -497,20 +528,12 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             foreach (var item in candidates)
             {
                 ct.ThrowIfCancellationRequested();
-                var thinkingLevel = tier;
-                var attempt = classifier.Prepare(project, item, snapshot, thinkingLevel);
-                if (thinkingLevel == "low" && budget.HasQuarantinedEscalation(project, item, attempt))
-                {
-                    thinkingLevel = "high";
-                    attempt = classifier.Prepare(project, item, snapshot, thinkingLevel);
-                }
-                var prediction = await ClassifyAsync(item, attempt);
+                var (prediction, thinkingLevel) = await ClassifyAsync(item, tier);
                 if (prediction == null) continue;
 
                 if (prediction.Confidence < AutoTaggingPolicy.ConfidenceThreshold && thinkingLevel == "low")
                 {
-                    thinkingLevel = "high";
-                    prediction = await ClassifyAsync(item, classifier.Prepare(project, item, snapshot, thinkingLevel));
+                    (prediction, thinkingLevel) = await ClassifyAsync(item, "high");
                     if (prediction == null) continue;
                 }
                 budget.Succeeded(project, item);
@@ -683,7 +706,7 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                     continue;
                 }
                 var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
-                var dueFailures = service.DueFailedKeys(project, snapshot, items);
+                var dueFailures = service.DueFailedKeys(project, snapshot, items, ct);
                 if (now.Except(previous).Any() || dueFailures.Count > 0)
                 {
                     var recorded = service.Read(project).Select(result => result.Kind + ":" + result.Id)

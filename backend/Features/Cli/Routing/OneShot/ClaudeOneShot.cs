@@ -101,7 +101,7 @@ public sealed class ClaudeOneShot : ICliOneShot
             // result and its callers apply their own fallback policy.
         }
 
-        var isolated = request.ClaudeMaxOutputTokens != null;
+        var isolated = networked || request.ClaudeMaxOutputTokens != null;
         using var workspace = isolated ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {

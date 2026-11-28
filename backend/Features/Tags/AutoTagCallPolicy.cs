@@ -100,7 +100,7 @@ public sealed class AutoTagCallBudget(IConfiguration configuration, TimeProvider
         && failure.RequestedRoute?.Model == attempt.RequestedRoute.Model;
 
     public IReadOnlySet<string> DueFailedKeys(string project, IEnumerable<TagMaintenanceItem> items,
-        Func<TagMaintenanceItem, AutoTagAttempt> prepare)
+        Func<TagMaintenanceItem, AutoTagAttempt?> prepare)
     {
         Dictionary<string, AutoTagFailure> failures;
         lock (_gate) failures = Read().Failures;
@@ -109,7 +109,7 @@ public sealed class AutoTagCallBudget(IConfiguration configuration, TimeProvider
             && (!Deterministic(failure.Outcome) && _clock.GetUtcNow() - failure.At >= AutoTagCallPolicy.FailureDelay
                 || (failure.RequestedRoute == null
                     ? failure.Fingerprint != AutoTagCallPolicy.ContentFingerprint(item)
-                    : !SameRequest(failure, prepare(item)))))
+                    : prepare(item) is { } attempt && !SameRequest(failure, attempt))))
             .Select(item => item.Kind + ":" + item.Id).ToHashSet(StringComparer.Ordinal);
     }
 
@@ -123,18 +123,18 @@ public sealed class AutoTagCallBudget(IConfiguration configuration, TimeProvider
         }
     }
 
-    public void CheckBackoff(string project, TagMaintenanceItem item, AutoTagAttempt attempt)
+    public void CheckBackoff(string project, TagMaintenanceItem item, AutoTagAttempt? attempt)
     {
         lock (_gate)
         {
             var failure = Read().Failures.GetValueOrDefault(Key(project, item));
             if (failure == null) return;
-            if (failure.Outcome == AutoTagOutcome.PromptLimit && SameRequest(failure, attempt))
+            if (failure.Outcome == AutoTagOutcome.PromptLimit && attempt != null && SameRequest(failure, attempt))
                 throw new AutoTagAdmissionDeniedException(AutoTagDenial.Quarantined);
             if (!Deterministic(failure.Outcome)
                 && (failure.RequestedRoute == null
                     ? failure.Fingerprint == AutoTagCallPolicy.ContentFingerprint(item)
-                    : SameRequest(failure, attempt))
+                    : attempt != null && SameRequest(failure, attempt))
                 && _clock.GetUtcNow() - failure.At < AutoTagCallPolicy.FailureDelay)
                 throw new AutoTagAdmissionDeniedException(AutoTagDenial.Backoff);
         }
@@ -158,18 +158,19 @@ public sealed class AutoTagCallBudget(IConfiguration configuration, TimeProvider
         }
     }
 
-    public void Failed(string project, TagMaintenanceItem item, AutoTagAttempt attempt,
-        AutoTagRoute effectiveRoute, AutoTagValidation validation)
+    public void Failed(string project, TagMaintenanceItem item, AutoTagAttempt? attempt,
+        AutoTagRoute? effectiveRoute, AutoTagValidation validation)
     {
         lock (_gate)
         {
             var state = Read();
             var key = Key(project, item);
-            var failure = new AutoTagFailure(attempt.Fingerprint, _clock.GetUtcNow(), validation.Outcome,
-                attempt.RequestedRoute, effectiveRoute, validation.Usage);
+            var fingerprint = attempt?.Fingerprint ?? AutoTagCallPolicy.ContentFingerprint(item);
+            var failure = new AutoTagFailure(fingerprint, _clock.GetUtcNow(), validation.Outcome,
+                attempt?.RequestedRoute, effectiveRoute, validation.Usage);
             state.Failures[key] = failure;
-            if (Deterministic(failure.Outcome))
-                state.Quarantines[QuarantineKey(key, attempt.Fingerprint, effectiveRoute)] = failure;
+            if (effectiveRoute != null && Deterministic(failure.Outcome))
+                state.Quarantines[QuarantineKey(key, fingerprint, effectiveRoute)] = failure;
             _unsavedFailure = state;
             Save(state);
             _unsavedFailure = null;

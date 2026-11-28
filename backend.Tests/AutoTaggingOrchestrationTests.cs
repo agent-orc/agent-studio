@@ -335,6 +335,59 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     }
 
     [Theory]
+    [InlineData("low", true)]
+    [InlineData("high", true)]
+    [InlineData("low", false)]
+    public async Task PreLaunchFailureIsRecordedAndBackfillContinues(string failingTier, bool duringPreparation)
+    {
+        AddCard("broken");
+        AddCard("healthy");
+        _classifier.Confidence["broken"] = 0.4;
+        _classifier.ThrowFor = (id, tier, preparing) =>
+            id == "broken" && tier == failingTier && preparing == duringPreparation;
+
+        var report = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+
+        Assert.Equal(1, report.Failed);
+        Assert.Equal("healthy", Assert.Single(report.Items).Id);
+        Assert.DoesNotContain(("broken", failingTier), _classifier.Calls);
+        var state = System.Text.Json.JsonSerializer.Deserialize<AutoTagCallState>(
+            File.ReadAllText(Path.Combine(_root, "auto-tag", "call-state.json")), TagMaintenancePolicy.Json);
+        var failure = Assert.Single(state!.Failures).Value;
+        Assert.Equal(AutoTagOutcome.TransientFailure, failure.Outcome);
+        Assert.Empty(state.Quarantines);
+        Assert.Equal(_classifier.Calls.Count, state.Calls.Count);
+
+        _classifier.ThrowFor = null;
+        var restarted = NewService();
+        var retry = await restarted.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(1, retry.Deferred);
+        Assert.DoesNotContain(("broken", failingTier), _classifier.Calls);
+
+        _clock.Advance(TimeSpan.FromDays(1));
+        var recovered = await restarted.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal("broken", Assert.Single(recovered.Items).Id);
+    }
+
+    [Fact]
+    public async Task FailedWakePreviewDoesNotKeepFreshItemsFromBeingTagged()
+    {
+        var worker = NewWorker();
+        await worker.ScanOnceAsync(CancellationToken.None);
+        AddCard("quarantined");
+        _classifier.Failure = AutoTagOutcome.OutputTokenLimit;
+        await worker.ScanOnceAsync(CancellationToken.None);
+        _classifier.Failure = null;
+        _classifier.ThrowFor = (id, _, preparing) => id == "quarantined" && preparing;
+        AddCard("fresh");
+
+        await worker.ScanOnceAsync(CancellationToken.None);
+
+        Assert.Equal("fresh", Assert.Single(_service.Read(Project)).Id);
+        Assert.Single(_classifier.Calls.Where(call => call.Id == "quarantined"));
+    }
+
+    [Theory]
     [InlineData(AutoTagOutcome.OutputTokenLimit)]
     [InlineData(AutoTagOutcome.OutputSizeLimit)]
     [InlineData(AutoTagOutcome.InvalidClassification)]
@@ -889,13 +942,18 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         public AutoTagOutcome? Failure { get; set; }
         public AutoTagRoute Route { get; set; } = new("claude", "haiku");
         public AutoTagRoute? Fallback { get; set; }
+        public Func<string, string, bool, bool>? ThrowFor { get; set; }
 
         public AutoTagAttempt Prepare(string project, TagMaintenanceItem item, TagMaintenanceSnapshot snapshot,
             string thinkingLevel, bool recordPrompt = true)
         {
+            if (ThrowFor?.Invoke(item.Id, thinkingLevel, true) == true)
+                throw new InvalidOperationException("Classification preparation failed.");
             var route = Route with { ThinkingLevel = thinkingLevel };
             return new(AutoTagCallPolicy.ContentFingerprint(item), route, (beforeLaunch, _) =>
             {
+                if (ThrowFor?.Invoke(item.Id, thinkingLevel, false) == true)
+                    throw new InvalidOperationException("Classification dispatch failed before admission.");
                 beforeLaunch(Fallback ?? route);
                 Calls.Add((item.Id, thinkingLevel));
                 if (Fail || Failure != null)
