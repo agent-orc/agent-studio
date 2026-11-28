@@ -123,11 +123,14 @@ public sealed class RemoteConceptReviewTests : IDisposable
     [InlineData("ReviewMaterialUnavailable", "Cannot read the linked file.", "docs/topic/cards.md")]
     [InlineData("RemoteAspectVerdict", "The published Dossier snapshot is incomplete.", "Full index.html")]
     [InlineData("RemoteAspectVerdict", "The supplied diff is insufficient for a full concept-fit review.", "Full Dossier content")]
+    [InlineData("RemoteAspectVerdict", "I could not read the Dossier.", "docs/topic/index.html")]
     [InlineData("RemoteAspectVerdict", "The files could not be reviewed.", "Published Dossier files are marked missing, and their diffs are truncated.")]
     [InlineData("RemoteAspectVerdict", "Required Dossier content and the complete card sequence cannot be verified.", "Complete published index.html and workbench.json")]
     public void Missing_review_material_reaches_infrastructure_settlement(string classification, string summary, string missing)
     {
         var plan = BuildPlan(repositoryPath: NodeRepository());
+        if (classification != ConceptRemoteReviewPolicy.MaterialUnavailable)
+            plan = WithLegacyConceptPrompt(plan);
         var report = EmptyPassingReport() with
         {
             Verdicts = [new("concept-fit", "concerns", classification, summary, "diff", missing)],
@@ -140,6 +143,34 @@ public sealed class RemoteConceptReviewTests : IDisposable
         Assert.Contains(missing, settled.Summary);
         Assert.Empty(settled.Verdicts);
     }
+
+    // Frozen stock prompt from the snapshot-only concept review.
+    private const string LegacyConceptPrompt = "End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.";
+
+    [Theory]
+    [InlineData("The Dossier specifies no retry when review material is unavailable.", false, false)]
+    [InlineData("The Dossier specifies no retry when review material is unavailable.", true, false)]
+    [InlineData("The published Dossier snapshot is incomplete.", false, false)]
+    [InlineData("The published Dossier snapshot is incomplete.", true, true)]
+    public void Content_concern_survives_settlement(string summary, bool legacyPlan, bool checkoutVerdict)
+    {
+        var plan = BuildPlan(repositoryPath: NodeRepository());
+        if (legacyPlan)
+            plan = WithLegacyConceptPrompt(plan);
+        var finding = new ReviewVerdictDto("concept-fit", "concerns", "RemoteAspectVerdict",
+            summary, "docs/topic/index.html, section D3", "Complete index.html retry requirements in section D3.")
+            { UsesDossierCheckout = checkoutVerdict };
+        var report = EmptyPassingReport() with { Verdicts = [finding] };
+
+        var settled = ConceptRemoteReviewPolicy.Enforce(plan, plan.BriefSha256, plan.BriefSha256, report);
+
+        Assert.Equal(report.Outcome, settled.Outcome);
+        Assert.Equal(finding, Assert.Single(settled.Verdicts));
+    }
+
+    private static ReviewPlanDto WithLegacyConceptPrompt(ReviewPlanDto plan)
+        => plan with { Commands = plan.Commands.Select(command => command.Aspect == "concept-fit"
+            ? command with { Prompt = LegacyConceptPrompt } : command).ToArray() };
 
     [Theory]
     [InlineData("Decision D3 has no recommendation.")]

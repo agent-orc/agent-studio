@@ -118,7 +118,7 @@ public static class CompletionContentEvidence
                         : Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
                 // Historic settlements can still contain the material-access concern.
                 if (required == "concept-fit" && (report?.FailureClassification == Contract.ConceptRemoteReviewPolicy.MaterialUnavailable
-                    || content is not null && Contract.ConceptRemoteReviewPolicy.IsMaterialUnavailable(content)))
+                    || content is not null && Contract.ConceptRemoteReviewPolicy.IsMaterialUnavailable(content, review?.Subject.Plan)))
                     return facts with
                     {
                         ContentStatus = null,

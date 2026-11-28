@@ -452,9 +452,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Concept_fit_reads_large_delivery_files_or_reports_infrastructure(bool canRead)
+    [InlineData(true, "block")]
+    [InlineData(true, "concerns")]
+    [InlineData(false, "concerns")]
+    public async Task Concept_fit_reads_large_delivery_files_or_reports_infrastructure(bool canRead, string status)
     {
         if (OperatingSystem.IsWindows()) return;
         const string branch = "task/concept-mismatch";
@@ -475,6 +476,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var fakeCodex = Path.Combine(_root, "fake-concept-review.sh");
         // A read failure uses the same marker a live review CLI returns when its sandbox cannot open a file.
         var denied = canRead ? "" : "Read denied";
+        var finding = status == "block" ? "Implementation cards contradict the brief."
+            : "The Dossier specifies no retry when review material is unavailable.";
         await File.WriteAllTextAsync(fakeCodex, $$$"""
             #!/bin/sh
             cat > '{{{capturedPrompt}}}'
@@ -485,7 +488,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                grep -q "href='cards.md'" docs/concept/index.html &&
                grep -q 'cards.md' docs/concept/workbench.json &&
                grep -q 'Combine every slice into one card' docs/concept/cards.md; then
-              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"The Dossier contradicts the brief.\n[[ASPECT_VERDICT: status=block; summary=Implementation cards contradict the brief.; evidence_checked=docs/concept/workbench.json and prompt.md; missing=one card per independently reviewable slice]]"}}'
+              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"The Dossier contradicts the brief.\n[[ASPECT_VERDICT: status={{{status}}}; summary={{{finding}}}; evidence_checked=docs/concept/workbench.json and prompt.md; missing=one card per independently reviewable slice]]"}}'
             else
               printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=pass; summary=No contradiction found.]]"}}'
             fi
@@ -518,8 +521,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         }
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
-        Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
+        Assert.Equal(status == "block" ? "ProductFailure" : "Pass", evidence.Outcome);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal(status, verdict.Status);
+        Assert.Equal(finding, verdict.Summary);
+        Assert.True(verdict.UsesDossierCheckout);
         var prompt = await File.ReadAllTextAsync(capturedPrompt);
         Assert.DoesNotContain(cardText, prompt);
         Assert.DoesNotContain(largeIndex, prompt);

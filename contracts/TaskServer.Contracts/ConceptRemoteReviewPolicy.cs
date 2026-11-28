@@ -18,29 +18,40 @@ public static class ConceptRemoteReviewPolicy
         + "If review material cannot be read, emit the aspect sentinel with status=concerns and classification="
         + MaterialUnavailable + ". Name the inaccessible paths and read failure in missing.";
 
-    // Older prompts asked for an ordinary concern when the input was incomplete.
-    // Recognize evidence-access statements, leaving findings about missing sections alone.
+    // Only the old stock prompt instructed the reviewer to judge the snapshot without tools.
+    private const string LegacyPromptEnding = "End with `[[TASK_DONE]]` on its own line. Do not edit files or run tools.";
+
     private static readonly Regex IncompleteInput = new(
-        @"\b(?:supplied diff|(?:published |Dossier )snapshot|review (?:input|material)|Dossier evidence|unchanged Dossier sections)"
-        + @" (?:is |are |was |were )?(?:unavailable|incomplete|missing|truncated|insufficient)\b"
-        + @"|\bDossier files (?:are |were )?marked missing\b|\bincomplete Dossier evidence\b"
-        + @"|\bDossier content needed to judge completeness is unavailable\b"
-        + @"|\b(?:I|we|the reviewer) (?:could not|cannot) (?:read|access|see) (?:the |the full |the complete )?(?:Dossier|index\.html|workbench\.json)\b",
+        @"(?:^|, but )(?:the )?(?:supplied diff (?:is|was) insufficient for (?:a full |the )?concept-fit review"
+        + @"|(?:published Dossier snapshot|unchanged Dossier sections) (?:is|are|was|were) (?:incomplete|unavailable)"
+        + @"|incomplete Dossier evidence prevents a full concept-fit review"
+        + @"|Dossier content needed to judge completeness is unavailable"
+        + @"|required Dossier (?:content|sections) and the (?:complete|full) (?:implementation-)?card sequence cannot be verified"
+        + @"|(?:I|we|the reviewer) (?:could not|cannot) (?:read|access|see) (?:the |the full |the complete )?(?:Dossier|index\.html|workbench\.json))\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
-    public static bool IsMaterialUnavailable(ReviewVerdictDto verdict)
+    public static bool IsMaterialUnavailable(ReviewVerdictDto verdict, ReviewPlanDto? plan = null)
     {
-        if (!string.Equals(verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(verdict.Status, "concerns", StringComparison.OrdinalIgnoreCase))
             return false;
         if (string.Equals(verdict.Classification, MaterialUnavailable, StringComparison.OrdinalIgnoreCase))
             return true;
-        if (!string.Equals(verdict.Status, "concerns", StringComparison.OrdinalIgnoreCase))
+        if (verdict.UsesDossierCheckout || plan?.Commands.Any(command =>
+                string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                && command.Prompt?.TrimEnd().EndsWith(LegacyPromptEnding, StringComparison.Ordinal) == true) != true)
             return false;
-        var summary = verdict.Summary ?? string.Empty;
-        return IncompleteInput.IsMatch(summary) || IncompleteInput.IsMatch(verdict.Missing ?? "")
-            || (summary.Contains("cannot be verified", StringComparison.OrdinalIgnoreCase)
-                && verdict.Missing?.StartsWith("Complete ", StringComparison.OrdinalIgnoreCase) == true
-                && verdict.Missing.Contains("index.html", StringComparison.OrdinalIgnoreCase));
+        var missing = verdict.Missing?.Trim();
+        if (string.Equals(missing?.TrimEnd('.'), "Published Dossier files are marked missing, and their diffs are truncated",
+                StringComparison.OrdinalIgnoreCase))
+            return true;
+        return IncompleteInput.IsMatch(verdict.Summary?.Trim() ?? "") &&
+            (string.IsNullOrEmpty(missing)
+             || missing.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("Full ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("Complete ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("The complete ", StringComparison.OrdinalIgnoreCase)
+             || missing.StartsWith("The published ", StringComparison.OrdinalIgnoreCase));
     }
 
     public static string MaterialFailureSummary(ReviewVerdictDto verdict)
@@ -86,13 +97,13 @@ public static class ConceptRemoteReviewPolicy
             string.Equals(item.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase));
         if (verdict is null)
             return Fail(report, "The concept-fit aspect did not run or supplied no verdict; build and lint alone cannot pass this concept delivery.");
-        if (IsMaterialUnavailable(verdict))
+        if (IsMaterialUnavailable(verdict, plan))
             return report with
             {
                 Outcome = "ReviewInfra",
                 FailureClassification = MaterialUnavailable,
                 Summary = MaterialFailureSummary(verdict),
-                Verdicts = report.Verdicts.Where(item => !IsMaterialUnavailable(item)).ToArray(),
+                Verdicts = report.Verdicts.Where(item => !IsMaterialUnavailable(item, plan)).ToArray(),
             };
         if (ReviewGradingPolicy.IsBlockingToken(verdict.Status)
             && string.Equals(report.Outcome, "Pass", StringComparison.Ordinal))

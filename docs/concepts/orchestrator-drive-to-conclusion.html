@@ -3629,6 +3629,15 @@
           <td>The operator accepted the seven by override. Concept-fit now reads the verified delivery checkout.
             A material-access failure reaches <code>ReviewInfra / ReviewMaterialUnavailable</code> for the existing retry or escalation.</td>
         </tr>
+        <tr id="case-concept-review-content-finding">
+          <td>2026-11-28</td>
+          <td><code>AGT-4271</code><br><span class="small">concept-review-content-finding</span></td>
+          <td>Code review reproduced a runner returning <code>ReviewInfra</code> for a finding that a Dossier lacked
+            a retry policy for unavailable inputs. The review CLI produced a verdict.</td>
+          <td>The legacy access-failure text matcher also ran on verdicts from checkout reviews.</td>
+          <td>Checkout reviews now use the explicit access-failure classification. The reproduced concern survives
+            execution and settlement for normal content admission.</td>
+        </tr>
       </tbody>
     </table>
 

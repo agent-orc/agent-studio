@@ -4246,7 +4246,10 @@ public sealed class RemoteReviewWorkspace
                     ReviewCommandVerdictPolicy.AspectMarkerClassification),
                 summary,
                 marker.EvidenceChecked,
-                marker.Missing);
+                marker.Missing)
+            {
+                UsesDossierCheckout = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase),
+            };
         }
         return new ReviewVerdictDto(
             command.Aspect,
