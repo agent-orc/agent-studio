@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -210,6 +210,43 @@ project definition. Generic projects without a map keep their conservative
 full-inventory behavior. The generated per-card project map remains available
 for those projects. `ProjectTestSelectionGuardTests` checks every tracked
 top-level source folder and every declared routine/build/lint assignment.
+
+Fast coding reviews can additionally opt into fixed .NET checks through
+`.agent-studio/review-base.json`. This repository-owned array names an existing
+routine `suite`, exact-file or directory-prefix `paths` (`*` means any .NET
+input), and a `category` trait value or `classes` list. Selector names accept
+only identifiers and dots, never filter operators or shell text. Each suite
+must also be present in `commands.test` as a single filterable `dotnet test`
+invocation. Invalid opt-in inventory refuses planning. No executable command
+is read from this file, and projects without it keep their existing behavior.
+
+The Studio inventory selects `Category=ReviewBase` on any .NET input: durable
+task mutations, every board mutation theory row, deferred actionable-concern
+settlement, and every monolith engine-settlement theory row. Task Server,
+contracts, runner, engine and decision changes also select the separate
+`StandaloneReviewLoopCutoverTests` class through `orchestrator-engine-routine`.
+The existing architecture/Guard selection includes both request-delegate
+generator profiles. Fixed checks and guards share one invocation per declared
+test command, retaining its original exclusions such as `MachineBound`.
+Other selected class invocations exclude only the checks covered by the same
+declared invocation, matched by command without its filter, working directory
+and shell. A selector in one project never excludes cases from another project.
+The retained filter must also match the replacement's base filter or use the
+selector's simple parenthesized conjunction to narrow that filter. Different
+declared filters retain separate replacement coverage, independent of command
+order. Broader filters, other filter shapes and commands without a matching
+replacement keep their selected cases, even when already marked as guard steps.
+
+This union runs after fast review fallback, including an unmapped path or an
+overly broad type-reference selection, on both the shared impact map and the
+legacy generated-map path. Whole .NET routine invocations remain post-merge
+obligations in these opted-in fast reviews. The selection audit records the
+commands and their reasons without treating selection as execution: attempted
+commands and tests must come from execution receipts, and selected commands
+without receipts remain missing evidence. A narrowed check never claims a
+complete routine suite. Docs-only and report-only reviews, balanced and strict
+strategies, batch gates, full and nightly verification keep their existing
+semantics. The opt-in file does not activate the shared `testSelection` map.
 
 Compile-only integration under fast, balanced or exact-review reuse still
 runs the selected builds; its receipt explicitly omits tests and lint. Docs-only
@@ -900,7 +937,12 @@ error lines. The runner repeats that lint command once at the same tip. Only
 tests reported failing again receive a confirmed failure. A failure first seen
 on the repeat carries its own name and diagnostic. An explicit TAP pass clears
 an initial failure when the point can be matched across attempts. Nested tests
-include their parent names. For duplicate names, the receipt uses source
+include their parent names. When a suite summarizes failed children, the receipt
+records the children's results. A suite's own failure, such as a failing
+teardown hook, gets a separate verdict even when TAP omits `failureType`.
+In that case, a failed suite with failed children counts as a summary when its
+error is absent or reports only the number of failed subtests.
+For duplicate names, the receipt uses source
 locations where they identify individual tests. Where TAP leaves the match
 ambiguous, the receipt keeps the observed failures and diagnostics by attempt.
 A skipped, TODO or absent test stays unresolved even when the repeat exits

@@ -49,8 +49,8 @@ export class CredentialInventoryComponent {
     (this.host() === 'all' || item.hostId === this.host()) &&
     (this.kind() === 'all' || item.kind === this.kind()) &&
     (this.state() === 'all' || item.state === this.state())));
-  readonly attention = computed(() => this.service.inventory()?.items.filter(item =>
-    item.state === 'missing' || item.state === 'expiring' || item.state === 'unexpected').length ?? 0);
+  readonly attention = computed(() => this.items().filter(item =>
+    item.state === 'missing' || item.state === 'expiring' || item.state === 'unexpected').length);
 
   readonly hasAttempts = computed(() => this.service.inventory()?.items.some(item => item.binding) ?? false);
 
@@ -61,9 +61,10 @@ export class CredentialInventoryComponent {
   }
 
   /** Where this credential is managed. */
-  action(item: CredentialInventoryItem): { section: 'github' | 'secrets' | 'task-server' | 'remote-hosts'; label: string } {
+  action(item: CredentialInventoryItem): { section: 'github' | 'secrets' | 'access' | 'task-server' | 'remote-hosts'; label: string } {
     if (item.kind.startsWith('github_app') || item.kind === 'host_key') return { section: 'github', label: 'Open GitHub' };
-    if (item.kind === 'secret') return { section: 'secrets', label: 'Open Secrets' };
+    if (item.kind === 'service_account_token' || item.kind === 'operator_session') return { section: 'access', label: 'Open Access' };
+    if (item.kind === 'secret' || item.kind === 'external_store_token') return { section: 'secrets', label: 'Open Secrets' };
     return item.category === 'service' || item.category === 'human'
       ? { section: 'task-server', label: 'Open Task Server actions' }
       : { section: 'remote-hosts', label: 'Open Execution Hosts' };

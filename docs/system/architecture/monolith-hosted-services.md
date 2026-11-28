@@ -83,6 +83,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert with the card and its manual redrive when an effect is missing after its deadline (apply deadline while the applier runs, effect window after completion). |
 | LinkSupervisor | always | infra | Authority host |
 | GitHubAppHostCredentialService | !PD | infra | Authority host |
+| CredentialLifecycleHostedService | always, idle in PD | report | Authority host. Reports metadata-only credential expiry and manual rotation deadlines to the Owner feed at 14 and 3 days (WI-1); no credential rotation or lane transition. |
 | QualityStudioRevokeOutbox | always | infra | Authority host. Delivers persisted Quality Studio session revocations with bounded retries; makes no task transition decision. |
 | QualityChangeReviewOutbox | always | infra | Authority host. Delivers persisted Review Plane verdicts to Quality Studio with a seven-day retry bound; makes no task transition decision. |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |

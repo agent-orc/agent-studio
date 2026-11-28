@@ -10,6 +10,7 @@ public sealed partial class TaskServerStore
         // Read only named metadata columns. Verifiers, session tokens and code hashes
         // never enter this projection, including for an owner session.
         var now = UtcNow;
+        var installation = await GetInstallationIdentityAsync(ct);
         var view = await GetCredentialViewAsync(role, ct);
         var records = await ListCredentialRegistryAsync(ct);
         var rows = view.Rows.ToDictionary(row => (row.InstallationId, row.HostId, row.CredentialId));
@@ -35,13 +36,20 @@ public sealed partial class TaskServerStore
                 { true => "write", false => "read", null => "unknown" } : null,
                 record.ExpiresAt, record.LastRealSuccessAt,
                 state, false, row.Due.ThresholdDays is { } threshold
-                    ? $"{threshold}-day {row.Due.Subject} warning" : row.StatusDetail ?? row.Status, []));
+                    ? $"{threshold}-day {row.Due.Subject} warning" : row.StatusDetail ?? row.Status, [],
+                Holder: record.Owner, Target: repository ?? record.Provider,
+                CreatedAt: record.CreatedAt, RotationIntervalDays: ReportedRotationInterval(record), RotationDueAt: record.RotationDueAt,
+                RotationBasisAt: record.LastRenewedAt ?? record.CreatedAt ?? record.DiscoveredAt,
+                Refreshable: record.Kind is "claude_native_login" or "codex_chatgpt_login",
+                Active: record.Locator.EffectiveSource != "absent",
+                RotationPlanSource: record.RotationDueAt is null ? "inventory-default"
+                    : ReportedRotationInterval(record) is not null ? "reported" : "reported-due"));
         }
 
         await using var connection = await OpenReadyAsync(ct);
         await using (var command = Command(connection, """
             SELECT p.principal_id, p.kind, p.scopes_json, p.runner_id, p.last_seen_at,
-                   p.revoked_at, c.credential_id, c.expires_at, c.revoked_at
+                   p.revoked_at, c.credential_id, c.expires_at, c.revoked_at, c.created_at
               FROM principals p JOIN principal_credentials c ON c.principal_id = p.principal_id
              ORDER BY p.principal_id, c.created_at;
             """))
@@ -60,11 +68,12 @@ public sealed partial class TaskServerStore
                 revoked ? "Revoked"
                     : expires is null && reader.GetString(1) == TaskServerPrincipalKinds.Runner
                         ? RunnerCredentialWithoutExpiryNotice
-                        : ExpiryDetail(expires, now, "Task Server principal"), []));
+                        : ExpiryDetail(expires, now, "Task Server principal"), [],
+                Holder: reader.GetString(0), Target: "Task Server", CreatedAt: Parse(reader.GetString(9)), Active: !revoked));
         }
         await using (var command = Command(connection, """
             SELECT e.enrolment_id, e.principal_id, e.kind, e.runner_id, e.expires_at,
-                   e.consumed_at, e.revoked_at FROM service_enrolments e ORDER BY e.created_at;
+                   e.consumed_at, e.revoked_at, e.created_at FROM service_enrolments e ORDER BY e.created_at;
             """))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         while (await reader.ReadAsync(ct))
@@ -78,10 +87,11 @@ public sealed partial class TaskServerStore
                 consumed ? Parse(reader.GetString(5)) : null,
                 consumed || revoked ? "unused" : expires <= now.AddDays(14) ? "expiring" : "ok",
                 false, consumed ? "Consumed" : revoked ? "Revoked"
-                    : ExpiryDetail(expires, now, "Pending enrolment"), []));
+                    : ExpiryDetail(expires, now, "Pending enrolment"), [],
+                Target: "Task Server enrolment", CreatedAt: Parse(reader.GetString(7)), Active: !consumed && !revoked));
         }
         await using (var command = Command(connection, """
-            SELECT u.id, u.display_name, u.role, u.disabled, MAX(s.created_at)
+            SELECT u.id, u.display_name, u.role, u.disabled, MAX(s.created_at), u.created_at
               FROM studio_users u LEFT JOIN studio_sessions s ON s.user_id = u.id
              GROUP BY u.id ORDER BY u.display_name;
             """))
@@ -91,7 +101,8 @@ public sealed partial class TaskServerStore
                 reader.GetString(1), [reader.GetString(2)], null, null, null,
                 reader.IsDBNull(4) ? null : Parse(reader.GetString(4)),
                 reader.GetInt32(3) != 0 || reader.IsDBNull(4) ? "unused" : "ok", false,
-                reader.GetInt32(3) != 0 ? "Disabled" : "Studio account", []));
+                reader.GetInt32(3) != 0 ? "Disabled" : "Studio account", [],
+                Holder: reader.GetString(0), Target: "Studio", CreatedAt: Parse(reader.GetString(5)), Active: reader.GetInt32(3) == 0));
 
         var hosts = new Dictionary<string, (HashSet<string> Roles, HashSet<string> Ready)>();
         await using (var command = Command(connection, """
@@ -175,9 +186,22 @@ public sealed partial class TaskServerStore
                 reader.IsDBNull(9) ? null : Parse(reader.GetString(9)), state, false,
                 revoked ? "Attempt credential settled" : leaseStale ? "Lease is stale" : "Attempt bound",
                 [reader.GetString(15)], reader.GetString(7), binding, reader.GetString(8),
-                $"{revocation} · file {deletion}"));
+                $"{revocation} · file {deletion}",
+                Target: repository ?? "repository", CreatedAt: reader.IsDBNull(9) ? null : Parse(reader.GetString(9)),
+                Active: !revoked && !leaseStale && !reader.IsDBNull(9)));
+
         }
-        return new(now, derived);
+        var snapshots = await ListRunnerCapabilitySnapshotsAsync(ct);
+        var merged = CredentialLifecyclePolicy.MergeProviderLogins(derived, CredentialLifecyclePolicy.ProviderLogins(snapshots));
+        return new(now, merged.Select(item => CredentialLifecyclePolicy.Complete(item, installation.CreatedAt)).ToArray());
+    }
+
+    private static int? ReportedRotationInterval(CredentialRegistryRecordDto record)
+    {
+        if (record.RotationDueAt is not { } due ||
+            (record.LastRenewedAt ?? record.CreatedAt ?? record.DiscoveredAt) is not { } basis) return null;
+        var days = (due - basis).TotalDays;
+        return days is >= 1 and <= 3650 && days == Math.Truncate(days) ? (int)days : null;
     }
 
     /// <summary>SM-9 migration notice: an existing runner credential keeps working without expiry.</summary>

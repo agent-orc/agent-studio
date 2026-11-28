@@ -135,6 +135,7 @@ public sealed class BoardReadMutationTests : IClassFixture<BoardReadMutationTest
     [InlineData("reorder")]
     [InlineData("create")]
     [InlineData("change-project")]
+    [Trait("Category", "ReviewBase")]
     public async Task Mutations_replace_cached_board_bytes_and_validator(string kind)
     {
         using var client = _host.Factory.CreateClient();

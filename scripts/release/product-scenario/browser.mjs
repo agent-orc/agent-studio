@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../frontend');
 const VIEWPORT = { width: 1440, height: 900 };
 const NAVIGATION_TIMEOUT_MS = 60_000;
-const ELEMENT_TIMEOUT_MS = 30_000;
+const ELEMENT_TIMEOUT_MS = 60_000;
 // Studio keeps event streams open, so the network may never go idle; settle briefly instead.
 const SETTLE_MS = 10_000;
 
@@ -86,10 +86,21 @@ export async function openBrowser({ studioUrl, reportDir, chromium }) {
         await field.fill(password);
         const answered = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/invite/accept'),
           { timeout: NAVIGATION_TIMEOUT_MS });
-        await gate.getByRole('button', { name: 'Join project', exact: true }).click();
-        const answer = await answered;
+        const [answer] = await Promise.all([answered, gate.getByRole('button', { name: 'Accept invitation', exact: true }).click()]);
         if (!answer.ok()) throw new Error(`Studio refused the one-time sign-in link (${answer.status()}).`);
+        const skip = page.getByTestId('factor-skip');
+        if (await skip.waitFor({ timeout: 3000 }).then(() => true, () => false)) await skip.click();
         await settle();
+      },
+
+      async useSession(session) {
+        const cookie = session.sessionCookie();
+        if (!cookie) throw new Error('A signed-in Studio session is required.');
+        await context.addCookies([{ ...cookie, url: studio.origin, secure: studio.protocol === 'https:' }]);
+      },
+
+      async buttonCrop(name) {
+        return page.getByRole('button', { name, exact: true }).screenshot();
       },
 
       /** Opens a Studio hash route such as /#/projects/PROJ-012/board. */
@@ -158,8 +169,7 @@ export async function openBrowser({ studioUrl, reportDir, chromium }) {
       async captureRequest(method, suffix, action) {
         const answered = page.waitForResponse(response => response.request().method() === method
           && new URL(response.url()).pathname.endsWith(suffix), { timeout: NAVIGATION_TIMEOUT_MS });
-        await action();
-        const response = await answered;
+        const [response] = await Promise.all([answered, action()]);
         const body = response.request().postDataBuffer()?.toString('latin1') ?? '';
         return { status: response.status(), body, answer: (await response.text().catch(() => '')).slice(0, 2000) };
       },

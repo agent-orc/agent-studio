@@ -15,6 +15,36 @@ and the binding lease contract in
 the Runner API surface added by RM-3 (fenced lease) and RM-4 (log + artifact
 upload).
 
+## Credential inventory and rotation plans (WI-1)
+
+After updating Studio and Task Server, open Settings > Credentials. Check the
+holder and target of each host's provider login, repository deploy key, PAT
+fallback and service principal. Host registry observations supply custody
+metadata only; never paste credentials or token prefixes into metadata fields.
+The Studio inventory also includes deploy secrets and external-store tokens.
+
+Every entry is marked `short-lived` or `long-lived`. A refreshable CLI login is
+long-lived even if its current access token expires in minutes. A principal
+bootstrapped from a file without expiry remains allowed and shows `none`.
+Unknown creation and real-use dates stay unknown; a probe is not a real use.
+
+Record `rotationDueAt` and the known renewal date through the existing
+Owner-only credential registry metadata API. The inventory retains their
+whole-day interval. When an interval cannot be established, Studio supplies a
+labelled 90-day manual reminder plan. Dates without issuance metadata are anchored to the first
+persisted inventory observation, rather than sliding forward on refresh.
+Task Server's direct inventory uses installation creation as its conservative
+fallback for unknown source dates. Studio retains its own first observations.
+
+When the Owner feed raises a 14-day or 3-day expiry or rotation warning, rotate
+at the target using its existing runbook, replace the host credential, verify
+access and let the host report its new generation and dates. For a bootstrap
+principal, replace its configured secret file through the established bootstrap
+procedure. Updating inventory metadata alone does not rotate a credential.
+Stored fallbacks remain allowed for targets without federation and always
+retain their long-lived mark (WI-D6 option A). Federation and automatic target
+rotation are outside WI-1.
+
 ## Subscription quota reporting
 
 Deploy the updated Task Server and Studio before updating coding and review
@@ -907,27 +937,33 @@ step, which installs and enables the privileged work launcher.
 
 ```bash
 git clone <origin> agent-taskboard && cd agent-taskboard
-# Run this from the trusted operator checkout before every promotion.
-sudo ./scripts/harden-agent-runner-host.sh --apply
-release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
-staging_root="$(mktemp -d)"
-dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
-printf '%s\n' "$release_id" >"$staging_root/release-id"
+(
+  set -euo pipefail
+  # Run this from the trusted operator checkout before every promotion.
+  sudo ./scripts/harden-agent-runner-host.sh --apply
+  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
+  staging_root="$(mktemp -d)"
+  dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
+  printf '%s\n' "$release_id" >"$staging_root/release-id"
 
-# Approve the complete trusted publisher output, before copying to incoming.
-release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")"
-approval_file="$(mktemp)"
-printf '%s\n' "$release_digest" >"$approval_file"
-sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals
-sudo install -o root -g root -m 0644 "$approval_file" \
-  "/etc/agent-host/release-approvals/$release_id.sha256"
+  # Approve the complete trusted publisher output, before copying to incoming.
+  release_digest="$(sudo /usr/local/sbin/agent-runner-deploy --release-digest "$staging_root")"
+  approval_file="$(mktemp)"
+  printf '%s\n' "$release_digest" >"$approval_file"
+  sudo install -d -o root -g root -m 0755 /etc/agent-host /etc/agent-host/release-approvals
+  sudo install -o root -g root -m 0644 "$approval_file" \
+    "/etc/agent-host/release-approvals/$release_id.sha256"
 
-incoming_root=/var/lib/agent-runner/deploy/incoming
-sudo test -z "$(sudo find "$incoming_root" -mindepth 1 -print -quit)"
-# Read trusted output as the operator; write the upload as the service user.
-tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf -
-sudo /usr/local/sbin/agent-runner-deploy
+  incoming_root=/var/lib/agent-runner/deploy/incoming
+  sudo test -z "$(sudo find "$incoming_root" -mindepth 1 -print -quit)"
+  # Read trusted output as the operator; write the upload as the service user.
+  tar -C "$staging_root" -cf - . | sudo -u agent tar -C "$incoming_root" -xf -
+  sudo /usr/local/sbin/agent-runner-deploy
+)
 ```
+
+Run this block together. The subshell stops if publishing or digest generation
+fails, before an approval can be installed or a release promoted.
 
 The approval is one lowercase SHA-256 digest line, in
 `/etc/agent-host/release-approvals/<release-id>.sha256`, owned by `root:root`

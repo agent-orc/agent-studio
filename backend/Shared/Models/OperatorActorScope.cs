@@ -22,6 +22,7 @@ public sealed record OperatorActor(string OperatorAgentId, string SessionId, str
 
     /// <summary>The user id of the Owner who approved <see cref="ApprovalId"/>.</summary>
     public string? ApprovedBy { get; init; }
+    public string? BatchId { get; init; }
 }
 
 /// <summary>
@@ -58,6 +59,7 @@ public static class OperatorActorScope
         if (!string.IsNullOrWhiteSpace(evt.Actor) && evt.Actor != actor.Actor && !TimelineActors.IsHuman(evt.Actor)
             && !TimelineActors.IsOperatorAgent(evt.Actor) && !TimelineActors.IsPersona(evt.Actor))
             (details ??= [])["reportedActor"] = evt.Actor;
+        if (actor.BatchId is { } batchId) (details ??= [])["batchId"] = batchId;
         if (actor.ApprovalId is { } approvalId)
         {
             (details ??= [])["approvalId"] = approvalId;

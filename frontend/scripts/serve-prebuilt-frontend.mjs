@@ -10,7 +10,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json' };
-const isProxy = url => /^\/(api|hubs)(?:[/?]|$)/.test(url);
+const isProxy = url => /^\/(api|hubs)(?:[/?]|$)/.test(url) || /^\/healthz(?:\?|$)/.test(url);
 // Profiles whose proxy terminates TLS and keeps the browser's Host, so the
 // backend sees the page origin and issues a Secure cookie the browser keeps.
 const tlsProfiles = ['public-demo', 'networked-https', 'networked-checkout', 'networked-https-demo', 'run-host'];
