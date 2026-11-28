@@ -19,7 +19,8 @@ public sealed record RemoteReviewContinuation(
     CardRoundBudgetState Budget,
     DeliveredReviewRound? DeliveredRound = null,
     ReviewRoundBudgetLedger? DeliveredRoundSeed = null,
-    ContinuationBaseRecord? Base = null);
+    ContinuationBaseRecord? Base = null,
+    ReviewPlanSkewPlan? SkewPlan = null);
 
 
 
@@ -73,7 +74,8 @@ public static class RemoteReviewContinuationProjection
     {
         if (entry.Continuation is not { } continuation) return true;
         if (!ownsReviewReport()) return false;
-        var gate = GateForAttempt(entry.AttemptId);
+        var gate = GateForAttempt(continuation.Kind == RemoteReviewContinuationKind.PlanMergeRound
+            ? "plan-skew:" + entry.TaskKey : entry.AttemptId);
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -84,6 +86,8 @@ public static class RemoteReviewContinuationProjection
             var isPlanMerge = continuation.Kind == RemoteReviewContinuationKind.PlanMergeRound;
             var target = isReadyRound
                 ? TaskStates.Ready : TaskStates.Escalated;
+            ReviewPlanSkewReservation? skewReservation = null;
+            string? repairKey = null;
             var cause = isPlanMerge ? "review-plan-skew"
                 : isReadyRound ? "multi-aspect-block" : "card-round-budget";
             var moveKey = $"continuation:{entry.IdempotencyKey}";
@@ -94,6 +98,19 @@ public static class RemoteReviewContinuationProjection
                 timeline.ReadAll(task.FolderPath), entry.AttemptId, cause, moveKey, task.State);
             if (step == RemoteReviewContinuationStep.Completed) return true;
             if (step == RemoteReviewContinuationStep.Unapplicable) return false;
+            if (isPlanMerge)
+            {
+                skewReservation = ReviewPlanSkewAllowance.Reserve(task.FolderPath, entry, timeline);
+                if (skewReservation is null) return false;
+                continuation = continuation with { Budget = skewReservation.Budget };
+                isReadyRound = skewReservation.Action == CardRoundBudgetAction.OpenRound;
+                target = isReadyRound ? TaskStates.Ready : TaskStates.Escalated;
+                if (!isReadyRound)
+                {
+                    if (!ownsReviewReport()) return false;
+                    repairKey = PlanRepairId(entry.TaskKey);
+                }
+            }
             var fixRoundBase = isReadyRound
                 ? continuation.Base : null;
             if (step == RemoteReviewContinuationStep.Move)
@@ -106,7 +123,12 @@ public static class RemoteReviewContinuationProjection
                 var move = await transitions.MoveAsync(
                     task.Id, target, task.WatchPath, ct,
                     cause: $"remote-review-continuation:{entry.AttemptId}",
-                    reason: isReadyRound
+                    reason: isPlanMerge && !isReadyRound
+                        ? HumanReviewEscalation.FormatReason("machine-blocker-quarantine",
+                            $"Review plan skew allowance spent "
+                            + $"({continuation.Budget.Used} of {continuation.Budget.Allowed}). Repair: {repairKey}. "
+                            + "The immutable delivery is retained; acceptance evidence is unsatisfied.")
+                        : isReadyRound
                         ? isPlanMerge ? entry.Report.Summary
                             ?? "The delivery predates the review plan; merge round sent."
                             : $"Blocking review findings from {entry.AttemptId}."
@@ -117,7 +139,7 @@ public static class RemoteReviewContinuationProjection
                     expectedSourceState: TaskStates.AutoReview,
                     transitionCause: isReadyRound
                         ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Escalated,
-                    transitionDetail: cause).ConfigureAwait(false);
+                    transitionDetail: isPlanMerge && !isReadyRound ? "machine-blocker-quarantine" : cause).ConfigureAwait(false);
                 if (move.Status != MoveJobStatus.Success)
                 {
                     if (fixRoundBase is not null) ContinuationBaseStore.Clear(task.FolderPath);
@@ -129,12 +151,25 @@ public static class RemoteReviewContinuationProjection
                     State = target,
                 };
             }
+            if (isPlanMerge && !isReadyRound)
+            {
+                if (!ownsReviewReport()) return false;
+                repairKey = EnsurePlanRepair(task, entry, skewReservation!, scanner, mutations);
+                if (repairKey is null) return false;
+            }
             var receipt = CardRoundBudgetReceipt.Details(
                 continuation.Budget, continuation.BlockingAspects,
                 cause,
                 isReadyRound
-                    ? CardRoundBudgetAction.OpenRound : CardRoundBudgetAction.Escalate);
+                    ? CardRoundBudgetAction.OpenRound : skewReservation?.Action ?? CardRoundBudgetAction.Escalate);
             receipt["reviewAttemptId"] = entry.AttemptId;
+            if (skewReservation is not null)
+            {
+                receipt["settlementKey"] = skewReservation.SettlementKey;
+                receipt["deliverySha"] = skewReservation.DeliverySha;
+                receipt["planCommitSha"] = skewReservation.PlanCommitSha ?? "unavailable";
+                if (repairKey is not null) receipt["repairTaskKey"] = repairKey;
+            }
             if (isReadyRound)
             {
                 TaskJsonFile.UpdateOrder(task.FolderPath, 0, logger);
@@ -186,7 +221,7 @@ public static class RemoteReviewContinuationProjection
                     receipt["continuationBaseSha"] = fixRoundBase.CommitSha;
                 }
             }
-            timeline.Append(task.FolderPath,
+            return timeline.Append(task.FolderPath,
                 isReadyRound
                     ? TimelineEventKinds.QualityLoopReopened : TimelineEventKinds.OrchestratorEscalated,
                 TimelineActors.QualityLoop,
@@ -194,10 +229,55 @@ public static class RemoteReviewContinuationProjection
                     ? isPlanMerge ? entry.Report.Summary
                         ?? "The delivery predates the review plan; merge round sent."
                         : $"Blocking findings from review {entry.AttemptId} reopened the card."
-                    : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}); open blocking aspects: {string.Join(", ", continuation.BlockingAspects)}.",
+                    : isPlanMerge
+                        ? $"Review plan skew quarantined with runnable repair {repairKey}; immutable delivery retained."
+                        : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}); open blocking aspects: {string.Join(", ", continuation.BlockingAspects)}.",
                 runId: entry.AttemptId, details: receipt);
-            return true;
         }
         finally { gate.Release(); }
     }
+
+    private static string PlanRepairId(string taskKey)
+        => "review-plan-repair-" + AttemptAuthorityService.Hash(taskKey)[..20];
+
+    private static string? EnsurePlanRepair(TaskInfo source, RemoteReviewSettlementEntry entry,
+        ReviewPlanSkewReservation reservation, TaskScannerService scanner, TaskMutationService mutations)
+    {
+        var id = PlanRepairId(entry.TaskKey);
+        var repair = scanner.FindJob(id, source.WatchPath);
+        if (repair is null)
+        {
+            var created = mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            {
+                Id = id,
+                Title = $"Repair review plan configuration for {source.Key ?? source.Id}",
+                WatchPath = source.WatchPath,
+                TargetState = TaskStates.Ready,
+                Agent = source.Agent, CliType = source.CliType, Model = source.Model,
+                ThinkingLevel = source.ThinkingLevel, OwnerClientId = source.OwnerClientId,
+                TaskType = TaskTypes.Bug, CreationSource = "review-plan-skew-repair", CreatedBy = "pipeline",
+                PromptMarkdown = $"# Repair review plan configuration\n\nSource: {source.Key ?? source.Id}.\n"
+                    + $"Review: {entry.AttemptId}. Plan commit: {reservation.PlanCommitSha ?? "unavailable"}.\n"
+                    + $"Immutable delivery: `{entry.Continuation?.Base?.Ref}` at `{reservation.DeliverySha}`.\n\n"
+                    + $"The shared automatic allowance is spent ({reservation.Budget.Used} of {reservation.Budget.Allowed}). "
+                    + "Diagnose target plan churn and repair the verification configuration or preparation inputs. "
+                    + "Use the platform-assigned base. Git and workspace mutations remain platform-owned. "
+                    + "Preserve the source delivery and its attempt fences. Restore a stable, runnable review plan; "
+                    + "do not accept the source without verification or open another merge round.\n\n"
+                    + entry.Report.Summary,
+            });
+            repair = scanner.FindJob(created ?? id, source.WatchPath);
+        }
+        if (repair is null) return null;
+        var sourceKey = source.Key ?? source.Id;
+        var repairKey = repair.Key ?? repair.Id;
+        if (!mutations.SetTaskReferences(repair.Id, (repair.References ?? new TaskReferences()) with
+            { FollowUpOf = [sourceKey] }, repair.WatchPath)) return null;
+        var latestSource = scanner.FindJob(source.Id, source.WatchPath) ?? source;
+        if (!mutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
+            { RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
+                .Append(repairKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList() }, source.WatchPath)) return null;
+        return repairKey;
+    }
+
 }

@@ -98,13 +98,43 @@ review host checks relative file references in declared tool and preparation
 commands against that commit and the delivery's Git tree. If the plan commit
 contains a file that the delivery tree lacks, the attempt ends as
 `DeliveryPredatesReviewPlan`. Option **(b)** is implemented: the card receives
-an automatic merge round whose prompt names the full immutable result ref and
-asks the agent to merge the target branch, resolve conflicts, and submit the
-new delivery. A merge conflict is handled by that round. The attempt runs no
-review commands and spends no review infrastructure retry. A shell exit 127
-with no such Git-tree skew remains `ReviewInfra/ToolUnavailable` when the host
-lacks the declared binary. A delivery that contains the file runs its plan as
-before.
+an automatic preparation round whose prompt names the full immutable result
+ref and exact plan commit. Git and workspace preparation remain platform-owned;
+the run resolves content conflicts and submits the prepared delivery. The skew
+attempt runs no review commands and spends no review infrastructure retry.
+A shell exit 127 with no such Git-tree skew remains
+`ReviewInfra/ToolUnavailable` when the host lacks the declared binary. A delivery
+that contains the file runs its plan as before.
+
+AGT-4101 bounds the monolith `PlanMergeRound` continuation with the shared
+lifetime `CardRoundBudget` allowance (`OperatorSweeps:MaxRoundsPerCard`, default
+4). Before Ready, an atomic `logs/review-plan-skew-allowance.json` reservation
+binds the accepted settlement key, review attempt, immutable delivery SHA and
+plan commit. A replay reuses that reservation. The common counter counts its
+`card_round_budget_disposition` receipt and the later `quality_loop_reopened`
+receipt once per attempt, including older skew reopen receipts. Reservation
+survives a crash before the lane move; the existing keyed continuation replay
+finishes an interrupted move or its prompt/receipt projection without charging
+again. New delivery SHAs and target commits do not replenish the allowance.
+
+A pending recovery review rebuilds its delivery-specific plan against the
+pinned target commit before claim. Target ref movement alone retains the pin.
+A changed build-profile fingerprint or authored brief explicitly replaces the
+pin with the new plan commit and records `review_attempt_replanned` with cause
+`review-plan-skew-plan-replaced`. It retains all spent reservations. A delivered
+review outcome releases the active pin while retaining the lifetime allowance.
+A legacy settlement uses the executor's fetched target SHA when available;
+without a valid plan identity it cannot open a preparation round.
+
+On exhaustion the source enters `machine-blocker-quarantine` in Escalated with
+its immutable delivery retained and acceptance evidence still unsatisfied. A
+stable creation identity produces one linked configuration repair in Ready,
+with no dependency on the quarantined source. Creation, reference projection
+and continuation completion repair on replay. The repair diagnoses plan churn
+and verification preparation inputs on its platform-assigned base. This path
+creates no operator decision request or operator escalation notification and
+never overrides an existing human lane hold. The separate Engine review action
+applier is outside this monolith continuation contract.
 
 ## Host source cache startup
 
@@ -443,7 +473,8 @@ lifetime per card; the reissue limit applies to the current review epoch.
 The task detail shows the delivered round count, limit, and aspect
 that spent the budget. Automatic continuation admission also checks the
 per-card `CardRoundBudget` (default 4), which counts reissues, review finding
-and concern reopens, and automatic continuations across all epochs.
+and concern reopens, plan-skew reservations, and automatic continuations across
+all epochs. A plan-skew reservation and its reopen receipt spend one round.
 
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the
