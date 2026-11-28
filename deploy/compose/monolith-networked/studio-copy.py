@@ -200,7 +200,7 @@ class Copies:
     def begin(self):
         old = self.existing()
         if old:
-            if command("docker", "ps", "-q", "--filter", label(old)):
+            if command("docker", "ps", "-q", "--filter", label_filter(old)):
                 raise Failure("A copy is already running", 2)
             cleanup(old)
         run = self.root / f"run-{uuid.uuid4().hex}"
@@ -212,18 +212,22 @@ def label(run):
     return f"{LABEL}={run.name}"
 
 
+def label_filter(run):
+    return f"label={label(run)}"
+
+
 def cleanup(run):
     (run / "api.env").unlink(missing_ok=True)
-    containers = command("docker", "ps", "-aq", "--filter", label(run)).split()
+    containers = command("docker", "ps", "-aq", "--filter", label_filter(run)).split()
     if containers:
         try:
             command("docker", "rm", "-fv", *containers)
         except Failure:
             time.sleep(2)
-            containers = command("docker", "ps", "-aq", "--filter", label(run)).split()
+            containers = command("docker", "ps", "-aq", "--filter", label_filter(run)).split()
             if containers:
                 command("docker", "rm", "-fv", *containers)
-    for network in command("docker", "network", "ls", "-q", "--filter", label(run)).split():
+    for network in command("docker", "network", "ls", "-q", "--filter", label_filter(run)).split():
         command("docker", "network", "rm", network)
     for role in DATA:
         merged = run / f"merged-{role}"

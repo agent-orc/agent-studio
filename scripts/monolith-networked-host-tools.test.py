@@ -13,6 +13,16 @@ TOOLS = Path(__file__).resolve().parents[1] / "deploy/compose/monolith-networked
 FAKES = {"docker", "mount", "umount", "mountpoint", "systemd-run", "id", "df"}
 
 
+def list_by_label(args, root, names):
+    selector = args[args.index("--filter") + 1]
+    kind, _, label = selector.partition("=")
+    assert kind == "label", f"Invalid Docker filter: {kind}"
+    for name in names:
+        resource = root / name
+        if resource.exists() and resource.read_text() == label:
+            print(name)
+
+
 def fake(program, args, root):
     with (root / "calls").open("a") as calls:
         print(json.dumps([program, *args]), file=calls)
@@ -46,9 +56,7 @@ def fake(program, args, root):
     elif args[:2] == ["compose", "ps"]:
         print("live-" + args[-1])
     elif args[0] == "ps":
-        for name in ("copy-web", "copy-api"):
-            if (root / name).exists():
-                print(name)
+        list_by_label(args, root, ("copy-web", "copy-api", "other-api"))
     elif args[:2] == ["image", "inspect"]:
         if os.getenv("MISSING_IMAGE"):
             return 1
@@ -64,13 +72,12 @@ def fake(program, args, root):
             print(os.getenv("HEALTH", "true healthy"))
     elif args[:2] == ["network", "create"]:
         assert "--internal" in args
-        (root / "network").touch()
-        print("internal-network")
+        (root / "network").write_text(args[args.index("--label") + 1])
+        print("network")
     elif args[:2] == ["network", "ls"]:
-        if (root / "network").exists():
-            print("internal-network")
+        list_by_label(args, root, ("network", "other-network"))
     elif args[:2] == ["network", "rm"]:
-        (root / "network").unlink()
+        (root / args[-1]).unlink()
     elif args[0] == "run":
         if "--env-file" in args:
             env = Path(args[args.index("--env-file") + 1])
@@ -98,10 +105,13 @@ def fake(program, args, root):
             assert "reverse_proxy 127.0.0.1:5031" in caddy.read_text()
             assert caddy.stat().st_mode & stat.S_IROTH
             name = "copy-web"
-        (root / name).touch()
+        (root / name).write_text(args[args.index("--label") + 1])
         print(name)
     elif args[0] == "rm":
         assert "-fv" in args
+        if (root / "fail-rm-once").exists():
+            (root / "fail-rm-once").unlink()
+            return 1
         for name in args[2:]:
             (root / name).unlink()
     elif args[0] == "logs":
@@ -149,6 +159,8 @@ def call(*args, code=0, **env):
 def copies(root):
     preflight = TOOLS / "preflight-start.sh"
     shadow = TOOLS / "shadow-studio.sh"
+    for name in ("other-api", "other-network"):
+        (root / name).write_text("studio.operator-copy=run-other")
     for script in (preflight, shadow, TOOLS / "prune-prep-runs.sh"):
         assert "Usage:" in call(script, "--help")
     for state, code, result in [("true healthy", 0, "healthy"), ("false starting", 1, "exited"),
@@ -171,7 +183,9 @@ def copies(root):
     assert "lifetime_seconds=1800" in call(shadow)
     assert not list((root / "state").rglob("api.env"))
     call(shadow, "start", code=2)
+    (root / "fail-rm-once").touch()
     call(shadow, "stop")
+    assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network", "fail-rm-once"))
     call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
     call(*old_watch)
     run, = (root / "state").glob("shadow-*/run-*")
@@ -189,6 +203,8 @@ def copies(root):
     assert "stopped" in call(shadow)
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network"))
     assert not list((root / "state").glob("*/run-*"))
+    for name in ("other-api", "other-network"):
+        assert (root / name).read_text() == "studio.operator-copy=run-other"
     trace = (root / "calls").read_text()
     for needle in ("example.invalid:5050/release/api:candidate", "example.invalid:5050/site:candidate",
                    "id-of-live-backend-fixture", "id-of-live-site-fixture", "target=/keys/kek,readonly",
