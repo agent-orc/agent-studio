@@ -33,10 +33,8 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
     private RepositoryCredential Credential(string url, string token, string access = RepositoryAccess.Write)
         => new(url, GitHubAppBroker.CredentialUsername, token, _clock.GetUtcNow().UtcDateTime.AddHours(1), access);
 
-    private (RepositoryCredentialSync Sync, StubServer Server) Build(string role, string? keyFile = null, Action<string>? log = null)
-    {
-        var server = new StubServer();
-        var options = new RunnerOptions
+    private RunnerOptions Options(string role, string? keyFile = null) =>
+        new()
         {
             ServerUrl = "http://127.0.0.1:5030",
             RunnerId = "runner-1",
@@ -49,6 +47,11 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
             Role = role,
             RepositoryKeyFile = keyFile,
         };
+
+    private (RepositoryCredentialSync Sync, StubServer Server) Build(string role, string? keyFile = null, Action<string>? log = null)
+    {
+        var server = new StubServer();
+        var options = Options(role, keyFile);
         var client = new TaskServerClient(new HttpClient(server) { BaseAddress = new Uri(options.ServerUrl) }, options.RunnerId);
         return (new RepositoryCredentialSync(options, client, log ?? (_ => { }), _clock), server);
     }
@@ -92,7 +95,7 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         {
             Assert.DoesNotContain("RUNNER_REPOSITORY_KEY_FILE", refusalLog, StringComparison.Ordinal);
             Assert.Contains($"Access > Runners, issue a new credential with repository access to {expectedGrant},", refusalLog, StringComparison.Ordinal);
-            Assert.Contains(message, sync.AccessRefusal, StringComparison.Ordinal);
+            Assert.Equal($"repository-credentials refused status={(int)status}. {sync.AccessRefusal}", refusalLog);
         }
         else
             Assert.Null(sync.AccessRefusal);
@@ -100,6 +103,31 @@ public sealed class RepositoryCredentialSyncTests : IDisposable
         server.Respond(HttpStatusCode.NoContent);
         await sync.SyncOnceAsync(default);
         Assert.Null(sync.AccessRefusal);
+    }
+
+    [Fact]
+    public async Task Standalone_scope_refusal_reports_the_coding_enrollment_workflow()
+    {
+        var options = Options("coding");
+        var server = new StubServer();
+        using var client = new TaskServerClient(
+            new HttpClient(server) { BaseAddress = new Uri(options.ServerUrl) }, options.RunnerId, options: options);
+        server.RespondRaw(JsonSerializer.Serialize(new
+        {
+            supported = true,
+            server = new { current = RunnerOptions.ProtocolVersion, capabilities = new[] { "coding-plane", "management-plane" } },
+        }));
+        await client.EnsureCompatibleAsync(default);
+        var log = new List<string>();
+        var sync = new RepositoryCredentialSync(options, client, log.Add, _clock);
+        server.Respond(HttpStatusCode.Forbidden, RepositoryCredentialErrors.WriteDenied);
+
+        await sync.SyncOnceAsync(default);
+
+        const string detail = "This runner's credential has read-only repository access. " +
+            "Re-enroll this host with a Task Server coding enrollment that grants repository write access, then install the new credential.";
+        Assert.Equal(detail, sync.AccessRefusal);
+        Assert.Equal($"repository-credentials refused status=403. {detail}", Assert.Single(log));
     }
 
     [Fact]

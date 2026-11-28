@@ -58,6 +58,14 @@ service. The Studio stores only the key's SHA-256 under
 `.security/github-app/host-keys/`. To revoke a host, run `revoke`; it loses its
 tokens at its next sync.
 
+The local `POST /api/v1/runners/{runnerId}/repository-credentials` endpoint
+returns these errors in its JSON `error` field:
+
+| HTTP status and code | Meaning |
+|---|---|
+| `401 host-key-required` | The request lacks a valid key for this runner. |
+| `403 host-key-write-access-denied` | A valid read key requested write access. This replaces `write-access-denied` in the local profile. |
+
 ## Give a host access in a networked profile
 
 Hosts present their service credential, so no key is needed.
@@ -65,8 +73,9 @@ Hosts present their service credential, so no key is needed.
 - Task Server: enrolment decides. A host-join token with the role `coding` grants
   the scope `repositories:write`, one with the role `review` does not, and
   `POST /api/v1/management/enrolments` takes `repositoryWrite` directly. Every Runner
-  principal may read. A host enrolled before this feature reads only; enroll it
-  again with its role to change that.
+  principal may read. To grant write access to an existing coding host, follow
+  the [standalone host enrolment procedure](identity-and-project-bootstrap.md#enrol-a-host-principal)
+  with the same principal and runner IDs and install the new credential.
 - Monolith: in **Access > Runners > New enrollment code**, choose
   **Coding – read and push** (`repository.write`) for coding or
   **Review only – read** (`repository.read`) for review. Access is limited to
@@ -184,8 +193,8 @@ that names people or teams in its bypass list needs the App added as well.
 |---|---|
 | Repository shows **App not installed** | Add it with **Add repositories or an account**. |
 | Repository shows **Needs confirmation** | Choose **Confirm installations**. |
-| Host log: `repository-credentials refused status=401` | The key file is missing, or the key was revoked. |
-| Host log: `repository-credentials refused status=403` | A read key asked for write access: the host's role and key disagree. |
+| Host log names `RUNNER_REPOSITORY_KEY_FILE` | In the local profile, check that the host has a valid key with the required access. |
+| Host log says the runner credential has no repository access or has read-only access | Use the enrollment or issuance procedure above for your installation. |
 | No hosts listed | The list is kept in memory; it fills again within five minutes of a restart. |
 | The private key reads as revoked | It was revoked in **Settings > Secrets**. Reconnect with a new key. |
 | `operator-listener-required` | The request did not come through the browser path. Use the page on the Studio machine. |

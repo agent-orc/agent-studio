@@ -118,6 +118,8 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
         using var response = await client.SendAsync(Ask(RepositoryAccess.Read, null, NewRunnerId()));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("host-key-required", body.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -168,6 +170,8 @@ public sealed class GitHubAppEndpointTests(GitHubAppEndpointTests.LocalHost loca
         using var allowed = await client.SendAsync(Ask(RepositoryAccess.Read, key, runner));
 
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var body = await denied.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("host-key-write-access-denied", body.GetProperty("error").GetString());
         Assert.Equal(HttpStatusCode.NoContent, allowed.StatusCode);
     }
 

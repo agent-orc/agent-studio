@@ -200,9 +200,6 @@ public sealed class RepositoryCredentialSync(
     private void ReportRefusal(TaskServerException exception)
     {
         var required = Access == RepositoryAccess.Write ? "read and push" : "read";
-        var grant = exception.ErrorCode == RepositoryCredentialErrors.WriteDenied && client.UsesDurableTaskServer
-            ? "Use a Task Server coding enrollment with repository write access and install its credential on this host."
-            : $"In Studio, open Access > Runners, issue a new credential with repository access to {required}, and install it on this host.";
         var refusal = exception.ErrorCode switch
         {
             RepositoryCredentialErrors.NoAccess => "This runner's credential has no repository access.",
@@ -210,11 +207,19 @@ public sealed class RepositoryCredentialSync(
             _ => null,
         };
         // A temporary authentication failure does not erase a known scope refusal.
-        if (refusal is not null) _accessRefusal = refusal;
-        var detail = refusal is not null ? $"{refusal} {grant}"
-            : exception.ErrorCode is RepositoryCredentialErrors.HostKeyRequired or RepositoryCredentialErrors.HostKeyWriteDenied
-            ? $"Check {RunnerOptions.RepositoryKeyFileVariable} for a host key with permission to {required}."
-            : "Check this host's runner credential.";
+        string detail;
+        if (refusal is not null)
+        {
+            var grant = client.UsesStandaloneTaskServer
+                ? "Re-enroll this host with a Task Server coding enrollment that grants repository write access, then install the new credential."
+                : $"In Studio, open Access > Runners, issue a new credential with repository access to {required}, and install it on this host.";
+            detail = $"{refusal} {grant}";
+            _accessRefusal = detail;
+        }
+        else
+            detail = exception.ErrorCode is RepositoryCredentialErrors.HostKeyRequired or RepositoryCredentialErrors.HostKeyWriteDenied
+                ? $"Check {RunnerOptions.RepositoryKeyFileVariable} for a host key with permission to {required}."
+                : "Check this host's runner credential.";
         Report($"refused:{exception.StatusCode}:{exception.ErrorCode}", $"refused status={exception.StatusCode}. {detail}");
     }
 

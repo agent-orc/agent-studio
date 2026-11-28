@@ -166,6 +166,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             _useV1 = false;
+            UsesStandaloneTaskServer = false;
             _supportsCapabilityAdvertisement = false;
             _supportsCredentialObservationV2 = false;
             _supportsCredentialHealthV2 = false;
@@ -180,6 +181,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (compatibility?.Supported != true || compatibility.Server.Current < RunnerOptions.ProtocolVersion)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
+        UsesStandaloneTaskServer = serverCapabilities.Contains("management-plane", StringComparer.Ordinal);
         _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
         _supportsCredentialHealthV2 = _supportsCredentialObservationV2
             && serverCapabilities.Contains("credential-health-v2", StringComparer.Ordinal);
@@ -391,6 +393,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     public string ClientId { get; private set; } = string.Empty;
 
     public bool UsesDurableTaskServer => _useV1;
+    internal bool UsesStandaloneTaskServer { get; private set; }
     public bool UsesHostOrchestrator => _useV1 && _supportsHostOrchestrator;
     internal bool HasAcceptedHostWork(string taskKey)
         => _hostAcceptedWork.ContainsKey(taskKey);

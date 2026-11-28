@@ -40,7 +40,7 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
       && credentialAccess?.isFresh && credentialAccess.advertisedStatus === 'unavailable') return {
     state: 'connected',
     reason: credentialAccess.detail || 'The runner credential lacks the repository access this role needs.',
-    action: 'Issue and install a new runner credential from Access > Runners.',
+    action: 'Install a credential with the repository access this role needs and refresh the host.',
   };
   if (host.hostAdmission?.admissionState !== 'open') return {
     state: 'connected', reason: `Host admission is ${host.hostAdmission?.admissionState ?? 'unreported'}.`,

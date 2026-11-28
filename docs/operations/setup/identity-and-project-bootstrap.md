@@ -132,6 +132,10 @@ command. The file contains a single-use enrolment code and no management bearer.
 The installer exchanges it for the host's bound runner credential. A new token
 must be issued if the file expires or is spent.
 
+Choose the coding role to let the host read and push repositories. Choose the
+review role to grant read access. The GitHub App supplies short-lived repository
+tokens automatically.
+
 Owner session required (`403 owner-role-required` for operators and viewers;
 `401` for the edge bearer without a session):
 
@@ -167,8 +171,12 @@ Denials are one generic `401 enrolment-denied`; the audit log records the
 precise reason (unknown, consumed, revoked, expired, installation mismatch,
 principal exists). A consumed code therefore exposes a stolen replay.
 Issuing a new code for the same principal withdraws the earlier unused one.
-Enrolling an existing principal is `409 principal-exists`: rotate it
-explicitly with `/management/principals/{id}/rotate` instead.
+To give an existing coding runner write access, issue an enrollment for the
+same active runner principal and runner ID with `"repositoryWrite": true`.
+Redeem it into a new owner-only credential file. Redemption revokes the old
+credential, so install the new file and restart the runner service before it
+resumes work. An enrollment for a revoked principal or one with a mismatched
+identity is rejected with `409 principal-exists`.
 
 ## Loss of a host
 
