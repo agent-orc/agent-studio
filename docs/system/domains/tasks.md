@@ -3045,3 +3045,53 @@ escalation path. A report arriving after integration returns to Ready with an
 already fulfilled dependency. Human input requests retain their
 decision semantics. This wait does not change the report-only parked-card
 recall sweep or automatically reopen existing operator parks.
+
+## Magazine deliverables on research cards
+
+A research card can commission a Magazine article through `POST /api/tasks`.
+Supply `mode: "research"` and a `magazineDeliverable` object with `scope`
+(`installation`, `workspace:<id>`, or `project:<id>`) and an optional `slug`,
+`personaId`, `roleId`, and `reportingWindow`. The reporting window has
+inclusive ISO dates `start` and `end`. Persona and role IDs come from the
+built-in catalogue. Studio resolves the scope to its canonical ID, checks card
+write and `magazine.write` for that audience, and records the authenticated
+author and authorization time. If the author omits the slug, Studio derives
+it once from the card key.
+
+The generated brief names acceptance as the authorization to publish and
+requests `results/article.md` (Markdown), `results/article.json` (title,
+summary, kind, persona, and sources), and `results/items.json` (the scored
+item array). The research Result tab continues to use `results/report.html`
+as its primary document. Files under `results/` carry article content. The
+task declaration supplies the destination and its authority.
+
+Task detail returns the declaration as `info.magazineDeliverable` on the
+local host, and as `magazineDeliverable` on the standalone Task Server
+detail DTO. It is also included in the local task core response. Legacy cards
+omit the field. The declaration shows `publicationStatus: "awaiting-publication"`
+until a publication worker can record a durable receipt.
+
+An authorized author can attach the declaration once with
+`PUT /api/tasks/{key}/magazine-deliverable` and body
+`{ "magazineDeliverable": { ... } }`. Attachment preserves the original
+brief and all submitted files. For historical publication, include the
+`acceptedResultVersion` and first send that body to
+`POST /api/tasks/{key}/magazine-deliverable/preview`. Show the returned scope,
+slug and exact version to the author before submitting the PUT with the
+returned `confirmation`. A change to the audience, slug, author, period,
+byline or version calls for a new preview.
+
+Local historical versions use `git-<full SHA>` from the task workspace
+history. The commit must record the card entering Completed from Human review
+and contain the three fixed bundle files. The standalone store uses
+`run-<run ID>` and verifies the recorded acceptance, completed run, and
+its three submitted artifacts. A missing accepted version cannot be inferred
+from current files.
+
+The connector forwards create and attachment to the standalone Task Server.
+Standalone deployments also expose `POST /api/v1/studio/tasks` and the
+attachment routes under `/api/v1/projects/{projectId}/tasks/{key}`. The
+transitional Studio edge applies its IAM bindings before lending its own
+credential. Direct standalone callers use the installation's Studio session
+or management authority in addition to task-write authorization. A
+project-bound operator needs access to the card project and the target project.

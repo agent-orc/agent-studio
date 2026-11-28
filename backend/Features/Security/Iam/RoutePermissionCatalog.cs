@@ -472,7 +472,8 @@ public static class RoutePermissionCatalog
             "title", "tags", "references", "waits-on", "files/{}", "state", "dossier", "task-type", "model",
             "cli-type", "thinking-level", "requires-integration", "move", "move-to-top", "attachments",
             "preview-comments", "change-project", "intake", "review-priority", "decision", "decision/migrate",
-            "decision/reopen", "promote-concept", "concept-dossier", "planning-closure");
+            "decision/reopen", "promote-concept", "concept-dossier", "planning-closure",
+            "magazine-deliverable", "magazine-deliverable/preview");
         Under("POST", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
             "review-observations", "review-observations/{}/later-evidence", "review-observations/{}/finding-outcomes");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/projects/{}", "auto-tag/backfill", "auto-tag/backfill-jobs", "tag-maintenance/**");

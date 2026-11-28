@@ -1,4 +1,10 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AgentStudio.Magazine;
+using AgentStudio.Personas;
+using AgentStudio.Registry;
+using AgentStudio.Tasks;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
@@ -85,6 +91,18 @@ public static class TaskServerPlaneProxy
             return true;
         }
 
+        // Card authors address these writes by body project or task key.
+        // The handler checks the resolved card project before using the edge credential.
+        var cardWrite = new RequiredPermissionMetadata(IamPermissions.ProjectCardsWrite, ProjectBindingsSuffice: true);
+        app.MapPost("/api/v1/studio/tasks", ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance, cardWrite);
+        app.MapPost("/api/v1/projects/{projectId}/tasks", ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance, cardWrite);
+        app.MapPut("/api/v1/projects/{projectId}/tasks/{taskId}/magazine-deliverable", ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance, cardWrite);
+        app.MapPost("/api/v1/projects/{projectId}/tasks/{taskId}/magazine-deliverable/preview", ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance, cardWrite);
+
         app.MapMethods(
             "/api/v1/{**path}",
             ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -128,17 +146,23 @@ public static class TaskServerPlaneProxy
         var client = context.RequestServices
             .GetRequiredService<IHttpClientFactory>()
             .CreateClient(ClientName);
-        var target = context.Request.Path + context.Request.QueryString;
+        var path = context.Request.Path.Value!;
+        var author = await AuthorizeCardWriteAsync(context, client, path, useEdgeCredential);
+        if (author.Refusal is { } refusal)
+        {
+            await refusal.ExecuteAsync(context);
+            return;
+        }
+        var target = (author.Route ?? path) + context.Request.QueryString;
         using var request = new HttpRequestMessage(
             new HttpMethod(context.Request.Method),
             target);
         request.Options.Set(UseEdgeCredential, useEdgeCredential);
 
-        if (context.Request.ContentLength > 0
-            || context.Request.Headers.ContainsKey("Transfer-Encoding"))
-        {
+        if (author.Content is not null)
+            request.Content = author.Content;
+        else if (context.Request.ContentLength > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
             request.Content = new StreamContent(context.Request.Body);
-        }
 
         foreach (var (name, values) in context.Request.Headers)
         {
@@ -167,6 +191,8 @@ public static class TaskServerPlaneProxy
 
         if (useEdgeCredential && actingRole is not null)
             request.Headers.TryAddWithoutValidation(CredentialViewProtocol.ActingRoleHeader, actingRole);
+        if (author.Actor is not null)
+            request.Headers.TryAddWithoutValidation(MagazineDeliverableContract.EdgeAuthorHeader, author.Actor);
         if (context.Request.Path.StartsWithSegments("/api/v1/management/device-logins"))
         {
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
@@ -203,12 +229,157 @@ public static class TaskServerPlaneProxy
         }
     }
 
+    private static readonly JsonSerializerOptions MagazineRequestJson = new(JsonSerializerDefaults.Web)
+    {
+        AllowDuplicateProperties = false,
+    };
+
+    private static async Task<(IResult? Refusal, string? Actor, string? Route, HttpContent? Content)> AuthorizeCardWriteAsync(
+        HttpContext context, HttpClient client, string path, bool useEdgeCredential)
+    {
+        // Direct Task Server bearers are checked by the Task Server. The edge
+        // must perform the finer IAM check before it lends its own credential.
+        if (!useEdgeCredential) return default;
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var create = HttpMethods.IsPost(context.Request.Method)
+            && (path.TrimEnd('/').Equals("/api/v1/studio/tasks", StringComparison.OrdinalIgnoreCase)
+                || parts.Length == 5 && parts[2].Equals("projects", StringComparison.OrdinalIgnoreCase)
+                    && parts[4].Equals("tasks", StringComparison.OrdinalIgnoreCase));
+        var attach = parts.Length is 7 or 8 && parts[6].Equals("magazine-deliverable", StringComparison.OrdinalIgnoreCase)
+            && (HttpMethods.IsPut(context.Request.Method) || HttpMethods.IsPost(context.Request.Method));
+        if (!create && !attach) return default;
+
+        StudioCreateTaskRequest? createBody = null;
+        AttachMagazineDeliverableRequest? attachBody = null;
+        MagazineDeliverableRequest? magazine;
+        string? project;
+        string? route = null;
+        context.Request.EnableBuffering();
+        try
+        {
+            if (create)
+            {
+                createBody = await JsonSerializer.DeserializeAsync<StudioCreateTaskRequest>(
+                    context.Request.Body, MagazineRequestJson, context.RequestAborted);
+                magazine = createBody?.MagazineDeliverable;
+                project = parts.Length == 5 ? parts[3] : createBody?.Project ?? createBody?.ProjectId;
+            }
+            else
+            {
+                attachBody = await JsonSerializer.DeserializeAsync<AttachMagazineDeliverableRequest>(
+                    context.Request.Body, MagazineRequestJson, context.RequestAborted);
+                magazine = attachBody?.MagazineDeliverable;
+                project = parts[3];
+            }
+        }
+        catch (JsonException)
+        {
+            return (Results.BadRequest(new { error = "The task request is invalid." }), null, null, null);
+        }
+        finally
+        {
+            context.Request.Body.Position = 0;
+        }
+
+        if (attach && magazine is null)
+            return (Results.BadRequest(new { error = "A Magazine deliverable is required." }), null, null, null);
+        var services = context.RequestServices;
+        var projects = services.GetRequiredService<ProjectRegistry>();
+        if (attach)
+        {
+            // Resolve the canonical card project from the data authority and
+            // address the write to that project as well.
+            try
+            {
+                var taskPath = "/" + string.Join('/', parts.Take(6));
+                using var response = await client.GetAsync(taskPath, context.RequestAborted);
+                if (!response.IsSuccessStatusCode) return (Results.StatusCode((int)response.StatusCode), null, null, null);
+                var task = await response.Content.ReadFromJsonAsync<TaskDto>(context.RequestAborted);
+                if (task is null) return (Results.NotFound(), null, null, null);
+                project = task.ProjectId;
+                parts[3] = Uri.EscapeDataString(project);
+                parts[5] = Uri.EscapeDataString(task.TaskId);
+                route = "/" + string.Join('/', parts);
+            }
+            catch (HttpRequestException)
+            {
+                return (Results.StatusCode(StatusCodes.Status502BadGateway), null, null, null);
+            }
+        }
+        if (string.IsNullOrWhiteSpace(project))
+            return (Results.BadRequest(new { error = "A project id is required." }), null, null, null);
+        ProjectDto[]? directory = null;
+        var rewriteBody = false;
+        if (create && context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess)
+        {
+            directory = await ReadTaskServerProjectsAsync(client, context.RequestAborted);
+            if (directory is null) return (Results.StatusCode(StatusCodes.Status502BadGateway), null, null, null);
+            var canonical = directory.FirstOrDefault(p => p.ProjectId.Equals(project, StringComparison.Ordinal))
+                ?? directory.FirstOrDefault(p => p.Name.Equals(project, StringComparison.OrdinalIgnoreCase));
+            if (canonical is null) return (Results.NotFound(), null, null, null);
+            project = canonical.ProjectId;
+            if (parts.Length == 5)
+            {
+                parts[3] = Uri.EscapeDataString(project);
+                route = "/" + string.Join('/', parts);
+            }
+            else
+            {
+                createBody = createBody! with { Project = project };
+                rewriteBody = true;
+            }
+        }
+        if (!ProjectAccessAuthorization.AllowsTasks(context, [project], IamPermissions.ProjectCardsWrite, projects))
+            return (Results.StatusCode(StatusCodes.Status403Forbidden), null, null, null);
+        if (ProjectAccessAuthorization.IsProductRoleIn(context, project))
+            return (Results.StatusCode(StatusCodes.Status403Forbidden), null, null, null);
+        if (magazine is null)
+            return (null, null, route, rewriteBody ? JsonContent.Create(createBody) : null);
+        var catalogue = services.GetRequiredService<PersonaCatalogue>();
+        if (MagazineDeliverableContract.Validate(magazine, id => catalogue.Find(id) is not null) is { } error)
+            return (Results.BadRequest(new { error }), null, null, null);
+
+        // The standalone directory owns its native IDs. Workspace-wide
+        // Magazine rights cover installation and workspace audiences, and
+        // the store checks that the requested workspace exists at write time.
+        MagazineScope.TryParse(magazine.Scope, out var audience);
+        if (audience.Kind == MagazineScopeKind.Project)
+        {
+            directory ??= await ReadTaskServerProjectsAsync(client, context.RequestAborted);
+            if (directory is null) return (Results.StatusCode(StatusCodes.Status502BadGateway), null, null, null);
+            var canonical = directory.FirstOrDefault(p => p.ProjectId.Equals(audience.Id, StringComparison.OrdinalIgnoreCase))
+                ?? directory.FirstOrDefault(p => p.TaskKeyPrefix.Equals(audience.Id, StringComparison.OrdinalIgnoreCase));
+            if (canonical is null) return (Results.NotFound(), null, null, null);
+            audience = audience.WithId(canonical.ProjectId);
+            rewriteBody = true;
+        }
+        var authorized = MagazineAccess.AuthorizeWrite(context, audience);
+        if (authorized.Refusal is not null) return (authorized.Refusal, null, null, null);
+        HttpContent? body = null;
+        if (rewriteBody)
+        {
+            // Send the IDs we checked so an alias change cannot redirect the write.
+            magazine = magazine with { Scope = audience.ToString() };
+            body = createBody is not null
+                ? JsonContent.Create(createBody with { MagazineDeliverable = magazine })
+                : JsonContent.Create(attachBody! with { MagazineDeliverable = magazine });
+        }
+        return (null, ResearchMagazineDeliverable.Actor(context), route, body);
+    }
+
+    private static async Task<ProjectDto[]?> ReadTaskServerProjectsAsync(HttpClient client, CancellationToken ct)
+    {
+        try { return await client.GetFromJsonAsync<ProjectDto[]>("/api/v1/projects", ct) ?? []; }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException) { return null; }
+    }
+
     internal static bool ForwardsRequestHeader(string name)
         => !HopByHopHeaders.Contains(name)
            && !string.Equals(name, "X-Studio-Public-Origin", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(name, "Host", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase)
-           && !string.Equals(name, CredentialViewProtocol.ActingRoleHeader, StringComparison.OrdinalIgnoreCase);
+           && !string.Equals(name, CredentialViewProtocol.ActingRoleHeader, StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(name, MagazineDeliverableContract.EdgeAuthorHeader, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The Studio role this edge authenticated, forwarded so the Task Server can scope

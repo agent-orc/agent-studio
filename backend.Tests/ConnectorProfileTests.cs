@@ -22,9 +22,9 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(464, inventory.Operations.Count);
+        Assert.Equal(466, inventory.Operations.Count);
         Assert.Equal(106, inventory.DevSeatOperations.Count);
-        Assert.Equal(358, inventory.TaskServerOperations.Count);
+        Assert.Equal(360, inventory.TaskServerOperations.Count);
         var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
         Assert.Equal("/hubs/v1/studio", hub.Path);
     }
@@ -81,7 +81,7 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(464, metadata.Length);
+        Assert.Equal(466, metadata.Length);
         Assert.Equal(106, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
@@ -145,7 +145,7 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
         }
 
         Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
-        Assert.Equal(358, forwarded);
+        Assert.Equal(360, forwarded);
     }
 
     [Fact]

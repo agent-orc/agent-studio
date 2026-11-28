@@ -76,13 +76,23 @@ internal static class StudioTaskLifecycleExtrasEndpoints
                 projectId, taskIdentity, request ?? new PromoteConceptRequest(), TaskServerEndpoints.Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
+        tasks.MapPost("/magazine-deliverable/preview", (HttpContext context, string projectId, string taskIdentity,
+            AttachMagazineDeliverableRequest request, TaskServerStore store, TaskServerBootstrapOptions options, CancellationToken ct)
+            => AttachMagazine(context, projectId, taskIdentity, request, store, options, ct, previewOnly: true))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
+        tasks.MapPut("/magazine-deliverable", (HttpContext context, string projectId, string taskIdentity,
+            AttachMagazineDeliverableRequest request, TaskServerStore store, TaskServerBootstrapOptions options, CancellationToken ct)
+            => AttachMagazine(context, projectId, taskIdentity, request, store, options, ct, previewOnly: false))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
         var studioTasks = app.MapGroup("/api/v1/studio/tasks")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
         studioTasks.MapPost("", async (
-            HttpContext context, StudioCreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.CreateTaskAsync(context, request.CompatibilityFields,
-                () => store.CreateStudioTaskAsync(request, TaskServerEndpoints.Actor(context), ct)))
+            HttpContext context, StudioCreateTaskRequest request, TaskServerStore store,
+            TaskServerBootstrapOptions options, CancellationToken ct)
+            => await CreateStudioCard(context, request, store, options, ct))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         studioTasks.MapGet("/archive", async (
@@ -115,5 +125,46 @@ internal static class StudioTaskLifecycleExtrasEndpoints
             => await TaskServerEndpoints.InvokeAsync(
                 () => store.ReorderTasksAsync(request, TaskServerEndpoints.Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+    }
+
+    internal static Task<IResult> CreateStudioCard(HttpContext context, StudioCreateTaskRequest request,
+        TaskServerStore store, TaskServerBootstrapOptions options, CancellationToken ct)
+    {
+        var actor = request.MagazineDeliverable is null ? TaskServerEndpoints.Actor(context) : MagazineAuthor(context, options);
+        return actor is null
+            ? Task.FromResult(Results.StatusCode(StatusCodes.Status403Forbidden))
+            : TaskServerEndpoints.CreateTaskAsync(context, request.CompatibilityFields,
+                async () =>
+                {
+                    var created = await store.CreateStudioTaskAsync(request, actor, MagazineUser(context), ct);
+                    return created with { Id = created.TaskId };
+                });
+    }
+
+    private static Task<IResult> AttachMagazine(HttpContext context, string projectId, string taskIdentity,
+        AttachMagazineDeliverableRequest request, TaskServerStore store, TaskServerBootstrapOptions options,
+        CancellationToken ct, bool previewOnly)
+        => MagazineAuthor(context, options) is { } actor
+            ? TaskServerEndpoints.InvokeAsync(() => store.AttachMagazineDeliverableAsync(
+                projectId, taskIdentity, request, actor, MagazineUser(context), previewOnly, ct))
+            : Task.FromResult(Results.StatusCode(StatusCodes.Status403Forbidden));
+
+    private static StudioAuthUserDto? MagazineUser(HttpContext context)
+        => context.Items[typeof(StudioAuthUserDto)] as StudioAuthUserDto;
+
+    private static string? MagazineAuthor(HttpContext context, TaskServerBootstrapOptions options)
+    {
+        if (MagazineUser(context) is { } user)
+            return user.Role is StudioUserRoles.Owner or StudioUserRoles.Operator && !user.MustChangePassword
+                ? user.UserId : null;
+        if (context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Studio } principal
+            && principal.Scopes.Contains(TaskServerScopes.Management))
+        {
+            // The management credential is the workspace-wide authority. A trusted Studio
+            // edge may attest the narrower MagazineAccess check and its authenticated author.
+            var delegated = context.Request.Headers[MagazineDeliverableContract.EdgeAuthorHeader].FirstOrDefault();
+            return string.IsNullOrWhiteSpace(delegated) ? principal.PrincipalId : delegated;
+        }
+        return options.RequiresAuthentication ? null : "local-operator";
     }
 }

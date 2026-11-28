@@ -55,7 +55,18 @@ public sealed record TaskDto(
     DateTime UpdatedAt,
     string? Body = null,
     string? ArchiveState = null,
-    DateTime? ArchivedAt = null);
+    DateTime? ArchivedAt = null)
+{
+    // The Studio create caller has historically used the shorter id field.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Id { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Mode { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MagazineDeliverableDeclaration? MagazineDeliverable { get; init; }
+}
 
 public sealed record RunnerInfrastructureFailureDto(
     string TaskKey,
@@ -91,6 +102,10 @@ public sealed record CreateWorkspaceRequest(string Name, string? WorkspaceId = n
 public sealed record CreateProjectRequest(string WorkspaceId, string Name, string TaskKeyPrefix, string? ProjectId = null);
 public sealed record CreateTaskRequest(string Title, string? Body = null, string State = "0-backlog", string? TaskId = null, string? TaskKey = null)
 {
+    public string? Mode { get; init; }
+    public string? Kind { get; init; }
+    public MagazineDeliverableRequest? MagazineDeliverable { get; init; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? CompatibilityFields { get; init; }
 }

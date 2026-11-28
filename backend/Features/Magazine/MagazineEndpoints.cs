@@ -236,14 +236,17 @@ public static class MagazineAccess
             {
                 var project = projects.FindById(scope.Id!) ?? projects.FindByShortCode(scope.Id);
                 if (project is null) return Refuse(StatusCodes.Status404NotFound, "magazine-scope-not-found", "No project has this id.");
+                var canonical = scope.WithId(project.Id);
+                if (permission == IamPermissions.MagazineWrite) return AuthorizeWrite(context, canonical);
                 if (access is not null && !access.AllowsProject(permission, project.Id)) return Forbidden(permission);
-                return new Resolution(scope.WithId(project.Id), null);
+                return new Resolution(canonical, null);
             }
             case MagazineScopeKind.Workspace:
             {
                 workspaces.EnsureLoaded();
                 var workspace = workspaces.Find(scope.Id!);
                 if (workspace is null) return Refuse(StatusCodes.Status404NotFound, "magazine-scope-not-found", "No workspace has this id.");
+                if (permission == IamPermissions.MagazineWrite) return AuthorizeWrite(context, scope.WithId(workspace.Id));
                 if (access is not null && !access.Allows(permission, PermissionTarget.WorkspaceWide)
                     && (permission != IamPermissions.MagazineRead
                         || !projects.List().Any(project => !project.Archived
@@ -253,9 +256,23 @@ public static class MagazineAccess
                 return new Resolution(scope.WithId(workspace.Id), null);
             }
             default:
+                if (permission == IamPermissions.MagazineWrite) return AuthorizeWrite(context, MagazineScope.Installation);
                 if (access is not null && !access.Allows(permission, PermissionTarget.WorkspaceWide)) return Forbidden(permission);
                 return new Resolution(MagazineScope.Installation, null);
         }
+    }
+
+    /// <summary>Checks write access after the owning registry has resolved the audience.</summary>
+    internal static Resolution AuthorizeWrite(HttpContext context, MagazineScope scope)
+    {
+        if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+        {
+            var allowed = scope.Kind == MagazineScopeKind.Project
+                ? access.AllowsProject(IamPermissions.MagazineWrite, scope.Id)
+                : access.Allows(IamPermissions.MagazineWrite, PermissionTarget.WorkspaceWide);
+            if (!allowed) return Forbidden(IamPermissions.MagazineWrite);
+        }
+        return new Resolution(scope, null);
     }
 
     private static Resolution Forbidden(string permission) => Refuse(StatusCodes.Status403Forbidden, "magazine-scope-denied",

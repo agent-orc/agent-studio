@@ -115,7 +115,8 @@ public static class RunnerRouteAuthorization
     public static bool CardLifecycleOnly(HttpContext context)
         => context.Items.TryGetValue(CardLifecycleOnlyItem, out var value) && value is true;
 
-    public static TaskDto LifecycleOnly(TaskDto task) => task with { Title = string.Empty, Body = null };
+    public static TaskDto LifecycleOnly(TaskDto task)
+        => task with { Title = string.Empty, Body = null, Mode = null, MagazineDeliverable = null };
 
     /// <summary>The claim role check of a coding or review claim route, or null when admitted.</summary>
     public static async Task<IResult?> ClaimRefusalAsync(HttpContext context, TaskServerStore store, string claimRole)

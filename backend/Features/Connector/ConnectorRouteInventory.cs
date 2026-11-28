@@ -16,7 +16,7 @@ public sealed record ConnectorRouteOperation(
 public sealed class ConnectorRouteInventory
 {
     public const string ResourceName = "AgentStudio.Connector.Routes";
-    public const string ExpectedInventorySha256 = "74875A0184EC76D3695B1A4D2EE671B7DFF0A540BFF5B0FF8981D14F641940F1";
+    public const string ExpectedInventorySha256 = "00142FADA1820815BA5610992BADED0D1F9F71DDEB88B64423B9D8F635B8ED02";
     public const string DevSeatClassification = "dev-seat";
     public const string TaskServerClassification = "task-server";
 
@@ -65,10 +65,10 @@ public sealed class ConnectorRouteInventory
         var document = JsonSerializer.Deserialize<InventoryDocument>(bytes)
             ?? throw new InvalidOperationException("Connector route inventory is empty.");
         var operations = document.FrontendRoutes ?? [];
-        if (operations.Count != 464
+        if (operations.Count != 466
             || operations.Count(operation => operation.Classification == DevSeatClassification) != 106
-            || operations.Count(operation => operation.Classification == TaskServerClassification) != 358)
-            throw new InvalidOperationException("Connector route inventory does not contain the approved 106/358 route split.");
+            || operations.Count(operation => operation.Classification == TaskServerClassification) != 360)
+            throw new InvalidOperationException("Connector route inventory does not contain the approved 106/360 route split.");
         if (operations.Any(operation => operation.Classification is not (DevSeatClassification or TaskServerClassification)))
             throw new InvalidOperationException("Connector route inventory contains an unclassified operation.");
 

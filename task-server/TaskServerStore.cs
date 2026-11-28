@@ -537,7 +537,11 @@ public sealed partial class TaskServerStore
         return result;
     }
 
-    public async Task<TaskDto> CreateTaskAsync(string projectId, CreateTaskRequest request, string actorId, CancellationToken ct)
+    public Task<TaskDto> CreateTaskAsync(string projectId, CreateTaskRequest request, string actorId, CancellationToken ct)
+        => CreateTaskAsync(projectId, request, actorId, ct, null, null, null);
+
+    private async Task<TaskDto> CreateTaskAsync(string projectId, CreateTaskRequest request, string actorId,
+        CancellationToken ct, string? mode, MagazineDeliverableRequest? magazine, string? scope)
     {
         RequireWritable();
         if (string.IsNullOrWhiteSpace(request.Title)) throw new ArgumentException("Task title is required.");
@@ -549,19 +553,26 @@ public sealed partial class TaskServerStore
             var taskKey = string.IsNullOrWhiteSpace(request.TaskKey)
                 ? $"{prefix}-{next}"
                 : request.TaskKey.Trim().ToUpperInvariant();
-            var now = Iso(UtcNow);
+            var createdAt = UtcNow;
+            var now = Iso(createdAt);
+            var declaration = magazine is null ? null
+                : MagazineDeliverableContract.Declare(magazine, scope!, taskKey, actorId, createdAt);
+            var body = declaration is null ? request.Body : MagazineDeliverableContract.Instructions(request.Body, declaration);
             await ExecuteAsync(connection, """
-                INSERT INTO tasks(id, project_id, task_key, title, body, state, version, created_at, updated_at)
-                VALUES ($id, $project, $key, $title, $body, $state, 1, $now, $now);
+                INSERT INTO tasks(id, project_id, task_key, title, body, state, version, created_at, updated_at,
+                    mode, magazine_deliverable_json)
+                VALUES ($id, $project, $key, $title, $body, $state, 1, $now, $now, $mode, $magazine);
                 """, ct, transaction,
                 ("$id", taskId), ("$project", projectId), ("$key", taskKey), ("$title", request.Title.Trim()),
-                ("$body", request.Body), ("$state", request.State), ("$now", now));
+                ("$body", body), ("$state", request.State), ("$now", now), ("$mode", mode),
+                ("$magazine", declaration is null ? null : JsonSerializer.Serialize(declaration, ExtrasJson)));
             await ExecuteAsync(connection,
                 "UPDATE projects SET next_task_number = MAX(next_task_number, $next), updated_at = $now WHERE id = $id;",
                 ct, transaction, ("$next", next + 1), ("$now", now), ("$id", projectId));
             await AuditAsync(connection, transaction, actorId, "task.created", "task", taskId,
                 JsonSerializer.Serialize(new { projectId, taskKey, request.State }), ct);
-            created = new TaskDto(taskId, projectId, taskKey, request.Title.Trim(), request.State, 1, Parse(now), Parse(now), request.Body);
+            created = new TaskDto(taskId, projectId, taskKey, request.Title.Trim(), request.State, 1, createdAt, createdAt, body)
+            { Mode = mode, MagazineDeliverable = declaration };
         }, ct);
         return created!;
     }
@@ -571,12 +582,13 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         var sql = projectId == UnscopedProjectToken
             ? """
-              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
                 FROM tasks
-               WHERE id = $identity;
+               WHERE id = $identity OR task_key = upper($identity)
+               ORDER BY CASE WHEN id = $identity THEN 0 ELSE 1 END LIMIT 1;
               """
             : $$"""
-              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
                 FROM tasks
                WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
@@ -594,7 +606,7 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         TaskDto? task;
         await using (var taskCommand = Command(connection, """
-            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
               FROM tasks
              WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
             """, ("$project", projectId), ("$identity", taskIdentity)))
@@ -702,7 +714,7 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
               FROM tasks WHERE project_id = $project ORDER BY created_at, task_key;
             """, ("$project", projectId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -5647,11 +5659,12 @@ public sealed partial class TaskServerStore
     {
         var sql = projectId == UnscopedProjectToken
             ? """
-              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
-                FROM tasks WHERE id = $identity;
+              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
+                FROM tasks WHERE id = $identity OR task_key = upper($identity)
+               ORDER BY CASE WHEN id = $identity THEN 0 ELSE 1 END LIMIT 1;
               """
             : $$"""
-              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+              SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
                 FROM tasks WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, transaction, ("$project", projectId), ("$identity", identity));
@@ -5663,6 +5676,8 @@ public sealed partial class TaskServerStore
     {
         var archiveStateOrdinal = TryGetOrdinal(reader, "archive_state");
         var archivedAtOrdinal = TryGetOrdinal(reader, "archived_at");
+        var modeOrdinal = TryGetOrdinal(reader, "mode");
+        var magazineOrdinal = TryGetOrdinal(reader, "magazine_deliverable_json");
         return new TaskDto(
             reader.GetString(0),
             reader.GetString(1),
@@ -5674,7 +5689,12 @@ public sealed partial class TaskServerStore
             Parse(reader.GetString(7)),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             archiveStateOrdinal is { } state && !reader.IsDBNull(state) ? reader.GetString(state) : null,
-            archivedAtOrdinal is { } archivedAt && !reader.IsDBNull(archivedAt) ? Parse(reader.GetString(archivedAt)) : null);
+            archivedAtOrdinal is { } archivedAt && !reader.IsDBNull(archivedAt) ? Parse(reader.GetString(archivedAt)) : null)
+        {
+            Mode = modeOrdinal is { } mode && !reader.IsDBNull(mode) ? reader.GetString(mode) : null,
+            MagazineDeliverable = magazineOrdinal is { } magazine && !reader.IsDBNull(magazine)
+                ? JsonSerializer.Deserialize<MagazineDeliverableDeclaration>(reader.GetString(magazine), ExtrasJson) : null,
+        };
     }
 
     private static int? TryGetOrdinal(SqliteDataReader reader, string columnName)

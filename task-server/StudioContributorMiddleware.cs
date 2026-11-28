@@ -48,6 +48,7 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
         }
         var user = status.User;
         context.Items["StudioActorId"] = user.UserId;
+        context.Items[typeof(StudioAuthUserDto)] = user;
         if (!StudioProductSession.IsProduct(user))
         {
             await next(context);

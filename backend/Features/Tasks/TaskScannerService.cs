@@ -942,6 +942,7 @@ public class TaskScannerService : ITaskScanner
                 OwnerClientId = ownerClientId,
                 Title = raw.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
                 AcceptanceScope = ReadAcceptanceScope(raw),
+                MagazineDeliverable = ResearchMagazineDeliverable.Read(raw),
                 State = resolvedState,
                 RemoteClaimFailure = raw.TryGetProperty("remoteClaimFailure", out var runnerFailure)
                     && runnerFailure.ValueKind == JsonValueKind.Object

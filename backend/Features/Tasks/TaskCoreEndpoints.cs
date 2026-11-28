@@ -63,6 +63,7 @@ public static class TaskCoreEndpoints
                 Id = core.Id, TaskKey = core.TaskKey, Key = core.Key,
                 WatchPath = core.WatchPath, FolderPath = core.FolderPath,
                 Title = core.Title, Kind = core.Kind, TaskType = core.TaskType,
+                MagazineDeliverable = core.MagazineDeliverable,
                 Lane = core.State, ArchiveState = core.ArchiveState,
                 EnteredLaneAt = core.EnteredLaneAt, Phase = core.Phase,
                 PhaseEnteredAt = core.PhaseEnteredAt, Order = core.Order,

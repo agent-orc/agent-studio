@@ -28,17 +28,17 @@
     ]
   },
   "counts": {
-    "frontendOperations": 464,
-    "frontendApiOperations": 463,
+    "frontendOperations": 466,
+    "frontendApiOperations": 465,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 358,
+      "task-server": 360,
       "dev-seat": 106,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
     "frontendV1Operations": 81,
-    "frontendV1OperationsExistingInStandaloneTaskServer": 307,
+    "frontendV1OperationsExistingInStandaloneTaskServer": 309,
     "d4bRoutesToAdd": 51
   },
   "d4bEstimate": {
@@ -9781,6 +9781,66 @@
       "estimate": null
     },
     {
+      "id": "fe-465",
+      "method": "PUT",
+      "path": "/api/tasks/{taskId}/magazine-deliverable",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "project"
+          ]
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/magazine-deliverable",
+      "frontendEvidence": [],
+      "decisionEvidence": [
+        "docs/system/domains/tasks.md#magazine-deliverables-on-research-cards"
+      ],
+      "classificationReason": "Card declaration and historical confirmation are durable task operations.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-466",
+      "method": "POST",
+      "path": "/api/tasks/{taskId}/magazine-deliverable/preview",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "project"
+          ]
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/magazine-deliverable/preview",
+      "frontendEvidence": [],
+      "decisionEvidence": [
+        "docs/system/domains/tasks.md#magazine-deliverables-on-research-cards"
+      ],
+      "classificationReason": "Card declaration and historical confirmation are durable task operations.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
       "id": "fe-324",
       "method": "POST",
       "path": "/api/tasks/{taskId}/planning-closure",
@@ -13984,7 +14044,7 @@
     {
       "id": "group-27",
       "path": "/api/tasks",
-      "frontendOperationCount": 88,
+      "frontendOperationCount": 90,
       "routeOwnership": "mixed",
       "evidence": "backend/Host/EndpointMapping.cs:23"
     },

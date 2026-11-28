@@ -63,7 +63,14 @@ public static class StudioV1LegacyRouteAlias
     public static IApplicationBuilder UseStudioV1LegacyRouteAlias(this IApplicationBuilder app, bool standaloneTaskServer)
         => app.Use((context, next) =>
         {
-            if (Resolve(context.Request.Method, context.Request.Path.Value ?? string.Empty, standaloneTaskServer) is { } target)
+            var method = context.Request.Method;
+            var path = context.Request.Path.Value ?? string.Empty;
+            if (standaloneTaskServer && StandaloneMagazineTaskRoute(method, path, context.Request.Query["project"].FirstOrDefault()) is { } upstream)
+            {
+                context.Items[OriginalPathItem] = context.Request.Path.Value;
+                context.Request.Path = new PathString(upstream);
+            }
+            else if (Resolve(method, path, standaloneTaskServer) is { } target)
             {
                 context.Items[OriginalPathItem] = context.Request.Path.Value;
                 context.Request.Path = new PathString(target.Path);
@@ -73,17 +80,33 @@ public static class StudioV1LegacyRouteAlias
             return next(context);
         });
 
+    private static string? StandaloneMagazineTaskRoute(string method, string path, string? project)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2 || !Is(segments[0], "api") || !Is(segments[1], "tasks")) return null;
+        if (segments.Length == 2 && HttpMethods.IsPost(method)) return "/api/v1/studio/tasks";
+        var attach = segments.Length == 4 && Is(segments[3], "magazine-deliverable") && HttpMethods.IsPut(method);
+        var preview = segments.Length == 5 && Is(segments[3], "magazine-deliverable") && Is(segments[4], "preview")
+            && HttpMethods.IsPost(method);
+        return attach || preview
+            ? $"/api/v1/projects/{Uri.EscapeDataString(project ?? UnscopedProjectToken)}/tasks/{segments[2]}" + Tail(segments, 3)
+            : null;
+    }
+
     private static LegacyTarget? ResolveTask(string method, string[] segments)
     {
         // /api/v1/projects/{projectId}/tasks/{taskId}[/{verb}]
-        if (segments.Length is not (6 or 7) || !Is(segments[4], "tasks")) return null;
+        if (segments.Length is < 6 or > 8 || !Is(segments[4], "tasks")) return null;
         var project = segments[3] == UnscopedProjectToken ? null : segments[3];
         var legacy = "/api/tasks/" + segments[5];
         if (segments.Length == 6)
             return HttpMethods.IsGet(method) || HttpMethods.IsDelete(method) ? new LegacyTarget(legacy, project) : null;
         var verb = segments[6];
+        if (segments.Length == 8)
+            return HttpMethods.IsPost(method) && Is(verb, "magazine-deliverable") && Is(segments[7], "preview")
+                ? new LegacyTarget($"{legacy}/magazine-deliverable/preview", project) : null;
         var allowed = HttpMethods.IsPost(method) && TaskPostVerbs.Any(item => Is(item, verb))
-            || HttpMethods.IsPut(method) && Is(verb, "state");
+            || HttpMethods.IsPut(method) && (Is(verb, "state") || Is(verb, "magazine-deliverable"));
         return allowed ? new LegacyTarget($"{legacy}/{verb}", project) : null;
     }
 
@@ -98,6 +121,8 @@ public static class StudioV1LegacyRouteAlias
             return new LegacyTarget("/api/auth/invite/accept", null);
         if (rest.Length == 3 && Is(rest[0], "auth") && Is(rest[1], "invite") && Is(rest[2], "preview") && get)
             return new LegacyTarget("/api/auth/invite/preview", null);
+        if (rest.Length == 1 && Is(rest[0], "tasks") && post)
+            return new LegacyTarget("/api/tasks", null);
         if (rest.Length == 1 && Is(rest[0], "board") && get)
             return new LegacyTarget("/api/tasks/grouped", null);
         if (rest.Length >= 3 && Is(rest[0], "orchestrator") && Is(rest[1], "context"))

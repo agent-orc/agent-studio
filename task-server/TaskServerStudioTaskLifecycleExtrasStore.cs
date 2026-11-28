@@ -29,6 +29,8 @@ public sealed partial class TaskServerStore
     /// </summary>
     internal async Task ApplyStudioTaskLifecycleExtrasMigrationAsync(SqliteConnection connection, CancellationToken ct)
     {
+        await EnsureColumnAsync(connection, "tasks", "mode", "TEXT", ct);
+        await EnsureColumnAsync(connection, "tasks", "magazine_deliverable_json", "TEXT", ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS task_batch_moves(
                 batch_id TEXT PRIMARY KEY,
@@ -59,17 +61,150 @@ public sealed partial class TaskServerStore
 
     // ---- Task creation (POST /api/tasks -> /api/v1/studio/tasks) ----
 
-    public async Task<TaskDto> CreateStudioTaskAsync(StudioCreateTaskRequest request, string actorId, CancellationToken ct)
+    public Task<TaskDto> CreateStudioTaskAsync(StudioCreateTaskRequest request, string actorId, CancellationToken ct)
+        => CreateStudioTaskAsync(request, actorId, null, ct);
+
+    internal async Task<TaskDto> CreateStudioTaskAsync(StudioCreateTaskRequest request, string actorId,
+        StudioAuthUserDto? user, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.ProjectId))
+        var projectIdentity = request.Project ?? request.ProjectId;
+        if (string.IsNullOrWhiteSpace(projectIdentity))
             throw new ArgumentException("A project id is required.");
-        var project = await RequireProjectAsync(request.ProjectId, ct);
-        var state = string.IsNullOrWhiteSpace(request.State) ? StudioTaskLanes.Backlog : request.State;
-        return await CreateTaskAsync(
-            project.ProjectId,
-            new CreateTaskRequest(request.Title, request.Body, state, request.TaskId, request.TaskKey),
-            actorId,
-            ct);
+        var project = await RequireProjectAsync(projectIdentity, ct);
+        var requestedState = request.TargetState ?? request.State;
+        var state = string.IsNullOrWhiteSpace(requestedState) ? StudioTaskLanes.Backlog : requestedState;
+        var mode = request.Mode?.Trim().ToLowerInvariant();
+        string? scope = null;
+        if (request.MagazineDeliverable is { } magazine)
+        {
+            if (!MagazineDeliverableContract.IsResearch(mode, request.Kind)
+                || state is StudioTaskLanes.Completed or StudioTaskLanes.Archive)
+                throw new ArgumentException("Declare a Magazine destination on a research card before acceptance.");
+            await using var connection = await OpenReadyAsync(ct);
+            scope = await ResolveMagazineScopeAsync(connection, null, magazine, ct);
+            RequireMagazineProjectAccess(user, project.ProjectId, scope);
+        }
+        return await CreateTaskAsync(project.ProjectId,
+            new CreateTaskRequest(request.Title, request.PromptMarkdown ?? request.Body, state, request.TaskId, request.TaskKey),
+            actorId, ct, mode, request.MagazineDeliverable, scope);
+    }
+
+    private static readonly HashSet<string> MagazineCatalogueIds = typeof(TaskServerStore).Assembly.GetManifestResourceNames()
+        .Where(name => name.StartsWith("MagazineCatalogue.", StringComparison.Ordinal)
+                       && name.EndsWith(".persona", StringComparison.Ordinal))
+        .Select(name => name["MagazineCatalogue.".Length..^".persona".Length])
+        .ToHashSet(StringComparer.Ordinal);
+
+    private static async Task<string> ResolveMagazineScopeAsync(SqliteConnection connection,
+        SqliteTransaction? transaction, MagazineDeliverableRequest request, CancellationToken ct)
+    {
+        if (MagazineDeliverableContract.Validate(request, MagazineCatalogueIds.Contains) is { } error)
+            throw new ArgumentException(error);
+        var scope = request.Scope.Trim();
+        if (scope.Equals("installation", StringComparison.OrdinalIgnoreCase)) return "installation";
+        var parts = scope.Split(':', 2);
+        var kind = parts[0].ToLowerInvariant();
+        var sql = kind == "workspace"
+            ? "SELECT id FROM workspaces WHERE id = $id COLLATE NOCASE;"
+            : "SELECT id FROM projects WHERE id = $id COLLATE NOCASE;";
+        var id = await ScalarAsync(connection, sql, ct, transaction, ("$id", parts[1])) as string
+            ?? throw new KeyNotFoundException("The Magazine audience does not exist.");
+        return kind + ":" + id;
+    }
+
+    internal async Task<object> AttachMagazineDeliverableAsync(string projectId, string taskIdentity,
+        AttachMagazineDeliverableRequest request, string actorId, StudioAuthUserDto? user, bool previewOnly, CancellationToken ct)
+    {
+        if (!previewOnly) RequireWritable();
+        if (request.MagazineDeliverable is null) throw new ArgumentException("A Magazine deliverable is required.");
+        object? result = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var task = await ReadTaskAsync(connection, transaction, projectId, taskIdentity, ct)
+                ?? throw new KeyNotFoundException("Task was not found.");
+            if (!MagazineDeliverableContract.IsResearch(task.Mode, null))
+                throw new ArgumentException("Only research cards can declare a Magazine destination.");
+            var scope = await ResolveMagazineScopeAsync(connection, transaction, request.MagazineDeliverable, ct);
+            RequireMagazineProjectAccess(user, task.ProjectId, scope);
+            var completed = task.State is StudioTaskLanes.Completed or StudioTaskLanes.Archive || task.ArchivedAt is not null;
+            var version = request.AcceptedResultVersion?.Trim();
+            if (completed != (version is not null))
+                throw new TaskServerConflictException("magazine-version-required", "An accepted card requires an exact accepted result version.");
+            if (completed && !await IsAcceptedMagazineRunAsync(connection, transaction, task.TaskId, version!, ct))
+                throw new TaskServerConflictException("magazine-version-unknown", "The requested version is not a known accepted Magazine bundle for this card.");
+
+            var declaration = MagazineDeliverableContract.Declare(request.MagazineDeliverable, scope, task.TaskKey,
+                actorId, UtcNow, version);
+            var preview = MagazineDeliverableContract.Preview(task.TaskKey, declaration);
+            if (task.MagazineDeliverable is { } existing)
+            {
+                if (previewOnly || MagazineDeliverableContract.Preview(task.TaskKey, existing) != preview
+                    || completed && request.Confirmation != preview.Confirmation)
+                    throw new TaskServerConflictException("magazine-already-declared", "This card already has a Magazine declaration.");
+                result = existing;
+                return;
+            }
+            if (previewOnly)
+            {
+                result = preview;
+                return;
+            }
+            if (completed && request.Confirmation != preview.Confirmation)
+                throw new TaskServerConflictException("magazine-confirmation-required", "Preview and confirm the exact audience and accepted result version.");
+            await ExecuteAsync(connection, """
+                UPDATE tasks SET magazine_deliverable_json = $declaration, version = version + 1, updated_at = $now
+                 WHERE id = $id;
+                """, ct, transaction, ("$declaration", JsonSerializer.Serialize(declaration, ExtrasJson)),
+                ("$now", Iso(UtcNow)), ("$id", task.TaskId));
+            await AuditAsync(connection, transaction, actorId, "task.magazine-declared", "task", task.TaskId,
+                JsonSerializer.Serialize(preview with { Confirmation = "" }, ExtrasJson), ct);
+            result = declaration;
+        }, ct);
+        return result!;
+    }
+
+    private static void RequireMagazineProjectAccess(StudioAuthUserDto? user, string project, string scope)
+    {
+        if (user is not { Role: StudioUserRoles.Operator, ProjectIds.Count: > 0 }) return;
+        const string prefix = "project:";
+        if (!user.ProjectIds.Contains(project, StringComparer.Ordinal)
+            || !scope.StartsWith(prefix, StringComparison.Ordinal)
+            || !user.ProjectIds.Contains(scope[prefix.Length..], StringComparer.Ordinal))
+            throw new StudioAuthorizationException("magazine-scope-denied",
+                "This operator needs access to both the card project and the Magazine audience.");
+    }
+
+    private static async Task<bool> IsAcceptedMagazineRunAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string taskId, string version, CancellationToken ct)
+    {
+        // A completed run has an immutable completion envelope and artifact inventory.
+        // Acceptance must follow that completion and identify the latest run at that point.
+        if (!version.StartsWith("run-", StringComparison.Ordinal) || version.Length <= 4) return false;
+        var run = version[4..];
+        var accepted = await ScalarAsync(connection, """
+            SELECT a.occurred_at
+              FROM audit a
+              JOIN run_completions c ON c.run_id = $run AND c.completed_at <= a.occurred_at
+             WHERE a.target_type = 'task' AND a.target_id = $task AND a.action = 'task.moved'
+               AND json_extract(a.detail_json, '$.from') = '5-human-review'
+               AND json_extract(a.detail_json, '$.to') = '6-completed'
+               AND $run = (
+                   SELECT id FROM runs WHERE task_id = $task AND created_at <= a.occurred_at
+                   ORDER BY created_at DESC, id DESC LIMIT 1
+               )
+             ORDER BY a.sequence LIMIT 1;
+            """, ct, transaction, ("$task", taskId), ("$run", run)) as string;
+        if (accepted is null) return false;
+        foreach (var path in MagazineDeliverableContract.ResultFiles)
+        {
+            var count = await ScalarAsync(connection, """
+                SELECT COUNT(*) FROM artifacts a
+                  JOIN run_completions c ON c.run_id = a.run_id
+                 WHERE a.run_id = $run AND (a.name = $path OR a.name = $name) AND a.created_at <= c.completed_at;
+                """, ct, transaction, ("$run", run), ("$path", path), ("$name", path["results/".Length..]));
+            if (count is not 1L) return false;
+        }
+        return true;
     }
 
     // ---- Dependents (reverse task_references lookup) ----
@@ -179,7 +314,7 @@ public sealed partial class TaskServerStore
             ("$offset", (long)offset),
         };
         await using var command = Command(connection, $"""
-            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
               FROM tasks
              WHERE {where}
              ORDER BY archived_at DESC, updated_at DESC

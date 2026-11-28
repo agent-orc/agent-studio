@@ -15,7 +15,7 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         var lanes = StudioTaskLanes.All.ToDictionary(lane => lane, _ => new List<TaskDto>(), StringComparer.Ordinal);
         await using var command = Command(connection, """
-            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
+            SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at, mode, magazine_deliverable_json
               FROM tasks
              ORDER BY state, rank, task_key;
             """);

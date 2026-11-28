@@ -380,11 +380,17 @@ public static class TaskServerEndpoints
             string projectId, string taskIdentity, long? after, TaskServerStore store, CancellationToken ct)
             => await InvokeNullableAsync(() => store.GetTaskHistoryAsync(projectId, taskIdentity, after ?? 0, ct)));
         api.MapPost("/projects/{projectId}/tasks", async (
-            HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
+            HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store,
+            TaskServerBootstrapOptions options, CancellationToken ct)
             => StudioProductSession.IsProduct(context) && !StudioProductSession.AllowsCreate(request.State)
                 ? StudioProductSession.Denied()
-                : await CreateTaskAsync(context, request.CompatibilityFields,
-                    () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
+                : request.MagazineDeliverable is not null || (request.Mode is not null && !StudioProductSession.IsProduct(context))
+                    ? await StudioTaskLifecycleExtrasEndpoints.CreateStudioCard(context,
+                        new StudioCreateTaskRequest(projectId, request.Title, request.Body, request.State, request.TaskId, request.TaskKey)
+                        { Mode = request.Mode, Kind = request.Kind, MagazineDeliverable = request.MagazineDeliverable,
+                            CompatibilityFields = request.CompatibilityFields }, store, options, ct)
+                    : await CreateTaskAsync(context, request.CompatibilityFields,
+                        () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)

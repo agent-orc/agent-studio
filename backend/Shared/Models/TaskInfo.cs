@@ -24,6 +24,8 @@ public record TaskInfo
     /// </summary>
     public string? Key { get; init; }
     public string Title { get; init; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentStudio.TaskServer.Contracts.MagazineDeliverableDeclaration? MagazineDeliverable { get; init; }
     /// <summary>
     /// Explicit requirement-fit boundary for this delivery. Null preserves the
     /// legacy rule that the complete task body is the acceptance scope, subject

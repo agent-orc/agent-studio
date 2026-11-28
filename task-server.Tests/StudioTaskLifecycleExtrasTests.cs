@@ -4,6 +4,7 @@ using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace TaskServer.Tests;
@@ -25,11 +26,149 @@ public sealed class StudioTaskLifecycleExtrasTests(StudioClassFixture fixture) :
         var created = await response.Content.ReadFromJsonAsync<TaskDto>();
         Assert.NotNull(created);
         Assert.Equal(project.ProjectId, created!.ProjectId);
+        Assert.Equal(created.TaskId, created.Id);
         Assert.Equal("0-backlog", created.State);
 
         var fetched = await store.GetTaskAsync(project.ProjectId, created.TaskId, default);
         Assert.NotNull(fetched);
         Assert.Equal("Studio-created task", fetched!.Title);
+    }
+
+    [Fact]
+    public async Task Magazine_commission_persists_through_the_normal_create_and_detail_routes()
+    {
+        using var client = StudioTestClient.Create(fixture.Factory);
+        var store = fixture.Factory.Services.GetRequiredService<TaskServerStore>();
+        var project = await SeedProjectAsync(store, "Extras Magazine");
+        // clock-independent: reporting dates are serialized data and are never compared with now.
+        var audience = new MagazineDeliverableRequest("workspace:" + project.WorkspaceId.ToUpperInvariant(),
+            PersonaId: "security-officer", RoleId: "security-officer",
+            ReportingWindow: new(new DateOnly(2026, 11, 21), new DateOnly(2026, 11, 27)));
+
+        using var createdResponse = await client.PostAsJsonAsync("/api/v1/studio/tasks", new
+        {
+            project = project.ProjectId, title = "Research the week", mode = "research", promptMarkdown = "Review changes.",
+            magazineDeliverable = audience,
+        });
+        Assert.True(createdResponse.StatusCode == HttpStatusCode.Created, await createdResponse.Content.ReadAsStringAsync());
+        var created = (await createdResponse.Content.ReadFromJsonAsync<TaskDto>())!;
+        var reloaded = await client.GetFromJsonAsync<TaskDto>($"/api/v1/projects/-/tasks/{created.TaskKey}");
+        Assert.Equal(created.MagazineDeliverable, reloaded!.MagazineDeliverable);
+        var declaration = Assert.IsType<MagazineDeliverableDeclaration>(reloaded.MagazineDeliverable);
+        Assert.Equal("workspace:" + project.WorkspaceId, declaration.Scope);
+        Assert.Equal(created.TaskKey.ToLowerInvariant(), declaration.Slug);
+        Assert.Equal(audience.ReportingWindow, declaration.ReportingWindow);
+        Assert.Equal("security-officer", declaration.PersonaId);
+        Assert.Equal("local-operator", declaration.AuthorizedBy);
+        Assert.Equal("awaiting-publication", declaration.PublicationStatus);
+        Assert.Null(RunnerRouteAuthorization.LifecycleOnly(reloaded).MagazineDeliverable);
+        Assert.Contains("Acceptance authorizes publication", reloaded.Body, StringComparison.Ordinal);
+        Assert.All(MagazineDeliverableContract.ResultFiles,
+            name => Assert.Contains(name, reloaded.Body, StringComparison.Ordinal));
+
+        using var coding = await client.PostAsJsonAsync("/api/v1/studio/tasks", new
+        {
+            project = project.ProjectId, title = "Coding card", mode = "coding", magazineDeliverable = audience,
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, coding.StatusCode);
+    }
+
+    [Fact]
+    public async Task Magazine_attachment_by_key_keeps_the_original_body_and_normal_legacy_cards()
+    {
+        using var client = StudioTestClient.Create(fixture.Factory);
+        var store = fixture.Factory.Services.GetRequiredService<TaskServerStore>();
+        var project = await SeedProjectAsync(store, "Extras Editorial");
+        var task = await store.CreateStudioTaskAsync(new StudioCreateTaskRequest(project.ProjectId, "Weekly report", "Original brief")
+            { Mode = "research" }, "test", default);
+        var path = $"/api/v1/projects/-/tasks/{task.TaskKey}";
+        Assert.Null((await client.GetFromJsonAsync<TaskDto>(path))!.MagazineDeliverable);
+        var audience = new MagazineDeliverableRequest("project:" + project.ProjectId.ToUpperInvariant(), "weekly-report");
+        using var attached = await client.PutAsJsonAsync(path + "/magazine-deliverable", new AttachMagazineDeliverableRequest(audience));
+        Assert.True(attached.IsSuccessStatusCode, await attached.Content.ReadAsStringAsync());
+        var reloaded = (await client.GetFromJsonAsync<TaskDto>(path))!;
+        Assert.Equal("Original brief", reloaded.Body);
+        Assert.Equal("project:" + project.ProjectId, reloaded.MagazineDeliverable!.Scope);
+        using var conflict = await client.PutAsJsonAsync(path + "/magazine-deliverable",
+            new AttachMagazineDeliverableRequest(audience with { Slug = "another-report" }));
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task Magazine_declaration_requires_more_than_a_task_write_credential()
+    {
+        using var temp = new TempDirectory();
+        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        await using var factory = new StudioTestApiFactory(temp.Path).WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskServer:AuthMode"] = "bearer",
+                ["TaskServer:AuthToken"] = token,
+            })));
+        using var client = StudioTestClient.Create(factory);
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        var project = await SeedProjectAsync(store, "Extras Rights");
+        var writer = await store.CreatePrincipalAsync(new CreatePrincipalRequest("card-writer", TaskServerPrincipalKinds.Studio,
+            [TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite]), "test", default);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", writer.Credential);
+        var request = new StudioCreateTaskRequest(project.ProjectId, "Restricted research")
+        {
+            Mode = "research", MagazineDeliverable = new("workspace:" + project.WorkspaceId),
+        };
+        using var undeclared = await client.PostAsJsonAsync("/api/v1/studio/tasks", request with { MagazineDeliverable = null });
+        Assert.Equal(HttpStatusCode.Created, undeclared.StatusCode);
+        using var declared = await client.PostAsJsonAsync("/api/v1/studio/tasks", request);
+        Assert.Equal(HttpStatusCode.Forbidden, declared.StatusCode);
+        var card = (await undeclared.Content.ReadFromJsonAsync<TaskDto>())!;
+        using var attached = await client.PutAsJsonAsync($"/api/v1/projects/-/tasks/{card.TaskKey}/magazine-deliverable",
+            new AttachMagazineDeliverableRequest(request.MagazineDeliverable!));
+        Assert.Equal(HttpStatusCode.Forbidden, attached.StatusCode);
+    }
+
+    [Fact]
+    public async Task Historical_magazine_attachment_previews_the_accepted_run_before_confirmation()
+    {
+        using var client = StudioTestClient.Create(fixture.Factory);
+        var store = fixture.Factory.Services.GetRequiredService<TaskServerStore>();
+        var project = await SeedProjectAsync(store, "Extras History");
+        var task = await store.CreateStudioTaskAsync(new StudioCreateTaskRequest(project.ProjectId, "Accepted report",
+            State: StudioTaskLanes.HumanReview) { Mode = "research" }, "test", default);
+        const string run = "historical-research-run";
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO runs(id, task_id, status, created_at, finished_at)
+                VALUES ($run, $task, 'completed', $at, $at);
+                INSERT INTO run_completions(run_id, outcome, sequence, idempotency_key, completed_at)
+                VALUES ($run, 'success', 4, $run, $at);
+                INSERT INTO artifacts(id, run_id, name, media_type, sha256, size_bytes, idempotency_key, fence, created_at)
+                VALUES ('historical-article-md', $run, 'results/article.md', 'text/markdown', 'fixture', 1, 'historical-md', 1, $at),
+                       ('historical-article-json', $run, 'results/article.json', 'application/json', 'fixture', 1, 'historical-json', 1, $at),
+                       ('historical-items-json', $run, 'results/items.json', 'application/json', 'fixture', 1, 'historical-items', 1, $at);
+                """;
+            command.Parameters.AddWithValue("$task", task.TaskId);
+            command.Parameters.AddWithValue("$run", run);
+            command.Parameters.AddWithValue("$at", task.CreatedAt.AddMinutes(-1).ToString("O"));
+            await command.ExecuteNonQueryAsync();
+        }
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId, new MoveTaskRequest(StudioTaskLanes.Completed), "reviewer", default);
+        var path = $"/api/v1/projects/-/tasks/{task.TaskKey}/magazine-deliverable";
+        var request = new AttachMagazineDeliverableRequest(new("workspace:" + project.WorkspaceId), "run-" + run);
+        using var unconfirmed = await client.PutAsJsonAsync(path, request);
+        Assert.Equal(HttpStatusCode.Conflict, unconfirmed.StatusCode);
+        using var unknown = await client.PostAsJsonAsync(path + "/preview", request with { AcceptedResultVersion = "run-other" });
+        Assert.Equal(HttpStatusCode.Conflict, unknown.StatusCode);
+        using var proposed = await client.PostAsJsonAsync(path + "/preview", request);
+        Assert.True(proposed.IsSuccessStatusCode, await proposed.Content.ReadAsStringAsync());
+        var preview = (await proposed.Content.ReadFromJsonAsync<MagazineDeliverablePreview>())!;
+        Assert.Equal(request.AcceptedResultVersion, preview.AcceptedResultVersion);
+        Assert.Equal(request.MagazineDeliverable.Scope, preview.Scope);
+        using var confirmed = await client.PutAsJsonAsync(path, request with { Confirmation = preview.Confirmation });
+        Assert.True(confirmed.IsSuccessStatusCode, await confirmed.Content.ReadAsStringAsync());
+        var reloaded = await client.GetFromJsonAsync<TaskDto>($"/api/v1/projects/-/tasks/{task.TaskKey}");
+        Assert.Equal(request.AcceptedResultVersion, reloaded!.MagazineDeliverable!.AcceptedResultVersion);
     }
 
     [Fact]

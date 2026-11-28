@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+using CreateTaskRequest = AgentStudio.Shared.CreateTaskRequest;
 
 namespace AgentStudio.Tasks;
 
@@ -2176,7 +2178,62 @@ public class TaskMutationService
 
     public string? CreateJob(CreateTaskRequest req) => CreateJob(req, initialReferences: null);
 
-    private string? CreateJob(CreateTaskRequest req, TaskReferences? initialReferences)
+    private static readonly JsonSerializerOptions MagazineJson = new(JsonSerializerDefaults.Web);
+
+    internal IResult AttachMagazineDeliverable(TaskInfo expected, AttachMagazineDeliverableRequest request,
+        string scope, string actor, TaskFileHistoryService history, bool previewOnly)
+    {
+        var acceptedVersion = request.AcceptedResultVersion?.Trim().ToLowerInvariant();
+        if (acceptedVersion is not null && !history.IsAcceptedMagazineResult(expected, acceptedVersion))
+            return Results.Conflict(new { error = "The requested version is not a known accepted Magazine bundle for this card." });
+
+        using var laneLock = _laneMutex.Acquire(expected.WatchPath);
+        MagazineDeliverableDeclaration declaration;
+        lock (TaskJsonFile.SyncRoot(expected.FolderPath))
+        {
+            var task = ReadCurrentRoutingCard(expected);
+            if (task is null || task.State != expected.State)
+                return Results.Conflict(new { error = "The card changed while checking the declaration." });
+            if (!MagazineDeliverableContract.IsResearch(task.Mode, task.Kind))
+                return Results.BadRequest(new { error = "Only research cards can declare a Magazine destination." });
+            var completed = task.State is TaskStates.Completed or TaskStates.Archive;
+            if (completed != (acceptedVersion is not null))
+                return Results.Conflict(new { error = "An accepted card requires an exact accepted result version." });
+
+            var key = task.Key ?? task.Id;
+            try
+            {
+                declaration = MagazineDeliverableContract.Declare(request.MagazineDeliverable, scope, key,
+                    actor, DateTimeOffset.UtcNow, acceptedVersion);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            var preview = MagazineDeliverableContract.Preview(key, declaration);
+            if (task.MagazineDeliverable is { } existing)
+            {
+                if (!previewOnly && MagazineDeliverableContract.Preview(key, existing) == preview
+                    && (!completed || request.Confirmation == preview.Confirmation))
+                    return Results.Ok(existing);
+                return Results.Conflict(new { error = "This card already has a Magazine declaration." });
+            }
+            if (previewOnly) return Results.Ok(preview);
+            if (completed && request.Confirmation != preview.Confirmation)
+                return Results.Conflict(new { error = "Preview and confirm the exact audience and accepted result version." });
+            if (!TaskJsonFile.UpdateField(task.FolderPath, ResearchMagazineDeliverable.Field,
+                    JsonSerializer.SerializeToElement(declaration, MagazineJson), _logger, _keyFileWriter))
+                return Results.Conflict(new { error = "The card changed before the declaration was saved." });
+        }
+        Updated(expected);
+        return Results.Ok(declaration);
+    }
+
+    internal string? CreateJobWithMagazineDeclaration(CreateTaskRequest request, MagazineDeliverableDeclaration? declaration)
+        => CreateJob(request, initialReferences: null, declaration: declaration);
+
+    private string? CreateJob(CreateTaskRequest req, TaskReferences? initialReferences,
+        MagazineDeliverableDeclaration? declaration = null)
     {
         var watchPaths = _scanner.GetWatchPaths();
         // D1: a caller addresses the target project by a path-free handle — a
@@ -2344,6 +2401,12 @@ public class TaskMutationService
                     TaskStorageLayout.TryParseKeyNumber(storageId, out storageNumber);
                     jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
                 }
+                if (declaration is { Slug.Length: 0 })
+                {
+                    var slug = storageId.ToLowerInvariant();
+                    if (!MagazineDeliverableContract.SlugPattern().IsMatch(slug)) return null;
+                    declaration = declaration with { Slug = slug };
+                }
                 Directory.CreateDirectory(jobDir);
                 var orderKey = entry.Path + "::" + targetState;
                 var residentMax = jobs
@@ -2462,14 +2525,18 @@ public class TaskMutationService
         }
 
         jobJson["key"] = storageId;
+        if (declaration is not null)
+            jobJson[ResearchMagazineDeliverable.Field] = JsonSerializer.SerializeToElement(declaration, MagazineJson);
 
         using (TaskSwitchTrace.Span("mutation.write"))
         {
             File.WriteAllText(Path.Combine(jobDir, "task.json"),
                 JsonSerializer.Serialize(jobJson, new JsonSerializerOptions { WriteIndented = true }));
 
-            if (!string.IsNullOrWhiteSpace(req.PromptMarkdown))
-                File.WriteAllText(Path.Combine(jobDir, "prompt.md"), req.PromptMarkdown);
+            var prompt = declaration is null ? req.PromptMarkdown
+                : MagazineDeliverableContract.Instructions(req.PromptMarkdown, declaration);
+            if (!string.IsNullOrWhiteSpace(prompt))
+                File.WriteAllText(Path.Combine(jobDir, "prompt.md"), prompt);
         }
 
         var location = TaskStorageLayout.Location(storageNumber, storageId);

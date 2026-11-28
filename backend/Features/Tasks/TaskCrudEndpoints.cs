@@ -2,6 +2,8 @@ using System.Diagnostics;
 
 using static AgentStudio.Tasks.TaskEndpointHelpers;
 using AgentStudio.Prompts;
+using MagazineDeliverableContract = AgentStudio.TaskServer.Contracts.MagazineDeliverableContract;
+using MagazineDeliverableDeclaration = AgentStudio.TaskServer.Contracts.MagazineDeliverableDeclaration;
 namespace AgentStudio.Tasks;
 
 /// <summary>
@@ -1066,6 +1068,7 @@ public static class TaskCrudEndpoints
                 : null;
             if (productUser is not null)
             {
+                if (req.MagazineDeliverable is not null) return Results.StatusCode(StatusCodes.Status403Forbidden);
                 var effectiveState = string.IsNullOrWhiteSpace(req.TargetState)
                     ? TaskKinds.IsDecision(req.Kind) ? TaskStates.Preparation : TaskStates.Backlog
                     : req.TargetState;
@@ -1214,7 +1217,23 @@ public static class TaskCrudEndpoints
                 }
             }
 
-            var jobId = mutations.CreateJob(req);
+            MagazineDeliverableDeclaration? declaration = null;
+            if (req.MagazineDeliverable is { } magazine)
+            {
+                if (!MagazineDeliverableContract.IsResearch(req.Mode, req.Kind)
+                    || req.TargetState is TaskStates.Completed or TaskStates.Archive)
+                    return Results.BadRequest(new { error = "Declare a Magazine destination on a research card before acceptance." });
+                var destinationProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
+                if (!ProjectAccessAuthorization.AllowsTasks(ctx, [destinationProject], IamPermissions.ProjectCardsWrite, projects))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                var resolved = ResearchMagazineDeliverable.Authorize(ctx, magazine, projects,
+                    ctx.RequestServices.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>(),
+                    ctx.RequestServices.GetRequiredService<AgentStudio.Personas.PersonaCatalogue>());
+                if (resolved.Refusal is { } refusal) return refusal;
+                declaration = new(resolved.Scope!.ToString(), magazine.Slug ?? "", magazine.PersonaId,
+                    magazine.RoleId, magazine.ReportingWindow, ResearchMagazineDeliverable.Actor(ctx), DateTimeOffset.UtcNow);
+            }
+            var jobId = mutations.CreateJobWithMagazineDeclaration(req, declaration);
             if (jobId is not null) autoTag.Wake();
             return jobId is null
                 ? Results.Conflict("Job already exists or invalid input")
@@ -1222,6 +1241,7 @@ public static class TaskCrudEndpoints
         }
 
         group.MapPost("/", CreateTask);
+        ResearchMagazineDeliverable.MapAttachment(group);
 
         group.MapPost("/batch", async (CreateTaskBatchRequest request,
             HttpContext ctx,

@@ -14,6 +14,8 @@ public sealed record TaskCoreResponse
     public string FolderPath { get; init; } = "";
     public string? Key { get; init; }
     public string Title { get; init; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentStudio.TaskServer.Contracts.MagazineDeliverableDeclaration? MagazineDeliverable { get; init; }
     public string Kind { get; init; } = "task";
     public string TaskType { get; init; } = "chore";
     public string Lane { get; init; } = "";

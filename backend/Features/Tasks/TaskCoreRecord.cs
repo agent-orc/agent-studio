@@ -27,6 +27,8 @@ public sealed record TaskCoreRecord
     public string FolderPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
     public string Title { get; init; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AgentStudio.TaskServer.Contracts.MagazineDeliverableDeclaration? MagazineDeliverable { get; init; }
     public string State { get; init; } = "";
     public string? ArchiveState { get; init; }
     public DateTime EnteredLaneAt { get; init; }
@@ -104,7 +106,7 @@ public sealed record TaskCoreRecord
             Commits = info.Commits.ToArray(), Commit = info.Commit,
             LastUsage = info.LastUsage,
             ProjectName = Limit(info.ProjectName, 128)!,
-            Title = Limit(info.Title, 1024)!, State = info.State,
+            Title = Limit(info.Title, 1024)!, State = info.State, MagazineDeliverable = info.MagazineDeliverable,
             ArchiveState = info.ArchiveState, EnteredLaneAt = info.EnteredLaneAt,
             Phase = info.Phase, PhaseEnteredAt = info.PhaseEnteredAt,
             Order = info.Order, Mode = info.Mode, Kind = info.Kind, TaskType = info.TaskType,

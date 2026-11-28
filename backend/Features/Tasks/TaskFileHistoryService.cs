@@ -460,6 +460,66 @@ public sealed class TaskFileHistoryService
         return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok(versions, TaskFileSources.Workspace);
     }
 
+    internal bool IsAcceptedMagazineResult(TaskInfo task, string version)
+    {
+        if (version.Length != 44 || !version.StartsWith("git-", StringComparison.Ordinal)
+            || !IsSha(version[4..])) return false;
+        var sha = version[4..];
+        var budget = new GitCallBudget(_gitCallBudget, clock: _clock);
+        var root = ResolveGitRoot(budget, task.WatchPath);
+        if (root is null) return false;
+        // Only a commit retained on the workspace's own history can attest acceptance.
+        if (RunGit(budget, root, "merge-base", "--is-ancestor", sha, "HEAD").Code != 0)
+            return false;
+
+        var path = Path.GetRelativePath(root, Path.Combine(task.FolderPath, "task.json")).Replace('\\', '/');
+        if (Path.IsPathRooted(path) || path.StartsWith("..", StringComparison.Ordinal)) return false;
+        var paths = LanePaths(path, task.State).Distinct(StringComparer.Ordinal).ToArray();
+        var key = task.Key ?? task.Id;
+        bool HasState(string commit, string candidate, string state)
+        {
+            var file = ReadFirstAt(budget, root, commit, candidate);
+            if (!file.Success || file.Value is null) return false;
+            try
+            {
+                using var metadata = JsonDocument.Parse(file.Value);
+                var card = metadata.RootElement;
+                var identity = card.TryGetProperty("key", out var saved) ? saved : card.GetProperty("id");
+                return string.Equals(identity.GetString(), key, StringComparison.OrdinalIgnoreCase)
+                    && card.GetProperty("state").GetString() == state;
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        // The first parent has the reviewed card. A later edit in Completed
+        // cannot supply new bytes under the guise of historical acceptance.
+        var parent = sha + "^1";
+        var reviewed = paths.FirstOrDefault(candidate => HasState(parent, candidate, TaskStates.HumanReview));
+        var accepted = paths.FirstOrDefault(candidate => HasState(sha, candidate, TaskStates.Completed));
+        if (reviewed is null || accepted is null) return false;
+        var reviewedPrefix = reviewed[..(reviewed.LastIndexOf('/') + 1)];
+        var acceptedPrefix = accepted[..(accepted.LastIndexOf('/') + 1)];
+        return AgentStudio.TaskServer.Contracts.MagazineDeliverableContract.ResultFiles.All(file =>
+        {
+            var reviewedBlob = ReadRegularBlob(parent, reviewedPrefix + file);
+            return reviewedBlob is not null && reviewedBlob == ReadRegularBlob(sha, acceptedPrefix + file);
+        });
+
+        string? ReadRegularBlob(string commit, string file)
+        {
+            var entry = RunGit(budget, root, "--literal-pathspecs", "ls-tree", commit, "--", file);
+            var separator = entry.Out.IndexOf('\t');
+            if (entry.Code != 0 || separator < 0) return null;
+            var objectInfo = entry.Out[..separator];
+            return objectInfo.StartsWith("100644 blob ", StringComparison.Ordinal)
+                   || objectInfo.StartsWith("100755 blob ", StringComparison.Ordinal)
+                ? objectInfo : null;
+        }
+    }
+
     private static TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>> LegacyWalkFailed(string? reason)
         => TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(
             StatusCodes.Status503ServiceUnavailable,

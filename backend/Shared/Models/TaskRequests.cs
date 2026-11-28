@@ -326,6 +326,7 @@ public record CreateTaskRequest
     /// </summary>
     public string WatchPath { get; init; } = "";
     public string? PromptMarkdown { get; init; }
+    public AgentStudio.TaskServer.Contracts.MagazineDeliverableRequest? MagazineDeliverable { get; init; }
     /// <summary>
     /// Optional structured delivery boundary used by requirement-fit review.
     /// Use <c>bounded-slice</c> for one independently shippable Dossier

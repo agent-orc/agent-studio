@@ -40,6 +40,9 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     [InlineData("POST", "/api/v1/studio/auth/logout", "/api/auth/logout", null)]
     [InlineData("POST", "/api/v1/studio/auth/change-password", "/api/auth/change-password", null)]
     [InlineData("GET", "/api/v1/studio/board", "/api/tasks/grouped", null)]
+    [InlineData("POST", "/api/v1/studio/tasks", "/api/tasks", null)]
+    [InlineData("PUT", "/api/v1/projects/-/tasks/AGT-1/magazine-deliverable", "/api/tasks/AGT-1/magazine-deliverable", null)]
+    [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/magazine-deliverable/preview", "/api/tasks/AGT-1/magazine-deliverable/preview", null)]
     [InlineData("GET", "/api/v1/workspaces", "/api/workspaces", null)]
     [InlineData("POST", "/api/v1/workspaces", "/api/workspaces", null)]
     [InlineData("GET", "/api/v1/projects", "/api/projects", null)]
@@ -188,6 +191,18 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
             Assert.Equal(HttpStatusCode.OK, (await browser.GetAsync(path)).StatusCode);
             Assert.Contains(path, upstream.Paths);
         }
+
+        using var created = await browser.PostAsJsonAsync("/api/tasks", new { project = "PROJ-001", title = "Research", mode = "research" });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        Assert.Contains("/api/v1/studio/tasks", upstream.Paths);
+
+        using var commissioned = await browser.PostAsJsonAsync("/api/tasks", new
+        {
+            project = "native-project", title = "Research commission", mode = "research",
+            magazineDeliverable = new { scope = "workspace:native-workspace" },
+        });
+        Assert.Equal(HttpStatusCode.OK, commissioned.StatusCode);
+        Assert.Equal("local-operator", upstream.MagazineAuthor);
 
         // The legacy handlers stay closed behind a standalone Task Server.
         Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync("/api/tasks/grouped")).StatusCode);
@@ -385,10 +400,13 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     private sealed class RecordingUpstream : HttpMessageHandler
     {
         public List<string> Paths { get; } = [];
+        public string? MagazineAuthor { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             lock (Paths) Paths.Add(request.RequestUri!.AbsolutePath);
+            if (request.Headers.TryGetValues(AgentStudio.TaskServer.Contracts.MagazineDeliverableContract.EdgeAuthorHeader, out var authors))
+                MagazineAuthor = authors.Single();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { proxied = true }) });
         }
     }
