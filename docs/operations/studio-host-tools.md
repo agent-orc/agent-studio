@@ -24,6 +24,8 @@ Run the command before switching traffic. Its default health deadline is 240 sec
 
 The tool prints bounded recent API logs, startup phases and memory use. Its private per-tag log lives under the preflight scratch directory. A completed probe ends with a line such as `result=healthy seconds=37`. The other results are `unhealthy` for a deadline or tool failure and `exited` for a stopped API. Exit 0 allows the switch. Exit 1 means the health probe failed, 2 covers input or admission, and 3 covers setup or teardown. Use the process exit status in the deploy job. A busy mount leaves its scratch intact and makes cleanup fail. After resolving the busy mount, rerun preflight to reclaim the stopped session.
 
+A failed container health inspection reports `unknown` in shadow status. Preflight, shadow startup and the shadow watchdog check again on the next poll. Preflight reports `unhealthy` if its deadline expires before it can confirm health or exit.
+
 ## Screenshot through an SSH forward
 
 The shadow uses an internal Docker network and publishes no host port. The web server shares the API's network namespace and proxies to its loopback listener. For this copy, the local security profile supplies the owner view. The tool removes the production trusted proxies and bootstrap code, disables public edge mode, accepts the forwarded browser host and sets the domain to localhost. The internal request has no authenticated production edge or public client address, and this disposable session has no use for an installer credential. The live site's access policy continues to apply to the live site. The shadow exercises local owner workflows. Public sign-in, MFA, proxy policy and remote effects require separate verification.

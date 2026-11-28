@@ -68,6 +68,9 @@ def fake(program, args, root):
             print("id-of-" + args[-1])
         elif "IPAddress" in args[-2]:
             print("192.0.2.10")
+        elif (root / "fail-health-once").exists():
+            (root / "fail-health-once").unlink()
+            return 1
         elif args[-1] == "copy-web":
             first_check = root / "first-web-check"
             if first_check.exists():
@@ -175,6 +178,8 @@ def copies(root):
         out = call(preflight, "candidate", "0", HEALTH=state, code=code)
         assert out.splitlines()[-1].startswith(f"result={result} seconds=")
         assert "startup-phase [redacted]" in out
+    (root / "fail-health-once").touch()
+    assert call(preflight, "candidate", "0", code=1).splitlines()[-1].startswith("result=unhealthy seconds=")
     call(preflight, "candidate", MISSING_IMAGE="1", code=2)
     call(preflight, "candidate", FAIL_MOUNT="merged-projects", BUSY="1", code=3)
     assert list((root / "state").glob("*/run-*/merged-workspace/mounted"))
@@ -186,6 +191,7 @@ def copies(root):
     (root / "first-web-check").write_text("true unhealthy")
     call(shadow, "start", WEB_HEALTH="false", code=1)
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network"))
+    (root / "fail-health-once").touch()
     call(shadow, "start", WEB_HEALTH="true", FREE_PERCENT="15")
     assert "api=healthy web=running" in call(shadow, "status", WEB_HEALTH="true")
     old_watch = json.loads((root / "watch").read_text())
@@ -198,6 +204,12 @@ def copies(root):
     assert not any((root / n).exists() for n in ("copy-api", "copy-web", "network", "fail-rm-once"))
     call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
     call(*old_watch)
+    # The first web inspection fails. Only its next, confirmed exit can stop the copy.
+    (root / "fail-health-once").touch()
+    (root / "first-web-check").write_text("false")
+    assert "container exited" in call(*json.loads((root / "watch").read_text()))
+    assert not (root / "first-web-check").exists()
+    call(shadow, "start", "candidate", STUDIO_SHADOW_LIMIT_MIB="1")
     run, = (root / "state").glob("shadow-*/run-*")
     with (run / "upper-home" / "growth").open("wb") as fd:
         fd.write(bytes(1024**2))
