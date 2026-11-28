@@ -601,7 +601,9 @@ does not advance the completed-window tip. Raw inconclusive evidence remains
 under `.post-merge-evidence/`. The command home stays in the checkout. New runs
 share a short, owner-checked temp directory across commands and restarts
 (`/tmp/pm-<digest>/t` on Unix). The digest covers its contents, including
-Git metadata in nested repositories. A ref change there invalidates the checkpoint.
+Git metadata in nested repositories. For a linked worktree, both the per-worktree
+and common Git directories must be covered by the digest. Recovery settles as
+`inconclusive` when Git metadata changes or points outside the hashed directories.
 Accepted delivery removes both writable roots. Older journals retain their
 checkout-local temp path when resuming completed commands. Linux recovery reaps
 orphan command groups in the checkout and the owned temp directory before settling an incomplete command. Other

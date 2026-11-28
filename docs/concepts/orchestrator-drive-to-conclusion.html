@@ -3601,6 +3601,13 @@
           <td>The workspace digest skipped every .git directory, and the command hash included live load measurements.</td>
           <td>Recovery settles as inconclusive on a changed temp ref and can resume completed work across load changes. Receipts retain the load measurements.</td>
         </tr>
+        <tr id="case-post-merge-linked-worktree-metadata">
+          <td>2026-11-28</td>
+          <td><code>AGT-4369</code><br><span class="small">post-merge-linked-worktree-metadata</span></td>
+          <td>After a simulated restart, a linked worktree could reuse a completed command after a ref changed.</td>
+          <td>The digest covered the <code>.git</code> pointer file but did not check that its per-worktree and common Git directories were also covered.</td>
+          <td>Recovery resumes when the referenced metadata is covered and unchanged. A ref change or an uncovered directory settles as inconclusive and retains finished command evidence.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>

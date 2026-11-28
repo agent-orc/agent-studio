@@ -637,6 +637,56 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(changeMetadata ? new[] { "build" } : new[] { "build", "suite" }, executed);
     }
 
+    [Theory]
+    [InlineData("owned", false)]
+    [InlineData("owned", true)]
+    [InlineData("external-gitdir", true)]
+    [InlineData("external-commondir", true)]
+    [InlineData("checkout-gitdir", true)]
+    public async Task RestartChecksLinkedWorktreeMetadata(string location, bool changeMetadata)
+    {
+        var fixture = DurableFixture();
+        using var http = fixture.Http;
+        var checkout = Path.Combine(_root, "durable");
+        var workspace = Path.Combine(checkout, ".post-merge-work", fixture.Journal.Owner);
+        var temp = Path.Combine(ReviewAttemptTemp.Root(ReviewAttemptTemp.DefaultBase(), workspace, "pm-"), "t");
+        var worktree = Path.Combine(temp, "linked");
+        var common = location switch
+        {
+            "external-gitdir" or "external-commondir" => Path.Combine(_root, "outside.git"),
+            "checkout-gitdir" => Path.Combine(checkout, ".git"),
+            _ => Path.Combine(temp, "main", ".git"),
+        };
+        var gitDir = Path.Combine(location == "external-commondir" ? temp : common, "worktrees", "linked");
+        var branch = Path.Combine(common, "refs", "heads", "linked");
+        var executed = new List<string>();
+        var worker = DurableWorker(http, executed, afterCheckpoint: _ => throw new InjectedRestart(),
+            executor: (command, _) =>
+            {
+                executed.Add(command);
+                Directory.CreateDirectory(worktree);
+                Directory.CreateDirectory(gitDir);
+                Directory.CreateDirectory(Path.GetDirectoryName(branch)!);
+                var pointer = location == "external-gitdir" ? gitDir : Path.GetRelativePath(worktree, gitDir);
+                File.WriteAllText(Path.Combine(worktree, ".git"), $"gitdir: {pointer}\n");
+                File.WriteAllText(Path.Combine(gitDir, "commondir"), Path.GetRelativePath(gitDir, common) + "\n");
+                File.WriteAllText(Path.Combine(gitDir, "HEAD"), "ref: refs/heads/linked\n");
+                File.WriteAllText(branch, new string('a', 40) + "\n");
+                return Task.FromResult((0, false, ""));
+            });
+
+        await Assert.ThrowsAsync<InjectedRestart>(() => worker.ExecuteJournalAsync(fixture.Journal, default));
+        Assert.Equal(location == "owned", worker.ReadJournal().WorkspaceDigest is not null);
+        if (changeMetadata) File.WriteAllText(branch, new string('b', 40) + "\n");
+
+        var exit = await DurableWorker(http, executed).ExecuteJournalAsync(null, default);
+        var receipt = Assert.Single(new PostMergeRunStore(fixture.StoreRoot).Read("PROJ-002").Runs);
+        Assert.Equal(changeMetadata ? 1 : 0, exit);
+        Assert.Equal(changeMetadata ? "inconclusive" : "green", receipt.Status);
+        Assert.Equal(0, receipt.Verdicts[0].ExitCode);
+        Assert.Equal(changeMetadata ? new[] { "build" } : new[] { "build", "suite" }, executed);
+    }
+
     [Fact]
     public async Task UndeliveredOutboxBlocksExecutionWhileApiIsStillUnavailable()
     {
