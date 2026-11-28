@@ -5,7 +5,7 @@ using AgentStudio.Tasks;
 namespace AgentStudio.Pipeline;
 
 /// <summary>Deletes old product-owned evidence and rotated logs only after references settle.</summary>
-public static class HostStorageRetention
+public static partial class HostStorageRetention
 {
     /// <summary>Idle instance directories must be at least this many days old.</summary>
     public const int InstanceRetentionDays = 14;
@@ -15,10 +15,15 @@ public static class HostStorageRetention
     /// Removes only idle, empty instances, allowing the origin metadata written
     /// by Prepare. Any other file is retained, including unreadable or unknown
     /// formats. Nonrecursive deletion refuses evidence written during the scan.
+    /// Open directory handles anchor inspection and removal across path changes.
     /// Only the resolved local state root can authorize instance cleanup.
     /// </summary>
     public static int SweepInstances(string currentRoot, DateTimeOffset now,
         int retentionDays, Action<string> log)
+        => SweepInstances(currentRoot, now, retentionDays, log, beforeDelete: null);
+
+    internal static int SweepInstances(string currentRoot, DateTimeOffset now,
+        int retentionDays, Action<string> log, Action<string>? beforeDelete)
     {
         currentRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(currentRoot));
         var stateRoot = Path.TrimEndingDirectorySeparator(LocalStateRoot.Resolve());
@@ -55,34 +60,57 @@ public static class HostStorageRetention
             log($"instance-retention-skipped path={currentRoot} reason=unavailable-instance-root");
             return 0;
         }
+        PinnedRetentionDirectory anchor;
+        try { anchor = PinnedRetentionDirectory.OpenRoot(instances); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            log($"instance-retention-skipped path={currentRoot} reason=unavailable-instance-anchor");
+            return 0;
+        }
+        using var pinnedInstances = anchor;
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var removed = 0;
         var reported = 0;
-        foreach (var candidate in Directory.EnumerateDirectories(instances))
+        foreach (var entry in Directory.EnumerateDirectories(pinnedInstances.IoPath))
         {
+            var name = Path.GetFileName(entry);
+            var candidate = Path.Combine(instances, name);
             var reason = "current-identity";
+            var directories = new List<PinnedRetentionDirectory>();
             try
             {
                 if (!FileSystemPathComparer.Instance.Equals(candidate, currentRoot))
                 {
-                    reason = InspectInstance(candidate, now.AddDays(-Math.Max(1, retentionDays)),
-                        out var directories, out var origin);
-                    if (reason == "empty")
+                    if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                        reason = "linked-state";
+                    else
                     {
-                        // Delete children first, without recursively deleting any
-                        // unchecked content that appeared after inspection.
-                        foreach (var directory in directories.AsEnumerable().Reverse())
-                            Directory.Delete(directory);
-                        if (origin is not null) File.Delete(origin);
-                        Directory.Delete(candidate);
-                        removed++;
-                        reason = "deleted";
+                        var pinnedCandidate = pinnedInstances.OpenChild(name);
+                        directories.Add(pinnedCandidate);
+                        reason = InspectInstance(pinnedCandidate, now.AddDays(-Math.Max(1, retentionDays)),
+                            directories, out var hasOrigin);
+                        if (reason == "empty")
+                        {
+                            beforeDelete?.Invoke(candidate);
+                            // Every deletion is relative to the inspected parent handle.
+                            // No recursive delete can consume newly written evidence.
+                            for (var i = directories.Count - 1; i > 0; i--)
+                                directories[i].DeleteEmpty();
+                            if (hasOrigin) pinnedCandidate.DeleteOrigin();
+                            pinnedCandidate.DeleteEmpty();
+                            removed++;
+                            reason = "deleted";
+                        }
                     }
                 }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 reason = "unreadable-or-changed";
+            }
+            finally
+            {
+                for (var i = directories.Count - 1; i >= 0; i--) directories[i].Dispose();
             }
             counts[reason] = counts.GetValueOrDefault(reason) + 1;
             if (reported++ < 100)
@@ -93,33 +121,31 @@ public static class HostStorageRetention
         return removed;
     }
 
-    private static string InspectInstance(string root, DateTimeOffset deadline,
-        out List<string> directories, out string? origin)
+    private static string InspectInstance(PinnedRetentionDirectory root, DateTimeOffset deadline,
+        List<PinnedRetentionDirectory> directories, out bool hasOrigin)
     {
-        directories = [];
-        origin = null;
-        var pending = new Stack<string>();
-        pending.Push(root);
+        hasOrigin = false;
+        var pending = new Stack<(PinnedRetentionDirectory Directory, string Relative)>();
+        pending.Push((root, ""));
         var visited = 0;
         var recent = false;
-        while (pending.TryPop(out var directory))
+        while (pending.TryPop(out var item))
         {
-            var info = new DirectoryInfo(directory);
-            if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return "linked-state";
-            recent |= info.LastWriteTimeUtc > deadline.UtcDateTime;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            recent |= item.Directory.LastWriteTimeUtc > deadline.UtcDateTime;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(item.Directory.IoPath))
             {
                 if (++visited > InstanceEntryLimit) return "inspection-limit";
                 var attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) return "linked-state";
+                var name = Path.GetFileName(entry);
+                var relative = item.Relative + name;
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    directories.Add(entry);
-                    pending.Push(entry);
+                    var child = item.Directory.OpenChild(name);
+                    directories.Add(child);
+                    pending.Push((child, relative + "/"));
                     continue;
                 }
-                var name = Path.GetFileName(entry);
-                var relative = Path.GetRelativePath(root, entry).Replace('\\', '/');
                 if (name == "manifest.json") return "batch-manifest";
                 if (relative.StartsWith("batch-push-reservations/", StringComparison.Ordinal))
                     return "pending-reservation";
@@ -127,7 +153,7 @@ public static class HostStorageRetention
                     || name.Contains("evidence", StringComparison.OrdinalIgnoreCase))
                     return "pending-evidence";
                 if (relative != "batch-state-origin") return "unrecognized-content";
-                origin = entry;
+                hasOrigin = true;
                 recent |= File.GetLastWriteTimeUtc(entry) > deadline.UtcDateTime;
             }
         }

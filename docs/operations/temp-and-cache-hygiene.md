@@ -381,9 +381,15 @@ The same `HostStorageRetention` pass owns abandoned instance directories under
 `<local-state-root>/agentstudio/instances`. Cleanup requires the store to be
 `batch-gates` directly below an identity in the exact instances directory
 resolved by `LocalStateRoot`; a directory named `instances` elsewhere does not
-authorize deletion. Links from the identity through the configured local state root disable
-instance cleanup.
-Rejected roots are logged before any sibling enumeration.
+authorize deletion. Links from the identity through the configured local state
+root disable instance cleanup. Rejected roots are logged before any sibling
+enumeration. Inspection and deletion use pinned directories: Linux opens every
+ancestor with `openat(O_NOFOLLOW | O_DIRECTORY)` and removes entries with
+`unlinkat` relative to the inspected parent descriptor; Windows directory
+handles deny rename until their children have been inspected and removed.
+Replacing a checked path with a link cannot redirect deletion. Platforms without
+this safe directory implementation skip instance cleanup and log
+`reason=unavailable-instance-anchor`.
 `InstanceRetentionDays` is 14 days.
 It always keeps the current identity, every instance with a batch manifest,
 pending evidence, a persisted push reservation, or any unknown file. Only

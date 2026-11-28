@@ -212,6 +212,90 @@ public sealed class HostInstanceRetentionTests
         }
     }
 
+    [Theory]
+    [InlineData("state")]
+    [InlineData("agentstudio")]
+    [InlineData("instances")]
+    [InlineData("candidate")]
+    [InlineData("child")]
+    public void Concurrent_path_replacement_cannot_redirect_deletion(string replacement)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempWorkspace("instance-retention-swap");
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        var abandoned = state.PathFor("abandoned");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(Path.Combine(abandoned, "empty", "nested"));
+        File.WriteAllText(Path.Combine(abandoned, "batch-state-origin"), "owned");
+        foreach (var directory in new[] { Path.Combine(abandoned, "empty", "nested"), Path.Combine(abandoned, "empty"), abandoned })
+            Directory.SetLastWriteTimeUtc(directory, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        File.SetLastWriteTimeUtc(Path.Combine(abandoned, "batch-state-origin"),
+            _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        var swapped = replacement switch
+        {
+            "state" => LocalStateRoot.Resolve(),
+            "agentstudio" => LocalStateRoot.Combine("agentstudio"),
+            "instances" => state.Root,
+            "candidate" => abandoned,
+            _ => Path.Combine(abandoned, "empty"),
+        };
+        var foreign = Path.Combine(temp.Path, "foreign");
+        var backup = Path.Combine(temp.Path, "original");
+        var foreignCandidate = Path.Combine(foreign, Path.GetRelativePath(swapped, abandoned));
+        if (replacement == "child") foreignCandidate = foreign;
+        var foreignChild = replacement == "child" ? Path.Combine(foreign, "nested") : Path.Combine(foreignCandidate, "empty", "nested");
+        Directory.CreateDirectory(foreignChild);
+        if (replacement != "child")
+            File.WriteAllText(Path.Combine(foreignCandidate, "batch-state-origin"), "foreign");
+        var didSwap = false;
+        try
+        {
+            HostStorageRetention.SweepInstances(current, _clock.GetUtcNow(), 14, _ => { }, candidate =>
+            {
+                if (candidate != abandoned) return;
+                Directory.Move(swapped, backup);
+                Directory.CreateSymbolicLink(swapped, foreign);
+                didSwap = true;
+            });
+
+            Assert.True(didSwap);
+            Assert.True(Directory.Exists(foreignChild), "Deletion followed the substituted path outside local state.");
+            if (replacement != "child")
+                Assert.Equal("foreign", File.ReadAllText(Path.Combine(foreignCandidate, "batch-state-origin")));
+        }
+        finally
+        {
+            if (didSwap)
+            {
+                if (new DirectoryInfo(swapped).LinkTarget is not null) Directory.Delete(swapped);
+                Directory.CreateDirectory(Path.GetDirectoryName(swapped)!);
+                Directory.Move(backup, swapped);
+            }
+        }
+    }
+
+    [Fact]
+    public void Evidence_written_after_inspection_prevents_directory_removal()
+    {
+        using var state = new InstanceState();
+        var current = state.PathFor("current");
+        var abandoned = state.PathFor("abandoned");
+        var child = Path.Combine(abandoned, "pull-gates");
+        Directory.CreateDirectory(current);
+        Directory.CreateDirectory(child);
+        Directory.SetLastWriteTimeUtc(child, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        Directory.SetLastWriteTimeUtc(abandoned, _clock.GetUtcNow().UtcDateTime.AddDays(-30));
+        var evidence = Path.Combine(child, "evidence.json");
+        var messages = new List<string>();
+
+        Assert.Equal(0, HostStorageRetention.SweepInstances(current, _clock.GetUtcNow(), 14, messages.Add,
+            candidate => { if (candidate == abandoned) File.WriteAllText(evidence, "pending"); }));
+
+        Assert.Equal("pending", File.ReadAllText(evidence));
+        Assert.Contains(messages, message => message.Contains("reason=unreadable-or-changed", StringComparison.Ordinal));
+    }
+
     private int SweepStore(string store, string workspace, List<string> messages)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
