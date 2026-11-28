@@ -116,6 +116,47 @@ class ConfigVerificationTests(unittest.TestCase):
 
 
 class ControlPlanePromotionTests(unittest.TestCase):
+    def test_runbook_migration_stops_at_each_failed_verification_or_install(self):
+        runbook = (HELPER_PATH.parents[2] / "docs/operations/setup/linux-runner-host.md").read_text()
+        migration = runbook.split("### Release approval migration", 1)[1]
+        commands = migration.split("```bash\n")[2].split("```", 1)[0]
+        steps = ["resolve", "verify-active", "verify-rollback", "harden", "verify-installed"]
+        for failure in (*steps, "none"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                log = Path(temporary) / "calls"
+                # Execute the documented block in a shell without errexit.
+                # These command boundaries never touch a live host or run sudo.
+                fixture = '''
+                    record() {
+                      printf '%s\\n' "$1" >>"$CALL_LOG"
+                      [[ "$1" != "$FAIL_STEP" ]] || return 19
+                    }
+                    readlink() {
+                      record resolve || return $?
+                      printf '%s\\n' /opt/agent-host/releases/fixture-active
+                    }
+                    sudo() {
+                      case "$1" in
+                        bash)
+                          case "$4" in
+                            */fixture-active) record verify-active ;;
+                            *) record verify-rollback ;;
+                          esac ;;
+                        ./scripts/harden-agent-runner-host.sh) record harden ;;
+                        /usr/local/sbin/agent-runner-deploy) record verify-installed ;;
+                        *) return 90 ;;
+                      esac
+                    }
+                '''
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c", textwrap.dedent(fixture) + commands],
+                    env={**os.environ, "CALL_LOG": str(log), "FAIL_STEP": failure, "SHELLOPTS": ""},
+                    capture_output=True, text=True,
+                )
+                expected_steps = steps if failure == "none" else steps[:steps.index(failure) + 1]
+                self.assertEqual(expected_steps, log.read_text().splitlines(), result.stderr)
+                self.assertEqual(0 if failure == "none" else 19, result.returncode, result.stderr)
+
     def test_runbook_updates_root_owned_control_assets_before_release_promotion(self):
         repository_root = HELPER_PATH.parents[2]
         runbook = (

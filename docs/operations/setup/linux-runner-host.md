@@ -1056,17 +1056,24 @@ being promoted.
    checked-out verifier before enabling the new launcher:
 
    ```bash
-   active_release="$(readlink -f /opt/agent-host/current)"
-   sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "$active_release"
-   # Repeat for each real, retained rollback release directory.
-   sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "/opt/agent-host/releases/<rollback-id>"
-   sudo ./scripts/harden-agent-runner-host.sh --apply
-   sudo /usr/local/sbin/agent-runner-deploy --verify-release "$active_release"
+   (
+     set -euo pipefail
+     active_release="$(readlink -f /opt/agent-host/current)"
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "$active_release"
+     # Repeat for each real, retained rollback release directory.
+     sudo bash ./deploy/agent-host/agent-runner-deploy --verify-release "/opt/agent-host/releases/<rollback-id>"
+     sudo ./scripts/harden-agent-runner-host.sh --apply
+     sudo /usr/local/sbin/agent-runner-deploy --verify-release "$active_release"
+   )
    ```
 
-   Verification is silent on success and exits nonzero on refusal. A refused
-   tree needs investigation or restoration from trusted publisher output; do
-   not edit its approval to match unexplained host changes.
+   Run this block together. The subshell stops at the first failed command,
+   including release-path resolution or verification, before launcher
+   installation can proceed. Verification is silent on success and exits
+   nonzero on refusal. A refused tree needs investigation or restoration from
+   trusted publisher output; do not edit its approval to match unexplained host
+   changes. If installation or the final installed-verifier check fails, keep
+   admission paused and resolve that failure before continuing.
 4. Resume admission only after the installed verifier succeeds and the existing
    work-container canary verifies launcher admission. Keep approval files for
    every active, detached-worker, or rollback release as long as that release is
