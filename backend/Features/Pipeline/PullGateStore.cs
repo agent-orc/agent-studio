@@ -51,6 +51,11 @@ public sealed class PullGateStore
     {
         lock (_gate) return _hosts.Values.Select(SnapshotHost).OrderBy(host => host.Name).ToArray();
     }
+    public int QueuedCount
+    {
+        get { lock (_gate) return _jobs.Values.Count(job => job.State == "queued"); }
+    }
+
     public bool HasHealthyHost
     {
         get { lock (_gate) return _hosts.Values.Any(host => Now - host.LastHeartbeat < HealthyTime); }

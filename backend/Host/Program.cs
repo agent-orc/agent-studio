@@ -726,6 +726,9 @@ builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();
 builder.Services.AddSingleton<AgentStudio.Management.StructurePlacementSource>();
 builder.Services.AddSingleton<AgentStudio.Management.StudioSelfObserver>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureDataLocationService>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureHistoryBuffer>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureRuntimeSampler>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureReportCache>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureSnapshotService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Management.StructureSnapshotService>());
 builder.Services.AddSingleton<AgentStudio.Host.StructureHubBroadcaster>();
@@ -1296,7 +1299,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(service
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
-    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
+    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>(),
+    structure: sp.GetRequiredService<AgentStudio.Management.StructureHistoryBuffer>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 // AGT-3856: while a batch gate runs, at most one other full suite starts.
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchLaneAdmission>(sp =>
@@ -1967,10 +1971,11 @@ app.UseOperatorListener();
 // AGT-3954: note that a proxy forwarded the request before the headers are consumed;
 // the structure view reads it as the observation of the edge.
 var structureSelf = app.Services.GetRequiredService<AgentStudio.Management.StudioSelfObserver>();
-app.Use((context, next) =>
+app.Use(async (context, next) =>
 {
     structureSelf.ObserveRequest(context.Request.Headers);
-    return next(context);
+    try { await next(context); }
+    finally { structureSelf.FinishRequest(); }
 });
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy
