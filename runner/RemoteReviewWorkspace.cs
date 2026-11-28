@@ -4370,6 +4370,8 @@ public sealed class RemoteReviewWorkspace
                 marker.Missing)
             {
                 UsesDossierCheckout = string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase),
+                PreviousEvidenceChecked = marker.PreviousEvidenceChecked,
+                PreviousRecheck = marker.PreviousRecheck,
             };
         }
         return new ReviewVerdictDto(

@@ -30,9 +30,8 @@ public static class CodeQualityReviewPolicy
 
         var previous = ReadPreviousFinding(prompt!);
         var followUp = previous is not null;
-        var rechecked = verdict.Classification == Rechecked && previous is not null
-            && previous.Evidence is not null
-            && string.Equals(verdict.EvidenceChecked?.Trim(), previous.Evidence.Trim(), StringComparison.Ordinal)
+        var rechecked = verdict.Classification == Rechecked
+            && MatchesPreviousEvidence(verdict.EvidenceChecked, previous)
             && ReviewVerdictCitationPolicy.Meaningful(verdict.Summary);
         if (IsHumanFeedback(verdict.Classification)
             || verdict.Classification is ReviewVerdictCitationPolicy.BlockWithoutCitation
@@ -42,7 +41,10 @@ public static class CodeQualityReviewPolicy
             return isBlock ? verdict with { Status = "concerns" } : verdict;
         }
 
-        var independent = verdict.Classification == Independent && followUp;
+        var independent = verdict.Classification == Independent
+            && MatchesPreviousEvidence(verdict.PreviousEvidenceChecked, previous)
+            && ReviewVerdictCitationPolicy.Meaningful(verdict.PreviousRecheck)
+            && !MatchesPreviousEvidence(verdict.EvidenceChecked, previous);
         var hasEvidence = ReviewVerdictCitationPolicy.HasCitation(verdict)
             && ReviewVerdictCitationPolicy.Meaningful(verdict.Summary);
         if (isBlock)
@@ -50,7 +52,7 @@ public static class CodeQualityReviewPolicy
             if (!followUp && !ReviewVerdictCitationPolicy.HasCitation(verdict))
                 return ReviewVerdictCitationPolicy.Normalize(verdict, semanticAspect: true);
             if (hasEvidence && (followUp ? rechecked || independent : verdict.Classification == Confirmed))
-                return independent ? PreservePreviousFinding(verdict, previous!, keepDisposition: true) : verdict;
+                return verdict;
         }
         else if (string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
         {
@@ -87,6 +89,10 @@ public static class CodeQualityReviewPolicy
                || classification is ReviewVerdictCitationPolicy.BlockWithoutCitation
                    or ReviewDiffEvidencePolicy.ConcernClassification or "carried-over");
 
+    private static bool MatchesPreviousEvidence(string? evidence, PreviousFinding? previous)
+        => previous?.Evidence is { } previousEvidence
+           && string.Equals(evidence?.Trim(), previousEvidence.Trim(), StringComparison.Ordinal);
+
     public static bool IsCodeQuality(string aspect)
         => string.Equals(aspect, "code-quality", StringComparison.OrdinalIgnoreCase);
 
@@ -103,7 +109,9 @@ public static class CodeQualityReviewPolicy
             + "Use quality-rechecked only when you verified that same contract. Copy Previous evidence exactly into evidence_checked and describe the current result in summary. "
             + "If it still fails, the copied citation must identify material changed by the delivery. Give the shipping consequence. "
             + "If you cannot corroborate it, use concerns with quality-uncorroborated and preserve the citation and reason. "
-            + "If a different defect independently justifies a block, use quality-independent and record in the narrative whether and how you rechecked the previous contract."
+            + "For a different confirmed defect, use quality-independent only after rechecking the previous contract. "
+            + "Copy Previous evidence exactly into previous_evidence_checked and describe the conclusive observation in previous_recheck. "
+            + "Use evidence_checked and missing for the different defect."
             + DescribePrevious(attemptId, previous);
     }
 
@@ -134,8 +142,7 @@ public static class CodeQualityReviewPolicy
                 ? value
                 : null;
 
-    private static ReviewVerdictDto PreservePreviousFinding(
-        ReviewVerdictDto verdict, PreviousFinding previous, bool keepDisposition = false)
+    private static ReviewVerdictDto PreservePreviousFinding(ReviewVerdictDto verdict, PreviousFinding previous)
     {
         var context = "\n" + Unresolved + previous.Description;
         return verdict with
@@ -143,9 +150,9 @@ public static class CodeQualityReviewPolicy
             Summary = verdict.Summary.EndsWith(context, StringComparison.Ordinal)
                 ? verdict.Summary
                 : verdict.Summary + context,
-            EvidenceChecked = keepDisposition || ReviewVerdictCitationPolicy.Meaningful(verdict.EvidenceChecked)
+            EvidenceChecked = ReviewVerdictCitationPolicy.Meaningful(verdict.EvidenceChecked)
                 ? verdict.EvidenceChecked : previous.Evidence,
-            Missing = keepDisposition || ReviewVerdictCitationPolicy.Meaningful(verdict.Missing)
+            Missing = ReviewVerdictCitationPolicy.Meaningful(verdict.Missing)
                 ? verdict.Missing : previous.Finding,
         };
     }

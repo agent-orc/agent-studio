@@ -34,6 +34,23 @@ public sealed class AspectVerdictMarkerParserTests
     }
 
     [Fact]
+    public void ParseLast_KeepsPreviousRecheckSeparateFromTheNewBlockerCitation()
+    {
+        var marker = Assert.IsType<AspectVerdictMarker>(AspectVerdictMarkerParser.ParseLast("""
+            [[ASPECT_VERDICT: status=block; classification=quality-independent;
+            summary=Verification failure still enables the launcher;
+            evidence_checked=docs/setup.md migration step 3; missing=Abort before enabling;
+            previous_evidence_checked=src/Parser.cs AssertionFingerprint;
+            previous_recheck=Passing sibling output is excluded from the fingerprint.]]
+            """));
+
+        Assert.Equal("docs/setup.md migration step 3", marker.EvidenceChecked);
+        Assert.Equal("src/Parser.cs AssertionFingerprint", marker.PreviousEvidenceChecked);
+        Assert.Equal("Passing sibling output is excluded from the fingerprint.", marker.PreviousRecheck);
+        Assert.Empty(marker.Malformed);
+    }
+
+    [Fact]
     public void ParseLast_UsesLastWrappedMarkerAndFirstValueForEveryDuplicate()
     {
         var marker = AspectVerdictMarkerParser.ParseLast("""

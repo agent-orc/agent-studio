@@ -883,7 +883,11 @@ public sealed class AspectRunnerService
             var verdict = CodeQualityReviewPolicy.Normalize(new ReviewVerdictDto(
                 def.Id, AspectVerdictParsing.StatusToken(status),
                 AspectVerdictParsing.ParseVerdictField(response, "classification") ?? "local-aspect",
-                summary, evidence, AspectVerdictParsing.ParseVerdictField(response, "missing")), prompt);
+                summary, evidence, AspectVerdictParsing.ParseVerdictField(response, "missing"))
+            {
+                PreviousEvidenceChecked = AspectVerdictParsing.ParseVerdictField(response, "previous_evidence_checked"),
+                PreviousRecheck = AspectVerdictParsing.ParseVerdictField(response, "previous_recheck"),
+            }, prompt);
             if (changedPaths is not null)
                 verdict = ReviewDiffEvidencePolicy.Normalize(verdict, changedPaths);
             if (ReviewGradingPolicy.IsConcernToken(verdict.Status)) status = AspectStatus.Concerns;

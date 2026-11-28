@@ -685,6 +685,12 @@ public sealed record ReviewVerdictDto(
     /// <summary>The executor supplied checkout access instructions, including when running an older frozen plan.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool UsesDossierCheckout { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreviousEvidenceChecked { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreviousRecheck { get; init; }
 }
 
 /// <summary>

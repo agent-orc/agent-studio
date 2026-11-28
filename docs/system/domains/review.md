@@ -1542,12 +1542,14 @@ A follow-up prompt includes the previous attempt, finding and citation. For a
 in full and the summary must describe the current observation. A repeated block
 still needs a shipping consequence and the citation must identify a changed
 delivery path. An inconclusive or omitted recheck becomes a concern that retains
-the prior attempt, finding, and citation for human review. An independent defect may
-still block with `quality-independent`; the review narrative records the
-disposition of the prior claim. The classification is a reviewer statement
-recorded with the verdict. The worker and report admission enforce the marker
-and citation requirements. Frozen prompts without the current code-quality
-evidence section retain the earlier marker format.
+the prior attempt, finding, and citation for human review. A different defect may
+block with `quality-independent` when its own delivery citation is accompanied
+by `previous_evidence_checked` matching the full prior citation and
+`previous_recheck` recording the current observation. The same citation in
+`evidence_checked` uses the same-contract route. The worker and report
+admission enforce the fields and citation match. The observations are reviewer
+statements. Frozen prompts without the code-quality evidence section retain
+the earlier marker format.
 
 Deterministic build and test verdicts are not model opinions. A failed command
 needs the diagnosis evidence below before its verdict can block the card.

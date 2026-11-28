@@ -17,6 +17,8 @@ public sealed record AspectVerdictMarker(
     IReadOnlyList<string> Malformed)
 {
     public bool IsMalformed => Malformed.Count > 0;
+    public string? PreviousEvidenceChecked { get; init; }
+    public string? PreviousRecheck { get; init; }
 }
 
 /// <summary>
@@ -34,7 +36,8 @@ public static class AspectVerdictMarkerParser
         RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
     private static readonly HashSet<string> KnownFields = new(
-        ["status", "summary", "evidence_checked", "missing", "classification"],
+        ["status", "summary", "evidence_checked", "missing", "classification",
+            "previous_evidence_checked", "previous_recheck"],
         StringComparer.OrdinalIgnoreCase);
 
     public static AspectVerdictMarker? ParseLast(string? output)
@@ -78,7 +81,11 @@ public static class AspectVerdictMarkerParser
             NullIfBlank(missing),
             NullIfBlank(classification),
             string.Join("; ", detail),
-            malformed.Order(StringComparer.Ordinal).ToArray());
+            malformed.Order(StringComparer.Ordinal).ToArray())
+        {
+            PreviousEvidenceChecked = NullIfBlank(fields.GetValueOrDefault("previous_evidence_checked")),
+            PreviousRecheck = NullIfBlank(fields.GetValueOrDefault("previous_recheck")),
+        };
     }
 
     public static string ClassificationWithMalformed(AspectVerdictMarker marker, string fallback)

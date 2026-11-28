@@ -83,9 +83,11 @@ same contract and describe the observed result. Use `quality-rechecked` with
 the exact text of Previous evidence in `evidence_checked`. Describe the
 current observation in `summary`. Use `pass` if resolved and `block` if
 the cited failure still occurs in material changed by the delivery.
-If the same contract was not rechecked or
-the result is inconclusive, use `quality-uncorroborated`. Follow the previous
-contract section for an independently evidenced new blocker.
+Use `quality-uncorroborated` when the prior recheck is absent or inconclusive.
+For a different confirmed blocker, use `quality-independent` after conclusively
+rechecking the prior contract. Append `previous_evidence_checked=<exact Previous
+evidence>` and `previous_recheck=<current observed result>` as semicolon-separated
+fields inside the sentinel. Cite the new defect in `evidence_checked`.
 
 Emit exactly one verdict sentinel on its own line. Use no semicolons or
 brackets inside values.

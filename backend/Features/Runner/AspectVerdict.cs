@@ -204,6 +204,8 @@ public static class AspectVerdictParsing
             "evidence_checked" => marker?.EvidenceChecked,
             "missing" => marker?.Missing,
             "classification" => marker?.Classification,
+            "previous_evidence_checked" => marker?.PreviousEvidenceChecked,
+            "previous_recheck" => marker?.PreviousRecheck,
             _ => null,
         };
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();

@@ -2311,12 +2311,15 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     }
 
     [Theory]
-    [InlineData(false, "RemoteAspectVerdict", "ProductFailure", "ReviewFinding")]
-    [InlineData(true, CodeQualityReviewPolicy.Confirmed, "ProductFailure", "ReviewFinding")]
-    [InlineData(true, "RemoteAspectVerdict", "Pass", CodeQualityReviewPolicy.Uncorroborated)]
-    [InlineData(true, CodeQualityReviewPolicy.Rechecked, "Pass", CodeQualityReviewPolicy.Uncorroborated)]
+    [InlineData(false, "RemoteAspectVerdict", "ProductFailure", "ReviewFinding", false)]
+    [InlineData(true, CodeQualityReviewPolicy.Confirmed, "ProductFailure", "ReviewFinding", false)]
+    [InlineData(true, "RemoteAspectVerdict", "Pass", CodeQualityReviewPolicy.Uncorroborated, false)]
+    [InlineData(true, CodeQualityReviewPolicy.Rechecked, "Pass", CodeQualityReviewPolicy.Uncorroborated, false)]
+    [InlineData(true, CodeQualityReviewPolicy.Independent, "Pass", CodeQualityReviewPolicy.Uncorroborated, false)]
+    [InlineData(true, CodeQualityReviewPolicy.Independent, "ProductFailure", "ReviewFinding", true)]
     public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis(
-        bool currentPrompt, string classification, string expectedOutcome, string expectedClassification)
+        bool currentPrompt, string classification, string expectedOutcome, string expectedClassification,
+        bool previousRechecked)
     {
         using var temp = _fixture.CreateDirectory();
         var store = Store(temp.Path);
@@ -2324,7 +2327,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         const string previousEvidence = "docs/concept/workbench.json ResolveDefaultWorkspace";
         const string previousSummary = "A new workbench opens with the wrong default workspace.";
         var prompt = currentPrompt ? CodeQualityReviewPolicy.ProtocolHeading : "Review the delivered implementation.";
-        if (classification == CodeQualityReviewPolicy.Rechecked)
+        if (classification is CodeQualityReviewPolicy.Rechecked or CodeQualityReviewPolicy.Independent)
             prompt = CodeQualityReviewPolicy.WithPreviousFinding(prompt, "previous-review", new ReviewVerdictDto(
                 "code-quality", "block", CodeQualityReviewPolicy.Confirmed, previousSummary,
                 previousEvidence, "The default workspace must match the active project."));
@@ -2351,7 +2354,11 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
                 "code-quality", "block", classification,
                 "Loading an existing workbench record discards its saved configuration.",
                 EvidenceChecked: "docs/concept/workbench.json",
-                Missing: "The reader must preserve the saved configuration on load.")],
+                Missing: "The reader must preserve the saved configuration on load.")
+            {
+                PreviousEvidenceChecked = previousRechecked ? previousEvidence : null,
+                PreviousRecheck = previousRechecked ? "A newly opened workbench uses the active project." : null,
+            }],
         };
 
         var report = await store.ReportReviewAsync(
@@ -2359,6 +2366,9 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
 
         Assert.Equal(expectedOutcome, report.Outcome);
         Assert.Equal(expectedClassification, report.FailureClassification);
+        var replay = await store.ReportReviewAsync(claim.Attempt.AttemptId, request, "review-a", default);
+        Assert.Equal(report.Outcome, replay.Outcome);
+        Assert.Equal(report.FailureClassification, replay.FailureClassification);
     }
 
     [Theory]

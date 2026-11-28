@@ -129,22 +129,74 @@ public class CodeQualityReviewPolicyTests
     }
 
     [Fact]
-    public void Independently_confirmed_regression_can_block_when_the_previous_claim_remains_unresolved()
+    public void Relabeling_the_previous_claim_as_independent_keeps_it_advisory()
+    {
+        var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "agt-4326-round-3", SiblingClaim);
+        var candidate = SiblingClaim with
+        {
+            Classification = CodeQualityReviewPolicy.Independent,
+            EvidenceChecked = Parser + " AssertionFingerprint passing sibling branch",
+            Summary = "A passing sibling can contaminate the selected fingerprint.",
+        };
+
+        var settled = Settle(candidate, prompt, [Parser]);
+
+        Assert.Equal("concerns", settled.Status);
+        Assert.Equal(CodeQualityReviewPolicy.Uncorroborated, settled.Classification);
+        Assert.Contains(SiblingClaim.EvidenceChecked!, settled.Summary);
+        Assert.Contains(SiblingClaim.Missing!, settled.Summary);
+        Assert.False(Decide(settled).StartsCodingRound);
+        Assert.Equal(settled, Settle(settled, prompt, [Parser]));
+    }
+
+    [Fact]
+    public void Different_confirmed_regression_can_block_with_a_recorded_recheck_of_the_previous_claim()
     {
         var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "previous-review", SiblingClaim);
-        var settled = Settle(Migration with { Classification = CodeQualityReviewPolicy.Independent }, prompt, [Runbook]);
+        var settled = Settle(DifferentBlockAfterRecheck(), prompt, [Runbook]);
 
         Assert.Equal(ReviewFollowUpAction.ReviewFindingRound, Decide(settled).Action);
         Assert.Equal(CodeQualityReviewPolicy.Independent, settled.Classification);
-        Assert.Contains(SiblingClaim.EvidenceChecked!, settled.Summary);
+        Assert.Equal(SiblingClaim.EvidenceChecked, settled.PreviousEvidenceChecked);
+        Assert.Equal(DifferentBlockAfterRecheck().PreviousRecheck, settled.PreviousRecheck);
         Assert.Equal(Migration.EvidenceChecked, settled.EvidenceChecked);
+    }
+
+    [Theory]
+    [InlineData(null, "The assertion fingerprint excludes the passing sibling output.")]
+    [InlineData(Parser + " OtherSymbol", "The assertion fingerprint excludes the passing sibling output.")]
+    [InlineData(Parser + " AssertionFingerprint", "none")]
+    public void A_different_defect_needs_the_exact_prior_citation_and_current_observation(
+        string? priorEvidence, string observation)
+    {
+        var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "parser-review", SiblingClaim);
+        var candidate = DifferentBlockAfterRecheck() with
+        {
+            PreviousEvidenceChecked = priorEvidence,
+            PreviousRecheck = observation,
+        };
+
+        var settled = Settle(candidate, prompt, [Runbook]);
+
+        Assert.Equal(CodeQualityReviewPolicy.Uncorroborated, settled.Classification);
+        Assert.Contains(SiblingClaim.EvidenceChecked!, settled.Summary);
+        Assert.False(Decide(settled).StartsCodingRound);
+    }
+
+    [Fact]
+    public void A_block_using_the_prior_citation_must_use_the_same_contract_route()
+    {
+        var prompt = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "parser-review", SiblingClaim);
+        var candidate = DifferentBlockAfterRecheck() with { EvidenceChecked = SiblingClaim.EvidenceChecked };
+
+        Assert.False(Decide(Settle(candidate, prompt, [Parser])).StartsCodingRound);
     }
 
     [Fact]
     public void Next_recheck_uses_the_independent_blocker_citation_after_an_older_claim_was_preserved()
     {
         var first = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "parser-review", SiblingClaim);
-        var independent = Settle(Migration with { Classification = CodeQualityReviewPolicy.Independent }, first, [Runbook]);
+        var independent = Settle(DifferentBlockAfterRecheck(), first, [Runbook]);
         var second = CodeQualityReviewPolicy.WithPreviousFinding(Prompt, "migration-review", independent);
 
         var rechecked = Settle(Migration with { Classification = CodeQualityReviewPolicy.Rechecked }, second, [Runbook]);
@@ -235,6 +287,13 @@ public class CodeQualityReviewPolicyTests
         verdict = CodeQualityReviewPolicy.Normalize(verdict, prompt);
         return ReviewDiffEvidencePolicy.Normalize(verdict, paths);
     }
+
+    private static ReviewVerdictDto DifferentBlockAfterRecheck() => Migration with
+    {
+        Classification = CodeQualityReviewPolicy.Independent,
+        PreviousEvidenceChecked = SiblingClaim.EvidenceChecked,
+        PreviousRecheck = "The assertion fingerprint excludes the passing sibling output.",
+    };
 
     private static ReviewFollowUpDecision Decide(params ReviewVerdictDto[] verdicts)
         => ReviewFollowUpPolicy.Decide(verdicts.Select(verdict =>
