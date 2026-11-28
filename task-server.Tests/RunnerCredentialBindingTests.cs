@@ -30,6 +30,25 @@ public sealed class RunnerCredentialBindingTests
     private const string RepositoryId = "repo_sm9binding0001";
 
     [Fact]
+    public async Task Provisioning_coverage_is_available_to_Studio_before_registration_and_denied_to_runners()
+    {
+        using var temp = new TempDirectory();
+        using var github = new FakeGitHub();
+        await using var server = new BoundServer(temp.Path, github);
+        var coder = await server.CreateRunnerAsync("coder", RunnerCredentialRoles.Coding);
+        using var runner = server.Client(coder.Credential);
+        using var studio = server.Client(server.StudioToken);
+        const string route = "/api/v1/management/github-app/provisioning-coverage"
+            + "?repositoryUrl=https%3A%2F%2Fgithub.com%2Fowner%2Fnew-repo.git&personalOwner=true";
+
+        using var denied = await runner.GetAsync(route);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var coverage = await studio.GetFromJsonAsync<GitHubAppProvisioningCoverage>(route);
+        Assert.Equal(new GitHubAppProvisioningCoverage(11, true), coverage);
+        Assert.Empty(github.TokenRepositories);
+    }
+
+    [Fact]
     public async Task A_new_runner_credential_expires_after_thirty_days_and_names_its_end_on_every_answer()
     {
         using var temp = new TempDirectory();

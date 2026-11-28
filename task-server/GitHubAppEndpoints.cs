@@ -90,6 +90,14 @@ public static class GitHubAppEndpoints
             => Run(context, async () => Results.Ok(await broker.StatusAsync(refresh == true, ct))))
             .RequireStudioRole(StudioUserRoles.Owner);
 
+        group.MapGet("/provisioning-coverage", (string repositoryUrl, bool personalOwner, HttpContext context,
+            GitHubAppBroker broker, CancellationToken ct) => Run(context, async () =>
+        {
+            if (GitHubRepositoryName.TryParse(repositoryUrl) is not { } repository)
+                return Error(StatusCodes.Status400BadRequest, "invalid-repository", "A GitHub repository URL is required.");
+            return Results.Ok(await broker.CheckProvisioningCoverageAsync(repository, personalOwner, ct));
+        })).RequireStudioRole(StudioUserRoles.Owner);
+
         group.MapPost("/registration", (StartGitHubAppRegistrationRequest request, HttpContext context, GitHubAppBroker broker,
             CancellationToken ct) => Run(context, async () => Results.Ok(await broker.StartRegistrationAsync(request, ct))))
             .RequireStudioRole(StudioUserRoles.Owner);

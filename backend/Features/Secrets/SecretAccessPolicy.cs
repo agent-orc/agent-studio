@@ -23,6 +23,7 @@ public static partial class SecretAccessPolicy
 
     public const string GitHubAppPrivateKeyName = "AGENT_STUDIO_GITHUB_APP_PRIVATE_KEY";
     public const string GitHubAppClientSecretName = "AGENT_STUDIO_GITHUB_APP_CLIENT_SECRET";
+    public const string GitHubProvisioningTokenName = "AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN";
 
     /// <summary>
     /// Root material only the platform itself reads: the GitHub App key can mint a
@@ -31,7 +32,7 @@ public static partial class SecretAccessPolicy
     /// are, so a project's own GITHUB_APP_ID or similar stays an ordinary secret.
     /// </summary>
     public static bool IsPlatformOnly(string? name)
-        => name is GitHubAppPrivateKeyName or GitHubAppClientSecretName
+        => name is GitHubAppPrivateKeyName or GitHubAppClientSecretName or GitHubProvisioningTokenName
             or "quality-studio/api-token" or "quality-studio/signing-key";
 
     public static SecretAccessDecision ForWorkload(SecretReference reference, SecretWorkload workload, string? purpose)

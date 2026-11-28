@@ -417,6 +417,29 @@ public sealed class GitHubAppBrokerTests
     }
 
     [Fact]
+    public async Task Provisioning_checks_current_coverage_for_the_adopted_owner_before_registration()
+    {
+        await ConnectAsync();
+        var repository = new GitHubRepositoryName("owner", "new-repo");
+        Assert.Equal(new GitHubAppProvisioningCoverage(null, false),
+            await _broker.CheckProvisioningCoverageAsync(repository, personalOwner: false, default));
+        Assert.Equal(new GitHubAppProvisioningCoverage(null, false),
+            await _broker.CheckProvisioningCoverageAsync(repository with { Owner = "outside" }, personalOwner: true, default));
+        Assert.Empty(_github.Paths);
+
+        Assert.Equal(new GitHubAppProvisioningCoverage(FakeGitHub.InstallationId, false),
+            await _broker.CheckProvisioningCoverageAsync(repository, personalOwner: true, default));
+        _github.RepositoryInstallations["owner/new-repo"] = FakeGitHub.InstallationId;
+        Assert.Equal(new GitHubAppProvisioningCoverage(FakeGitHub.InstallationId, true),
+            await _broker.CheckProvisioningCoverageAsync(repository, personalOwner: true, default));
+        _github.RepositoryInstallations["owner/new-repo"] = 99;
+        Assert.Equal(new GitHubAppProvisioningCoverage(null, false),
+            await _broker.CheckProvisioningCoverageAsync(repository, personalOwner: true, default));
+        Assert.All(_github.Paths, path => Assert.Equal("/repos/owner/new-repo/installation", path));
+        Assert.Equal(3, _github.Paths.Count);
+    }
+
+    [Fact]
     public async Task An_installation_waiting_for_an_owner_says_so()
     {
         await RegisterAsync();

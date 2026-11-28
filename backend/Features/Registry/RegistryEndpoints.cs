@@ -315,11 +315,17 @@ public static class RegistryEndpoints
                         ? Results.Conflict(new { error = ex.Message, code = ex.Code })
                         : Results.BadRequest(new { error = ex.Message, code = ex.Code });
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (OperationCanceledException)
                 {
                     workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
-                    loggerFactory.CreateLogger("ProjectCreate").LogError(ex,
-                        "Repository provisioning failed for {Owner}/{Name}", newRepository.Owner, newRepository.Name);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
+                    loggerFactory.CreateLogger("ProjectCreate").LogError(
+                        "Repository provisioning failed for {Owner}/{Name} ({FailureType})",
+                        newRepository.Owner, newRepository.Name, ex.GetType().Name);
                     return Results.Problem("Repository setup failed. Check the Studio host and retry.", statusCode: 500);
                 }
             }
@@ -398,7 +404,7 @@ public static class RegistryEndpoints
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
                 if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, provisioned, loggerFactory);
                 return Results.Conflict(new { error = ex.Message });
             }
             catch (ArgumentException ex)
@@ -406,13 +412,15 @@ public static class RegistryEndpoints
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
                 if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, provisioned, loggerFactory);
                 return Results.BadRequest(new { error = ex.Message });
             }
             catch (UnauthorizedAccessException)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
                 if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
+                if (provisioned is not null)
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, provisioned, loggerFactory);
                 return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (ProjectPersistenceException ex)
@@ -429,7 +437,7 @@ public static class RegistryEndpoints
                     loggerFactory);
                 if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, provisioned, loggerFactory);
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
             }
 
@@ -451,9 +459,9 @@ public static class RegistryEndpoints
                 {
                     projectSettings.SetBuildProfile(created.DisplayName, null);
                     CleanupFailedCreate(record, true, projects, workspaceManagement, loggerFactory);
-                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
+                    await DeleteProvisionedRepositoryAsync(repositoryProvisioner, provisioned, loggerFactory);
                     if (ex is OperationCanceledException) throw;
-                    return Results.Problem($"Repository setup did not finish: {ex.Message}", statusCode: 500);
+                    return Results.Problem("Repository setup did not finish. Check the template build validation and retry.", statusCode: 500);
                 }
             }
 
@@ -942,15 +950,15 @@ public static class RegistryEndpoints
     }
 
     private static async Task DeleteProvisionedRepositoryAsync(
-        IProjectRepositoryProvisioner provisioner, CreateRepositoryRequest request,
-        ProvisionedRepository repository, ILoggerFactory loggerFactory)
+        IProjectRepositoryProvisioner provisioner, ProvisionedRepository repository, ILoggerFactory loggerFactory)
     {
         using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await provisioner.DeleteAsync(request, repository.CheckoutPath, cleanupTimeout.Token); }
+        try { await provisioner.DeleteAsync(repository, cleanupTimeout.Token); }
         catch (Exception ex)
         {
-            loggerFactory.CreateLogger("ProjectCreate").LogCritical(ex,
-                "project-create-repository-cleanup-failed owner={Owner} name={Name}", request.Owner, request.Name);
+            loggerFactory.CreateLogger("ProjectCreate").LogCritical(
+                "project-create-repository-cleanup-failed repository={Repository} failureType={FailureType}",
+                repository.Url, ex.GetType().Name);
         }
     }
 

@@ -63,16 +63,51 @@ or commit attribution.
 
 Studio's project dialog offers an existing repository and a generated GitHub
 repository. The generated mode sends owner, repository name, visibility and
-template to `POST /api/projects`. The backend reads
-`AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN` from the host environment, creates the
-repository through `IProjectRepositoryProvisioner`, installs the selected
-product template on `main` and `develop`, and checks out `develop` under
-`ProjectOnboarding:RepositoryRoot` (or the host's local application data
-directory). The token stays out of the browser, project registry, task storage
-and Git remote URL. The template's `.agent-studio/project.yml` is the
-repository-owned build and test contract. Studio validates the initial local
-build profile before offering the "Hello world change" card. Registration
+template to `POST /api/projects`. Set `ProjectOnboarding:AllowedOwners` to the
+list of GitHub account logins Studio may provision for. An empty list disables
+generated repository creation. In the networked profile this operation requires
+the Studio Owner role.
+
+The provisioner resolves the platform-only workspace secret
+`secret://workspace/AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN` with an audited
+provisioning or rollback purpose. The grant must authenticate `GET /user`.
+Studio uses `POST /user/repos` for that login and `POST /orgs/{owner}/repos`
+for another allowed owner. The grant seeds `main` and `develop`, clones
+`develop` over HTTPS, and can delete the new repository if onboarding fails.
+It stays out of the browser, project registry, task storage, Git remote URL,
+and runner credentials. With `ProjectOnboarding:AllowLegacyProvisioningToken`
+explicitly enabled, Studio may read the legacy environment binding when the
+workspace secret is missing. Keep this setting disabled when proving the
+deposited route and retire the environment binding after canary and production
+proof.
+
+Before registering the project, Studio checks the new repository against an
+adopted App installation for its owner. It uses the Task Server broker when
+configured and the local broker otherwise. If the installation does not yet
+cover the repository, Studio uses the provisioning grant to request access
+for that repository ID and checks coverage again. Failure to confirm coverage
+rolls back provisioning. A networked rollout needs the Task Server coverage
+endpoint before the Studio backend starts using it.
+
+Studio stages the clone under `ProjectOnboarding:RepositoryRoot` (or the host's
+local application data directory), then moves it into its final path. The
+attempt journal and GitHub repository description identify the creation attempt.
+A retry can finish pending cleanup for the same request and GitHub account
+after checking the description and the GitHub repository ID when known. An
+interruption while moving the checkout can require operator inspection if the
+checkout may already be in use. The template's `.agent-studio/project.yml` is
+the repository-owned build and test contract. Studio validates the initial
+local build profile before offering the "Hello world change" card. Registration
 failures compensate the registry, task storage and newly created repository.
+
+A future organization-only App provisioner needs an explicit mapping from the
+allowed organization to a dedicated provisioning installation. Prove its
+create, seed, clone, delete and App handoff permissions on freshly created
+repositories before enabling it. GitHub documents separate token types for
+repository creation and the authenticated-user lookup.
+[Repository operations](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#create-an-organization-repository),
+[authenticated-user lookup](https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-the-authenticated-user),
+[installation repository access](https://docs.github.com/en/rest/apps/installations?apiVersion=2022-11-28#add-a-repository-to-an-app-installation)
 
 When `QualityStudio:BaseUrl` is set, a separate registration attempt follows
 project creation. Its failure never rolls back the project. The 15-minute

@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
+using System.Text.Json;
 using AgentStudio.Registry;
+using AgentStudio.Persistence;
+using AgentStudio.TaskServer.Contracts.GitHubApp;
 using AgentStudio.ExecutionPreparation;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
@@ -16,8 +18,15 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed class ProjectRepositoryProvisioningTests
+public sealed class ProjectRepositoryProvisioningTests : IDisposable
 {
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "studio-provision-test-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
+
     private static readonly string TemplateRoot = Path.GetFullPath(Path.Combine(
         AppContext.BaseDirectory, "../../../../project-templates"));
 
@@ -73,19 +82,47 @@ public sealed class ProjectRepositoryProvisioningTests
         Assert.DoesNotContain(source.Keys, key => key.StartsWith("node_modules/", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task Creates_repository_with_main_and_develop_from_template()
+    [Theory]
+    [InlineData("me", "main", false)]
+    [InlineData("sandbox-org", "trunk", true)]
+    [InlineData("sandbox-org", "develop", true)]
+    public async Task Creates_seeds_clones_and_hands_off_only_after_App_coverage(
+        string owner, string defaultBranch, bool selectedRepositories)
     {
-        var handler = new FakeGitHubHandler();
+        var handler = new FakeGitHubHandler { DefaultBranch = defaultBranch, Covered = !selectedRepositories };
         var checkout = new FakeCheckout();
         var client = CreateClient(handler, checkout);
-        var result = await client.CreateAsync(Request(), CancellationToken.None);
+        var result = await client.CreateAsync(Request() with { Owner = owner }, CancellationToken.None);
 
-        Assert.Equal("https://github.com/me/new-app", result.Url);
-        Assert.Contains(handler.Routes, route => route.EndsWith("/git/trees", StringComparison.Ordinal));
-        Assert.Contains(handler.Routes, route => route.EndsWith("/git/refs", StringComparison.Ordinal));
-        Assert.Equal(result.CheckoutPath, checkout.Path);
+        Assert.Equal($"https://github.com/{owner}/new-app", result.Url);
+        Assert.Equal(owner == "me" ? "/user/repos" : "/orgs/sandbox-org/repos", handler.CreateRoute);
+        Assert.Equal("new-commit", handler.Branches["main"]);
+        Assert.Equal("new-commit", handler.Branches["develop"]);
+        Assert.Equal("main", handler.PublishedDefaultBranch);
+        Assert.Equal("100755", handler.PrepareMode);
+        Assert.Equal(result.Url + ".git", checkout.Url);
+        Assert.Equal(handler.Token, checkout.Token);
+        Assert.NotNull(checkout.Path);
+        Assert.False(Directory.Exists(checkout.Path));
+        Assert.True(Directory.Exists(result.CheckoutPath));
+        Assert.Equal(selectedRepositories ? 1 : 0, handler.Associations);
+        Assert.Equal(selectedRepositories ? 2 : 1, handler.CoverageChecks);
         Assert.Equal(0, handler.Deletes);
+    }
+
+    [Fact]
+    public async Task Disallowed_owner_cannot_trigger_a_credential_read_or_a_GitHub_request()
+    {
+        var handler = new FakeGitHubHandler();
+        var credential = new FakeCredential(handler.Token);
+        var provisioner = CreateClient(handler, new FakeCheckout(), credential: credential);
+
+        var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => provisioner.CreateAsync(Request() with { Owner = "outside-owner" }, default));
+
+        Assert.Equal("owner-not-allowed", error.Code);
+        Assert.Empty(credential.Purposes);
+        Assert.Empty(handler.Routes);
     }
 
     [Theory]
@@ -104,15 +141,96 @@ public sealed class ProjectRepositoryProvisioningTests
         Assert.Equal(0, handler.Deletes);
     }
 
-    [Fact]
-    public async Task Partial_failure_deletes_new_repository()
+    [Theory]
+    [InlineData("me", true)]
+    [InlineData("me", false)]
+    [InlineData("sandbox-org", true)]
+    [InlineData("sandbox-org", false)]
+    public async Task Seed_or_clone_failure_cleans_only_the_new_repository_and_partial_checkout(string owner, bool failSeed)
     {
-        var handler = new FakeGitHubHandler { FailTree = true };
-        var client = CreateClient(handler, new FakeCheckout());
+        var handler = new FakeGitHubHandler { FailTree = failSeed };
+        var checkout = new FakeCheckout { Fail = !failSeed };
+        var client = CreateClient(handler, checkout);
 
-        await Assert.ThrowsAsync<RepositoryProvisioningException>(
-            () => client.CreateAsync(Request(), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => client.CreateAsync(Request() with { Owner = owner }, default));
+
+        Assert.Equal(failSeed ? "github-error" : "setup-failed", error.Code);
+        Assert.DoesNotContain(handler.Token, error.ToString(), StringComparison.Ordinal);
         Assert.Equal(1, handler.Deletes);
+        Assert.False(handler.Exists);
+        Assert.False(Directory.Exists(checkout.Path));
+        Assert.False(Directory.Exists(Path.Combine(_root, owner, "new-app")));
+        Assert.Equal(0, handler.CoverageChecks);
+    }
+
+    [Fact]
+    public async Task Retry_after_lost_create_response_recovers_only_the_matching_attempt()
+    {
+        var handler = new FakeGitHubHandler { LoseCreateResponse = true, FailDelete = true };
+        var provisioner = CreateClient(handler, new FakeCheckout());
+        var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(() => provisioner.CreateAsync(Request(), default));
+        Assert.DoesNotContain(handler.Token, error.ToString(), StringComparison.Ordinal);
+        Assert.True(handler.Exists);
+        Assert.Equal(0, handler.Deletes);
+
+        // A new service instance reads the durable receipt. Requests for the same name
+        // with a different template or GitHub account cannot take over the attempt.
+        provisioner = CreateClient(handler, new FakeCheckout());
+        var wrongTemplate = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => provisioner.CreateAsync(Request() with { Template = "container-service" }, default));
+        Assert.Equal("attempt-conflict", wrongTemplate.Code);
+        handler.UserId++;
+        var wrongAccount = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => provisioner.CreateAsync(Request(), default));
+        Assert.Equal("attempt-conflict", wrongAccount.Code);
+        Assert.Equal(0, handler.Deletes);
+
+        handler.UserId--;
+        handler.FailDelete = false;
+        var originalMarker = handler.Description;
+        var result = await provisioner.CreateAsync(Request(), default);
+        Assert.NotEqual(originalMarker, handler.Description);
+        Assert.Equal(1, handler.Deletes);
+        Assert.True(handler.Exists);
+        Assert.True(Directory.Exists(result.CheckoutPath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_repository_replaced_at_the_same_name_is_never_deleted_on_retry(bool copyDescription)
+    {
+        var handler = new FakeGitHubHandler { FailTree = true, FailDelete = true };
+        var provisioner = CreateClient(handler, new FakeCheckout());
+        await Assert.ThrowsAsync<RepositoryProvisioningException>(() => provisioner.CreateAsync(Request(), default));
+        handler.RepositoryId++;
+        if (!copyDescription) handler.Description = "Unrelated repository";
+        handler.FailDelete = false;
+
+        var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => CreateClient(handler, new FakeCheckout()).CreateAsync(Request(), default));
+        Assert.Equal("name-taken", error.Code);
+        Assert.Equal(0, handler.Deletes);
+        Assert.True(handler.Exists);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Refuses_enrolment_without_verified_App_coverage(bool adopted)
+    {
+        var handler = new FakeGitHubHandler { Adopted = adopted, Covered = false, ApplyAssociation = false };
+        var checkout = new FakeCheckout();
+        var error = await Assert.ThrowsAsync<RepositoryProvisioningException>(
+            () => CreateClient(handler, checkout).CreateAsync(Request(), default));
+
+        Assert.Equal("app-coverage-required", error.Code);
+        Assert.Equal(adopted ? 1 : 0, handler.Associations);
+        Assert.Equal(adopted ? 2 : 1, handler.CoverageChecks);
+        Assert.Equal(1, handler.Deletes);
+        Assert.False(Directory.Exists(checkout.Path));
+        Assert.False(Directory.Exists(Path.Combine(_root, "me", "new-app")));
     }
 
     [Fact]
@@ -137,13 +255,15 @@ public sealed class ProjectRepositoryProvisioningTests
         }
     }
 
-    [Fact]
-    public async Task Validation_failure_after_registration_rolls_back_project_storage_and_repository()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Failed_handoff_or_template_validation_rolls_back_project_storage_and_repository(bool appAdopted)
     {
         var root = Path.Combine(Path.GetTempPath(), "studio-onboard-rollback-" + Guid.NewGuid().ToString("N"));
         var repositoryRoot = Path.Combine(root, "repositories");
-        var handler = new FakeGitHubHandler();
-        var checkout = new CreatingCheckout();
+        var handler = new FakeGitHubHandler { Adopted = appAdopted };
+        var checkout = new FakeCheckout();
         var provisioner = CreateClient(handler, checkout, repositoryRoot);
         var runner = new FailingBuildRunner();
         Directory.CreateDirectory(root);
@@ -177,11 +297,20 @@ public sealed class ProjectRepositoryProvisioningTests
                 createRepository = Request(),
             });
 
-            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-            Assert.Contains("npm ci", runner.Commands);
+            if (appAdopted)
+            {
+                Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+                Assert.Contains("npm ci", runner.Commands);
+            }
+            else
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                Assert.Contains("app-coverage-required", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                Assert.Empty(runner.Commands);
+            }
             Assert.Equal(1, handler.Deletes);
             Assert.Empty(await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects") ?? []);
-            Assert.False(Directory.Exists(checkout.Path));
+            Assert.False(Directory.Exists(Path.Combine(repositoryRoot, "me", "new-app")));
             var projectsRoot = Path.Combine(root, "projects");
             if (Directory.Exists(projectsRoot))
                 Assert.Empty(Directory.EnumerateDirectories(projectsRoot));
@@ -198,7 +327,7 @@ public sealed class ProjectRepositoryProvisioningTests
         var root = Path.Combine(Path.GetTempPath(), "studio-onboard-cancel-" + Guid.NewGuid().ToString("N"));
         var repositoryRoot = Path.Combine(root, "repositories");
         var handler = new FakeGitHubHandler();
-        var checkout = new CreatingCheckout();
+        var checkout = new FakeCheckout();
         var provisioner = new TrackingProvisioner(CreateClient(handler, checkout, repositoryRoot));
         using var requestCancellation = new CancellationTokenSource();
         Directory.CreateDirectory(root);
@@ -246,7 +375,7 @@ public sealed class ProjectRepositoryProvisioningTests
             Assert.Empty(await client.GetFromJsonAsync<List<ProjectSummary>>("/api/projects") ?? []);
             Assert.Null(factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
                 .Get("Canceled Project").BuildProfile);
-            Assert.False(Directory.Exists(checkout.Path));
+            Assert.False(Directory.Exists(Path.Combine(repositoryRoot, "me", "new-app")));
             var projectsRoot = Path.Combine(root, "projects");
             if (Directory.Exists(projectsRoot))
                 Assert.Empty(Directory.EnumerateDirectories(projectsRoot));
@@ -265,30 +394,22 @@ public sealed class ProjectRepositoryProvisioningTests
         }
     }
 
-    [Fact]
-    public void Missing_host_credential_explains_next_step()
-    {
-        var source = new HostProvisioningCredentialSource();
-        if (Environment.GetEnvironmentVariable("AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN") is not null)
-            return;
-        var error = Assert.Throws<RepositoryProvisioningException>(source.GetToken);
-        Assert.Equal("missing-credential", error.Code);
-        Assert.Contains("operator", error.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static CreateRepositoryRequest Request() => new("me", "new-app", "private", "static-web");
 
-    private static GitHubProjectRepositoryProvisioner CreateClient(
-        FakeGitHubHandler handler, IProjectRepositoryCheckout checkout, string? repositoryRoot = null)
+    private GitHubProjectRepositoryProvisioner CreateClient(
+        FakeGitHubHandler handler, IProjectRepositoryCheckout checkout, string? repositoryRoot = null,
+        IProvisioningCredentialSource? credential = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ProjectOnboarding:TemplateRoot"] = TemplateRoot,
-            ["ProjectOnboarding:RepositoryRoot"] = repositoryRoot ?? Path.Combine(Path.GetTempPath(),
-                "studio-provision-test-" + Guid.NewGuid().ToString("N")),
+            ["ProjectOnboarding:RepositoryRoot"] = repositoryRoot ?? _root,
+            ["ProjectOnboarding:AllowedOwners:0"] = "ME",
+            ["ProjectOnboarding:AllowedOwners:1"] = "sandbox-org",
         }).Build();
         return new GitHubProjectRepositoryProvisioner(new FakeClientFactory(handler), config,
-            new FakeCredential(), checkout, NullLogger<GitHubProjectRepositoryProvisioner>.Instance);
+            credential ?? new FakeCredential(handler.Token), checkout, handler, new AtomicJsonFileWriter(),
+            NullLogger<GitHubProjectRepositoryProvisioner>.Instance);
     }
 
     private static async Task RunNpm(string path, params string[] args)
@@ -310,17 +431,30 @@ public sealed class ProjectRepositoryProvisioningTests
         Assert.True(process.ExitCode == 0, (await stdout) + (await stderr));
     }
 
-    private sealed class FakeCredential : IProvisioningCredentialSource
+    private sealed class FakeCredential(string token) : IProvisioningCredentialSource
     {
-        public string GetToken() => "fixture-" + Guid.NewGuid().ToString("N");
+        public List<string> Purposes { get; } = [];
+        public Task<string> GetTokenAsync(string purpose, CancellationToken ct)
+        {
+            Purposes.Add(purpose);
+            return Task.FromResult(token);
+        }
     }
 
     private sealed class FakeCheckout : IProjectRepositoryCheckout
     {
+        public bool Fail { get; init; }
         public string? Path { get; private set; }
+        public string? Url { get; private set; }
+        public string? Token { get; private set; }
+
         public Task CloneAsync(string url, string token, string path, CancellationToken cancellationToken)
         {
             Path = path;
+            Url = url;
+            Token = token;
+            Directory.CreateDirectory(System.IO.Path.Combine(path, ".git"));
+            if (Fail) throw new IOException("Injected clone error containing " + token);
             return Task.CompletedTask;
         }
     }
@@ -329,20 +463,9 @@ public sealed class ProjectRepositoryProvisioningTests
     {
         public Task CloneAsync(string url, string token, string checkoutPath, CancellationToken cancellationToken)
         {
-            Assert.Equal(path, checkoutPath);
+            Directory.CreateDirectory(Path.Combine(checkoutPath, ".git"));
             Directory.CreateDirectory(path);
             File.WriteAllText(Path.Combine(path, "marker.txt"), "keep this directory");
-            throw new RepositoryProvisioningException("checkout-exists", "The local repository path already exists.");
-        }
-    }
-
-    private sealed class CreatingCheckout : IProjectRepositoryCheckout
-    {
-        public string Path { get; private set; } = "";
-        public Task CloneAsync(string url, string token, string path, CancellationToken cancellationToken)
-        {
-            Path = path;
-            Directory.CreateDirectory(path);
             return Task.CompletedTask;
         }
     }
@@ -385,10 +508,10 @@ public sealed class ProjectRepositoryProvisioningTests
         public Task<ProvisionedRepository> CreateAsync(CreateRepositoryRequest request, CancellationToken ct)
             => inner.CreateAsync(request, ct);
 
-        public async Task DeleteAsync(CreateRepositoryRequest request, string path, CancellationToken ct)
+        public async Task DeleteAsync(ProvisionedRepository repository, CancellationToken ct)
         {
             DeleteTokenWasCanceled = ct.IsCancellationRequested;
-            await inner.DeleteAsync(request, path, ct);
+            await inner.DeleteAsync(repository, ct);
             DeletionCompleted.TrySetResult();
         }
     }
@@ -398,46 +521,134 @@ public sealed class ProjectRepositoryProvisioningTests
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
     }
 
-    private sealed class FakeGitHubHandler : HttpMessageHandler
+    private sealed class FakeGitHubHandler : HttpMessageHandler, IProjectRepositoryAppCoverage
     {
+        public string Token { get; } = "fixture-" + Guid.NewGuid().ToString("N");
         public HttpStatusCode CreateStatus { get; init; } = HttpStatusCode.Created;
         public bool FailTree { get; init; }
+        public bool LoseCreateResponse { get; set; }
+        public bool FailDelete { get; set; }
+        public bool Adopted { get; init; } = true;
+        public bool Covered { get; set; } = true;
+        public bool ApplyAssociation { get; init; } = true;
+        public bool Exists { get; private set; }
+        public long UserId { get; set; } = 1;
+        public long RepositoryId { get; set; } = 101;
+        public string? Description { get; set; }
+        public string DefaultBranch { get; init; } = "main";
+        public string? PublishedDefaultBranch { get; private set; }
+        public string? CreateRoute { get; private set; }
+        public string? PrepareMode { get; private set; }
+        public int CoverageChecks { get; private set; }
+        public int Associations { get; private set; }
         public int Deletes { get; private set; }
         public bool DeleteTokenWasCanceled { get; private set; }
         public List<string> Routes { get; } = [];
+        public Dictionary<string, string> Branches { get; } = [];
+        private string? _fullName;
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public Task<GitHubAppProvisioningCoverage> CheckAsync(GitHubRepositoryName repository, bool personalOwner, CancellationToken ct)
         {
-            var path = request.RequestUri!.AbsolutePath;
+            Assert.Equal(_fullName, $"{repository.Owner}/{repository.Name}");
+            Assert.Equal(repository.Owner == "me", personalOwner);
+            Assert.Equal("new-commit", Branches["main"]);
+            Assert.Equal("new-commit", Branches["develop"]);
+            CoverageChecks++;
+            return Task.FromResult(new GitHubAppProvisioningCoverage(Adopted ? 11 : null, Adopted && Covered));
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.Equal("api.github.com", request.RequestUri!.Host);
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal(Token, request.Headers.Authorization?.Parameter);
+            var path = request.RequestUri.AbsolutePath;
+            var method = request.Method;
             Routes.Add(path);
-            if (request.Method == HttpMethod.Delete)
+            if (method == HttpMethod.Delete)
             {
+                Assert.Equal("/repos/" + _fullName, path);
                 DeleteTokenWasCanceled = cancellationToken.IsCancellationRequested;
                 cancellationToken.ThrowIfCancellationRequested();
+                if (FailDelete) return Json(new { message = Token }, HttpStatusCode.Forbidden);
                 Deletes++;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+                Exists = false;
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
-            if (path == "/user") return Json("{\"login\":\"me\"}");
-            if (path == "/user/repos")
-                return CreateStatus == HttpStatusCode.Created
-                    ? Json("{\"html_url\":\"https://github.com/me/new-app\",\"default_branch\":\"main\"}", CreateStatus)
-                    : Json("{}", CreateStatus);
-            if (path.EndsWith("/git/ref/heads/main", StringComparison.Ordinal))
-                return Json("{\"object\":{\"sha\":\"base\"}}");
-            if (path.EndsWith("/git/commits/base", StringComparison.Ordinal))
-                return Json("{\"tree\":{\"sha\":\"base-tree\"}}");
-            if (path.EndsWith("/git/trees", StringComparison.Ordinal))
-                return FailTree ? Json("{}", HttpStatusCode.InternalServerError) : Json("{\"sha\":\"new-tree\"}");
-            if (path.EndsWith("/git/commits", StringComparison.Ordinal)) return Json("{\"sha\":\"new-commit\"}");
-            if (path.EndsWith("/git/refs/heads/main", StringComparison.Ordinal)) return Json("{\"ref\":\"refs/heads/main\"}");
-            if (path.EndsWith("/git/refs", StringComparison.Ordinal)) return Json("{\"ref\":\"refs/heads/develop\"}");
+            if (path == "/user") return Json(new { id = UserId, login = "me" });
+            using var body = request.Content is null ? null
+                : JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
+            var fields = body?.RootElement ?? default;
+            if (path is "/user/repos" or "/orgs/sandbox-org/repos")
+            {
+                Assert.Equal(HttpMethod.Post, method);
+                if (Exists) return Json(new { message = Token }, HttpStatusCode.UnprocessableEntity);
+                if (CreateStatus != HttpStatusCode.Created) return Json(new { message = Token }, CreateStatus);
+                Assert.True(fields.GetProperty("auto_init").GetBoolean());
+                Assert.True(fields.GetProperty("private").GetBoolean());
+                CreateRoute = path;
+                var owner = path == "/user/repos" ? "me" : "sandbox-org";
+                _fullName = owner + "/" + fields.GetProperty("name").GetString();
+                Description = fields.GetProperty("description").GetString();
+                Exists = true;
+                Branches.Clear();
+                Branches[DefaultBranch] = "base";
+                PublishedDefaultBranch = DefaultBranch;
+                if (LoseCreateResponse)
+                {
+                    LoseCreateResponse = false;
+                    throw new HttpRequestException("Injected transport error containing " + Token);
+                }
+                return RepositoryResponse(CreateStatus);
+            }
+            if (path == $"/user/installations/11/repositories/{RepositoryId}")
+            {
+                Assert.Equal(HttpMethod.Put, method);
+                Assert.True(Adopted);
+                Associations++;
+                Covered = ApplyAssociation;
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            if (path == "/repos/" + _fullName && method == HttpMethod.Get)
+                return Exists ? RepositoryResponse(HttpStatusCode.OK) : new HttpResponseMessage(HttpStatusCode.NotFound);
+            Assert.True(Exists);
+            var prefix = "/repos/" + _fullName;
+            if (path == prefix && method == HttpMethod.Patch)
+            {
+                PublishedDefaultBranch = fields.GetProperty("default_branch").GetString();
+                return RepositoryResponse(HttpStatusCode.OK);
+            }
+            if (path == prefix + "/git/ref/heads/" + DefaultBranch)
+                return Json(new { @object = new { sha = "base" } });
+            if (path == prefix + "/git/commits/base") return Json(new { tree = new { sha = "base-tree" } });
+            if (path == prefix + "/git/trees")
+            {
+                Assert.Equal("base-tree", fields.GetProperty("base_tree").GetString());
+                PrepareMode = fields.GetProperty("tree").EnumerateArray()
+                    .Single(item => item.GetProperty("path").GetString() == ".agent-studio/prepare").GetProperty("mode").GetString();
+                return FailTree ? Json(new { message = Token }, HttpStatusCode.InternalServerError) : Json(new { sha = "new-tree" });
+            }
+            if (path == prefix + "/git/commits") return Json(new { sha = "new-commit" });
+            if (path == prefix + "/git/refs" && method == HttpMethod.Post)
+            {
+                var branch = fields.GetProperty("ref").GetString()!["refs/heads/".Length..];
+                Branches.Add(branch, fields.GetProperty("sha").GetString()!);
+                return Json(new { });
+            }
+            if (path.StartsWith(prefix + "/git/refs/heads/", StringComparison.Ordinal) && method == HttpMethod.Patch)
+            {
+                var branch = path[(prefix + "/git/refs/heads/").Length..];
+                Assert.Contains(branch, Branches.Keys);
+                Branches[branch] = fields.GetProperty("sha").GetString()!;
+                return Json(new { });
+            }
             throw new InvalidOperationException("Unexpected GitHub request: " + request.Method + " " + path);
         }
 
-        private static Task<HttpResponseMessage> Json(string body, HttpStatusCode status = HttpStatusCode.OK) =>
-            Task.FromResult(new HttpResponseMessage(status)
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json"),
-            });
+        private HttpResponseMessage RepositoryResponse(HttpStatusCode code)
+            => Json(new { id = RepositoryId, full_name = _fullName, description = Description, default_branch = DefaultBranch }, code);
+
+        private static HttpResponseMessage Json(object body, HttpStatusCode status = HttpStatusCode.OK) =>
+            new(status) { Content = JsonContent.Create(body) };
     }
 }

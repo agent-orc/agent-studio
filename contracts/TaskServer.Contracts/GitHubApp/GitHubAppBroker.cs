@@ -631,6 +631,30 @@ public sealed class GitHubAppBroker
         return permissions;
     }
 
+    /// <summary>Checks a new repository before it enters the registered repository catalog.</summary>
+    public async Task<GitHubAppProvisioningCoverage> CheckProvisioningCoverageAsync(
+        GitHubRepositoryName repository, bool personalOwner, CancellationToken ct)
+    {
+        var generation = CurrentGeneration();
+        var connection = await _vault.LoadConnectionAsync(ct);
+        var accountType = personalOwner ? "User" : "Organization";
+        var adopted = connection?.Installations.FirstOrDefault(item =>
+            string.Equals(item.Account, repository.Owner, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(item.AccountType, accountType, StringComparison.OrdinalIgnoreCase));
+        if (connection is null || adopted is null || await ReadSecretsAsync(ct) is not { } secrets)
+            return new(null, false);
+
+        // A prior repository at this name or a recently changed selection can make the cache stale.
+        var found = await _github.FindRepositoryInstallationAsync(connection.AppId, secrets.PrivateKeyPem, repository, ct);
+        lock (_cache)
+        {
+            if (generation != _generation || (found is not null && found != adopted.Id))
+                return new(null, false);
+            _coverage[repository.Canonical] = (found, Now);
+            return new(adopted.Id, found == adopted.Id);
+        }
+    }
+
     private async Task<GitHubAppRepositoryCoverage> CoverageAsync(
         RegisteredRepository item, GitHubAppConnection connection, GitHubAppSecrets secrets, CancellationToken ct)
     {

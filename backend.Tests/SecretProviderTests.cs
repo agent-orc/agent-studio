@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Registry;
 using AgentStudio.Secrets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,6 +40,34 @@ public sealed class SecretProviderTests : IDisposable
     }
 
     private static string NewValue() => "value-" + Guid.NewGuid().ToString("N");
+
+    [Fact]
+    public async Task Provisioning_reads_the_current_workspace_grant_and_denies_workloads()
+    {
+        var name = SecretProvisioningCredentialSource.TokenName;
+        var source = new SecretProvisioningCredentialSource(_provider, new ConfigurationBuilder().Build());
+        const string purpose = "github-repository-provision";
+        var missing = await Assert.ThrowsAsync<RepositoryProvisioningException>(() => source.GetTokenAsync(purpose, default));
+        Assert.Equal("missing-credential", missing.Code);
+
+        var grant = NewValue();
+        await _provider.PutAsync(SecretScope.Workspace, name, grant, Owner);
+        Assert.Equal(grant, await source.GetTokenAsync(purpose, default));
+        Assert.DoesNotContain(grant, _scrubber.Scrub("request failed: " + grant), StringComparison.Ordinal);
+        Assert.Contains(_audit.Read(SecretScope.Workspace, 10), item => item.Purpose == purpose && item.Outcome == "ok");
+
+        var workload = _stageDeploy with { DeclaredNames = [name] };
+        var denied = await Assert.ThrowsAsync<SecretAccessDeniedException>(() => _provider.GetForWorkloadAsync(
+            new SecretReference(SecretScope.ForEnvironment("memowikis", "stage"), name), workload, "deploy:stage"));
+        Assert.Equal("platform-secret", denied.Code);
+
+        var rotated = NewValue();
+        await _provider.RotateAsync(SecretScope.Workspace, name, rotated, Owner);
+        Assert.Equal(rotated, await source.GetTokenAsync("github-repository-rollback", default));
+        await _provider.RevokeAsync(SecretScope.Workspace, name, null, Owner);
+        var revoked = await Assert.ThrowsAsync<RepositoryProvisioningException>(() => source.GetTokenAsync(purpose, default));
+        Assert.Equal("missing-credential", revoked.Code);
+    }
 
     [Fact]
     public async Task Rotation_keeps_the_old_version_until_revoke_and_records_who_and_when()

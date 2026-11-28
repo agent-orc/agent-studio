@@ -552,9 +552,12 @@ builder.Services.AddSingleton<CliOutputLogMaintenanceService>();
 // not yet load-bearing for the existing lane-folder code paths (F45c).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceRegistry>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectRegistry>();
-builder.Services.AddHttpClient("github-project-provisioning", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient("github-project-provisioning", client => client.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<AgentStudio.Registry.IProvisioningCredentialSource,
-    AgentStudio.Registry.HostProvisioningCredentialSource>();
+    AgentStudio.Registry.SecretProvisioningCredentialSource>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectRepositoryAppCoverage,
+    AgentStudio.Registry.ProjectRepositoryAppCoverage>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectRepositoryCheckout,
     AgentStudio.Registry.GitProjectRepositoryCheckout>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectRepositoryProvisioner,

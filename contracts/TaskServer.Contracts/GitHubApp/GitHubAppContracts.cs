@@ -65,6 +65,8 @@ public sealed record GitHubAppInstallation(
     DateTime AdoptedAtUtc,
     string AdoptedBy);
 
+public sealed record GitHubAppProvisioningCoverage(long? InstallationId, bool Covered);
+
 /// <param name="Visibility">
 /// <c>private</c> or <c>public</c> as GitHub reports it for a repository an
 /// adopted installation lists; null while GitHub has not said.
