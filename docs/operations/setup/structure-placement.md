@@ -16,7 +16,7 @@ Source: `backend/Features/Management/Connectivity/` (`StructureProjection`,
 | Node | Id | Source |
 |---|---|---|
 | Reporting host (coding, review, gate) | `machine:{hostId}` | The host's capability advertisement, or the gate host registration |
-| Runner role on a host | `component:{hostId}:{runnerId}` | The same advertisement; `role` is `coding`, `review` or `gate` |
+| Runner role on a host | `component:{hostId}:{runnerId}` | The capability advertisement. A structure reading can report the role as `coding`, `review`, `post` or `gate`. |
 | Enclosing machine a host names | `machine:{id}` from `RUNNER_PARENT_MACHINE` | Host placement report |
 | Studio server | `machine:{Structure:MachineId}`, default `machine:studio-server` | What the API observes about its own machine |
 | API, web, edge, engine | `component:{machineId}:api`, `:web`, `:edge`, `:engine` | The API itself, engine readiness, forwarded requests, and a host container report |
@@ -186,10 +186,27 @@ overlay links in the placement file. Declare operator workstation membership
 there if the workstation sends no reports. Declared routes have unknown
 health until a probe or supervisor supplies evidence.
 
-## Reading and live updates
+### Migrating workspace consumers from schema 2 to 3
 
-`GET /api/v1/operations/structure?scope=workspace|project:{id}&environment={id}`
-returns `nodes`, `links`, `revision`, `generatedAt` and `schemaVersion` (3). The workspace scope also returns `history`.
+The original six-node Studio view (installation, server and four components)
+is still valid. As hosts supply structure readings, an existing node ID can
+acquire a different `kind` or `parentId`.
+
+| Existing node | Schema 2 or legacy report | With a schema 3 structure reading |
+|---|---|---|
+| Runner component, normally `component:{hostId}:{runnerId}` | An observed runner is a `process` under its reporting host. A declared runner uses its declared kind and parent. | The same component becomes a `service` when the runner reports container placement, or a `host-service` otherwise. Its parent stays the same. |
+| Studio API, web, edge or engine, normally `component:{machineId}:{role}` | A direct child of `machine:{machineId}`, with kind `process`, `container` or its declared kind. | When the Studio slice reports a unique container for that role and it matches the component, the component keeps its ID, has kind `container` and moves under `stack:machine:{machineId}:studio`. This new `container-stack` is itself a child of `machine:{machineId}`. |
+
+A runner without a structure reading keeps its earlier representation. The
+stack appears when the slice reports containers. A Studio component without a
+matching slice container stays under the machine. A slice container with no
+match gets its own ID under the stack.
+
+For snapshots and `structureDelta.nodes`, match nodes by `id`, classify each
+by its current `kind` and use `parentId` to place it in the tree. For example,
+`component:studio-server:api` moves under `stack:machine:studio-server:studio`.
+Links still refer to that API by its component ID.
+[Recorded workspace response](../../../testdata/structure/workspace.json)
 
 In schema 2 a reported runner control connection has kind `control`. Schema 3
 keeps that kind for legacy reports. When a heartbeat includes receiver-observed
@@ -202,6 +219,11 @@ The heartbeat expires after 90 seconds. A matching declared connection keeps
 its ID and label when the receiver supplies these measurements.
 Consumers should join snapshots and deltas by the returned `id` and use
 `kind` to classify the connection.
+
+## Reading and live updates
+
+`GET /api/v1/operations/structure?scope=workspace|project:{id}&environment={id}`
+returns `nodes`, `links`, `revision`, `generatedAt` and `schemaVersion` (3). The workspace scope also returns `history`.
 
 - The projection is cached per scope and refreshed every 5 seconds in the
   background while a view reads or subscribes. A request reads the cache. It
