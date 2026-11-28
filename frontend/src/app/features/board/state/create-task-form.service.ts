@@ -529,8 +529,14 @@ export class CreateTaskFormService {
    * sends. An empty field let the server pick one the chip never showed.
    */
   private applyCatalogueDefaults(models: readonly CliModelInfo[]): void {
+    const suggested = this.policySuggestion()?.model;
+    if (!this.modelSelectionExplicit() && this.newModel() === suggested
+      && models.some((model) => model.id === suggested && model.available === false)) {
+      this.newModel.set('');
+      this.newThinkingLevel.set(null);
+    }
     if (!this.newModel()) {
-      const def = models.find((m) => m.isDefault);
+      const def = models.find((m) => m.isDefault && m.available !== false);
       if (def) this.newModel.set(def.id);
     }
     if (!this.newThinkingLevel()) {
@@ -567,6 +573,7 @@ export class CreateTaskFormService {
     if (this.modelSelectionExplicit()) return;
     const suggestion = this.policySuggestion();
     if (typeof suggestion?.model !== 'string' || !suggestion.model.trim()) return;
+    if (this.availableModels().some((model) => model.id === suggestion.model && model.available === false)) return;
     this.newModel.set(suggestion.model);
     this.newThinkingLevel.set(suggestion.thinkingLevel ?? null);
     this.applyCatalogueDefaults(this.availableModels());

@@ -20,6 +20,29 @@ The events route sorts by `at` descending, then `id` descending. Pages contain u
 
 Each effective route has `consumer`, nullable `stepId`, `configured` (`cliType`, nullable `model`, nullable `thinkingLevel`), nullable `effective` with the same shape, `rule`, and nullable `reason`. `effective: null` means admission would wait. An unknown `pipelineType` returns HTTP 400 with `{ "error": "Unknown pipelineType." }`. This is a read-only projection and does not create a ledger event.
 
+## Execution-host model catalogue
+
+`GET /api/cli/codex/models` returns a `CliModelCatalog` with `models`,
+`source: "execution-hosts"`, and `fetchedAt` (the time the projection was built).
+Each request reads the latest coding and review host advertisements already
+recorded by the installation. In a split installation the API reads Task
+Server's host inventory with a five-second deadline.
+
+`?refresh=true` lets the picker bypass its own cache. The API uses the same
+host-inventory read for both request forms. Probe schedules and CLI process
+state are independent of this read. Callers with project access can read the
+catalogue. A request with `refresh=true` requires
+workspace-wide `workspace.operate` and returns HTTP 403 for scoped callers.
+
+A model is available when at least one active host seen within the last
+three minutes has fresh, usable Codex execution evidence and either advertises
+the model or has fresh, usable acceptance for it. Fresh model-specific
+acceptance evidence takes precedence over that host's CLI model list.
+If no qualifying host advertises a known model, or the host inventory cannot
+be read, the API returns HTTP 200 with the relevant registry entries marked
+`available: false`. `isDefault` identifies the policy default independently
+of `available`. Pickers use both fields when preselecting a model.
+
 ## Reserve setting
 
 `PUT /api/model-selection/policy/reserve` accepts `{ "points": 10 }` and returns the full updated policy. `shortStepReservePoints` defaults to 10 and accepts integers from 0 through 50. An out-of-range value returns HTTP 400 with `{ "error": "Reserve must be between 0 and 50 percentage points." }`.

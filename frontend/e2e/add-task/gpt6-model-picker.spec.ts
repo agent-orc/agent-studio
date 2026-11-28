@@ -184,6 +184,36 @@ test.describe('GPT-6 model picker', () => {
     }
   });
 
+  test('leaves Codex automatic when Sol is unavailable and Astra is offered', async ({ page }, testInfo) => {
+    await page.route('**/api/cli/codex/models*', (route) => route.fulfill({ json: {
+      models: codexModels.map((model) => model.isDefault
+        ? { ...model, available: false, availabilityNote: 'No active execution host advertises this model.' }
+        : model),
+      source: 'execution-hosts',
+      fetchedAt: new Date().toISOString(),
+    } }));
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.getByRole('region', { name: 'Ready cards' }).getByTestId('lane-add-task').click({ timeout: 45_000 });
+    await page.getByTestId('create-agent').click({ timeout: 30_000 });
+
+    const pills = page.getByTestId('create-agent-picker-model-pills');
+    const sol = pills.getByTestId('create-agent-picker-model-gpt-6.2-sol');
+    await expect(sol).toBeDisabled();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await page.getByTestId('create-agent-picker-cli-claude').click();
+    await page.getByTestId('create-agent-picker-cli-codex').click();
+    await expect(sol).toHaveAttribute('aria-checked', 'false');
+    await expect(pills.getByTestId('create-agent-picker-model-gpt-6.2-astra')).toHaveAttribute('aria-checked', 'false');
+    await expect(pills.getByTestId('create-agent-picker-model-default')).toHaveAttribute('aria-checked', 'true');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const path = join(process.env.JOB_RESULTS_DIR ?? '../results', `gpt62-sol-unavailable-${theme}--mocked.png`);
+      await pills.screenshot({ path });
+      await testInfo.attach(`gpt62-sol-unavailable-${theme}`, { path, contentType: 'image/png' });
+    }
+  });
+
   test('reports a project migration that failed every pinned card update', async ({ page }, testInfo) => {
     const id = 'AGT-fail';
     const card = {

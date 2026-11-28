@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { EMPTY, NEVER, Subject, of } from 'rxjs';
 import type { CreateTaskRequest } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
-import { CliCatalogStore } from '../../cli';
+import { CliCatalogStore, type CliModelInfo } from '../../cli';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { QuotaApiService } from '../../quota';
 import { CreateTaskFormService } from './create-task-form.service';
@@ -63,6 +63,29 @@ describe('CreateTaskFormService', () => {
 
     form.onCreateCliTypeChange(form.newCliType() === 'codex' ? 'claude' : 'codex');
     expect(form.modelSelectionExplicit()).toBe(false);
+  });
+
+  it('clears an automatic recommendation when a delayed catalogue reports it unavailable', () => {
+    const catalogue = new Subject<readonly CliModelInfo[]>();
+    TestBed.configureTestingModule({ providers: [
+      CreateTaskFormService,
+      { provide: TaskService, useValue: {} },
+      { provide: CliCatalogStore, useValue: { hasFresh: () => false, ensure: () => catalogue } },
+      { provide: ErrorDialogService, useValue: {} },
+      { provide: QuotaApiService, useValue: {
+        getModelRoutingRecommendation: () => of({ model: 'gpt-6.2-sol', thinkingLevel: 'medium' }),
+      } },
+    ] });
+    const form = TestBed.inject(CreateTaskFormService);
+    form.newCliType.set('claude');
+    form.onCreateCliTypeChange('codex');
+    catalogue.next([
+      { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', vendor: 'openai', multiplier: null, isDefault: true, available: false },
+      { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', vendor: 'openai', multiplier: null, isDefault: false, available: true },
+    ]);
+
+    expect(form.newModel()).toBe('');
+    expect(form.newThinkingLevel()).toBeNull();
   });
 
   it('settles defaults when a registry response arrives during open', () => {

@@ -315,6 +315,18 @@ describe('CliModelSelectorComponent', () => {
     expect(component.pickerOpen()).toBe(true);
   });
 
+  it('chooses an available fallback when switching to a CLI with an unavailable default', async () => {
+    const store = createStoreMock();
+    store.modelsFor.mockReturnValue([{ ...claudeModels[0], available: false }, claudeModels[1]]);
+    const { fixture, component } = await create({ cliType: 'codex', model: 'gpt-6.2-sol' }, store);
+    openPicker(fixture);
+    component.onCliPillClick('claude');
+    await fixture.whenStable();
+
+    expect(component.draftModel()).toBe('claude-sonnet-4-6');
+    expect(component.draftThinkingLevel()).toBe('high');
+  });
+
   it('serves a fresh catalog from the store and schedules the silent picker-open refresh', async () => {
     const { fixture, component, store } = await create({ cliType: 'claude', model: 'claude-opus-4-7' });
     openPicker(fixture);

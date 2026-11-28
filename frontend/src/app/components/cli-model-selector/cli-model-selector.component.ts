@@ -36,15 +36,8 @@ interface CliOption {
 }
 
 /**
- * Unified Studio CLI + model selector shared by board, task, pipeline, and
- * settings surfaces. The catalog and its lifecycle signals are app-owned:
- *
- * - the CLI vocabulary (`CLI_TYPES` + label/icon formatting),
- * - the catalog data source (`CliCatalogStore`, hydrated per ADR-0046):
- *   the picker refreshes on open and keeps cached data visible,
- * - generation projection: current models lead while deprecated and
- *   convention-derived older generations stay selectable in a quieter group,
- * - the modal stack (Escape/close coordination with app dialogs).
+ * Shared CLI and model selector for cards, pipelines, and settings.
+ * The picker keeps cached catalogue data visible while refreshing it on open.
  *
  * Selecting a model or level auto-commits while the CLI is unchanged. A CLI
  * change keeps the picker open until Done so the selection commits atomically.
@@ -183,8 +176,9 @@ export class CliModelSelectorComponent {
 
     effect(() => {
       const models = this.effectiveModels();
+      const cli = this.draftCliType();
       if (!this.pickerOpen()) return;
-      untracked(() => this.applyCatalog(models));
+      untracked(() => this.applyCatalog(models, cli));
     });
   }
 
@@ -368,19 +362,23 @@ export class CliModelSelectorComponent {
   readonly olderModelNote = olderModelNote;
   readonly olderModelNoteTone = olderModelNoteTone;
   readonly olderModelAriaLabel = olderModelAriaLabel;
-  private applyCatalog(models: readonly CliModelInfo[]): void {
-    const selectable = models;
-    this.draftModels.set(selectable);
+  private applyCatalog(models: readonly CliModelInfo[], cli: CliType | null): void {
+    this.draftModels.set(models);
     const current = this.draftModel();
-    const stillValid = current === '' || selectable.some((model) => model.id === current);
+    const existingPin = cli === this.cliType() && current === (this.model() ?? '').trim();
+    const stillValid = current === '' || models.some(
+      (model) => model.id === current && (model.available !== false || existingPin),
+    );
     if (this.draftModelPinned() && stillValid) {
       this.draftThinkingLevel.set(
         normalizeThinkingLevel(this.draftModels(), current, this.draftThinkingLevel() ?? this.thinkingLevel()),
       );
       return;
     }
-    const defaultModel = selectable.find((model) => model.isDefault)
-      ?? selectable.find((model) => model.available !== false);
+    this.draftModelPinned.set(false);
+    const available = models.filter((model) => model.available !== false);
+    const defaultModel = available.find((model) => model.isDefault)
+      ?? (cli === 'codex' ? undefined : available[0]);
     this.draftModel.set(defaultModel?.id ?? '');
     this.draftThinkingLevel.set(defaultModel?.defaultThinkingLevel ?? null);
   }

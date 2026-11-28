@@ -74,6 +74,8 @@ If the CLI has no usable session concept, `IsCompatibleSessionName` returns `fal
 3. **Empty list** — the CLI auto-picks; the user has no choice. Fine for v1, document it.
 
 The frontend's model dropdown reads `/api/cli/{cliType}/models`. No CLI-specific UI code is needed if the JSON shape (`CliModelCatalog`) is honoured.
+The [Codex catalogue API](../contracts/model-selection-api.md#execution-host-model-catalogue)
+defines availability and refresh for models advertised by execution hosts.
 
 **Selected model.** Studio first qualifies the chosen model against its live catalog. Studio then passes the qualified model and thinking level to CAR, which applies its common normalization and descriptor flags. For Antigravity, CAR maps the model to the `agentapi` tiers `flash`, `pro`, and `flash_lite`.
 
