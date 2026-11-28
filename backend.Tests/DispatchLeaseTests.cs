@@ -35,6 +35,24 @@ public sealed class DispatchLeaseTests : IDisposable
         Assert.Equal("queue-keeper", DispatchLeasePolicy.Decide(new(), Facts("two")).Persona);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Paused_assignment_survives_a_new_window_and_owner_controls(bool stopped, bool pinned)
+    {
+        var state = new DispatchLeaseState("area-warden", Stopped: stopped, Pinned: pinned ? "area-warden" : null);
+        var paused = Facts() with { CurrentPersona = "area-warden", Available = ["queue-keeper"], Challengers = [] };
+        var fallback = DispatchLeasePolicy.Decide(state, paused);
+        Assert.Equal("queue-keeper", fallback.Persona);
+        Assert.Equal("assigned-persona-unavailable", fallback.Reason);
+        var resumed = DispatchLeasePolicy.Decide(fallback.State, paused with
+            { CurrentPersona = "queue-keeper", Available = ["queue-keeper", "area-warden"] });
+        Assert.Equal("area-warden", resumed.Persona);
+        Assert.Equal(stopped, resumed.State.Stopped);
+        Assert.Equal(state.Pinned, resumed.State.Pinned);
+    }
+
     [Fact]
     public void Missing_wave_uses_utc_day_without_advancing_on_each_pick()
     {

@@ -66,8 +66,8 @@ public static class DispatchLeasePolicy
         }
         if (state.Guard is not null) return new(state, "queue-keeper", window, "guard-active");
         if (state.Pinned is { } pinned)
-            return new(state, facts.Available.Contains(pinned) ? pinned : "queue-keeper", window, "owner-pinned");
-        if (state.Stopped) return new(state, state.Champion, window, "alternation-stopped");
+            return Assign(pinned, "owner-pinned");
+        if (state.Stopped) return Assign(state.Champion, "alternation-stopped");
 
         if (state.Challenger is { } rival)
         {
@@ -94,12 +94,16 @@ public static class DispatchLeasePolicy
         }
         var existing = state.Windows.FirstOrDefault(w => w.Key == window);
         if (existing is not null)
-            return new(state, facts.Available.Contains(existing.Persona) ? existing.Persona : "queue-keeper", window, "window-retained");
+            return Assign(existing.Persona, "window-retained");
         var selected = state.Challenger is not null && state.ChallengerNext ? state.Challenger : state.Champion;
-        if (!facts.Available.Contains(selected)) selected = "queue-keeper";
         state = state with { Windows = [.. state.Windows, new(window, selected, state.Epoch, facts.Now)],
             ChallengerNext = state.Challenger is not null && !state.ChallengerNext };
-        return new(state, selected, window, "window-opened");
+        return Assign(selected, "window-opened");
+
+        DispatchLeaseDecision Assign(string assigned, string reason)
+            => assigned == "queue-keeper" || facts.Available.Contains(assigned)
+                ? new(state, assigned, window, reason)
+                : new(state, "queue-keeper", window, "assigned-persona-unavailable");
     }
 
     /// <summary>Only the later admission of a named collision owns its conflict, regardless of which card integrated last.</summary>

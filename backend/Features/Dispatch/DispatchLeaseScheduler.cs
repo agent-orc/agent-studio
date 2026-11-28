@@ -19,7 +19,7 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
 {
     public string Decider => AiOperatorDeciders.DispatchLease;
     private readonly ConcurrentDictionary<string, object> _gates = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, (DateTimeOffset At, string Window)> _refreshed = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (DateTimeOffset At, string Window, long Fence, HashSet<string> Scoped)> _refreshed = new(StringComparer.OrdinalIgnoreCase);
 
     public DispatchLeaseV1? Refresh(string project, string? wave = null, string? action = null,
         string? persona = null, long? expectedFence = null, string? expectedGuard = null, string actor = "platform")
@@ -40,17 +40,13 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
             }
             var window = DispatchLeaseControls.Window(wave, now);
             var watchPath = scanner.GetWatchPaths().First(e => e.Name.Equals(project, StringComparison.OrdinalIgnoreCase)).Path;
+            var scoped = ScopedPlanners(registered.WorkspaceId, registered.Id, project, old);
             if (action is null && _refreshed.TryGetValue(project, out var cached)
-                && cached.Window == window && now - cached.At < TimeSpan.FromMinutes(1)
-                && old?.Rollout is not null && old.ExpiresAt > now)
+                && cached.Window == window && cached.Scoped.SetEquals(scoped) && now - cached.At < TimeSpan.FromMinutes(1)
+                && old?.Rollout is not null && old.Fence == cached.Fence && old.ExpiresAt > now)
                 return old;
             var state = old?.Rollout ?? new DispatchLeaseState(Champion: old?.Persona ?? "queue-keeper");
             var projection = review.Review(project, registered.WorkspaceId, watchPath, null, null);
-            var scoped = activations.List(registered.WorkspaceId).Personas.Select(p => p.Activation)
-                .OfType<PersonaActivationV1>().Where(a => a.Descriptor.Kind == PersonaKinds.Dispatcher
-                    && a.State == PersonaStates.Active && a.Operations.Contains("dispatch.plan.write")
-                    && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(registered.Id)
-                        || a.Scope.Projects.Contains(project))).Select(a => a.PersonaId).ToHashSet(StringComparer.Ordinal);
             var available = projection.Competition.Where(c => c.Evaluation.EligibleForAlternatingLive
                     && projection.Personas.First(r => r.Raw.Persona == c.Challenger).Raw.Strategy != DispatchStrategies.PackageThenChain
                     && scoped.Contains(c.Challenger)).Select(c => c.Challenger).ToHashSet(StringComparer.Ordinal);
@@ -85,7 +81,7 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
                 var preview = decisions.Preview(payload);
                 if (preview.Disposition == AiOperatorDisposition.Hold)
                 {
-                    _refreshed[project] = (now, window);
+                    _refreshed[project] = (now, window, old!.Fence, scoped);
                     PublishGuard(registered.WorkspaceId, project, old!);
                     return old;
                 }
@@ -97,7 +93,7 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
             if (!decision.Allowed) throw new InvalidOperationException(decision.Reason);
             var lease = store.ApplyLeaseDecision(project, old?.Fence ?? 0, decision, now, actor);
             if (lease is null) throw new InvalidOperationException("The lease changed while collecting evidence. Retry the operation.");
-            _refreshed[project] = (now, window);
+            _refreshed[project] = (now, window, lease.Fence, scoped);
             var evidence = projection.Competition.Select(c => new DispatchCompetitionEvidence(c.Challenger,
                 c.Facts.ShadowIntegratedCards, c.Facts.ShadowWaves,
                 results.Count(r => r.Complete && r.Persona == c.Challenger),
@@ -159,6 +155,19 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
         return results;
     }
 
+    private HashSet<string> ScopedPlanners(string workspace, string projectId, string project, DispatchLeaseV1? lease)
+    {
+        // Generic persona grants contain only shadow operations. A certified lease keeps
+        // its project-specific plan grant across a temporary pause of the assigned holder.
+        var assigned = new[] { lease?.Persona, lease?.Rollout?.Champion, lease?.Rollout?.Challenger, lease?.Rollout?.Pinned };
+        return activations.List(workspace).Personas.Select(p => p.Activation).OfType<PersonaActivationV1>()
+            .Where(a => a.Descriptor.Kind == PersonaKinds.Dispatcher && a.State == PersonaStates.Active
+                && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(projectId) || a.Scope.Projects.Contains(project))
+                && (a.Operations.Contains("dispatch.plan.write") || assigned.Contains(a.PersonaId)
+                    && a.Operations.Contains("dispatch.shadow.record") && a.Descriptor.Operations.Contains("dispatch.plan.write")))
+            .Select(a => a.PersonaId).ToHashSet(StringComparer.Ordinal);
+    }
+
     public Task ApplyAsync(AiOperatorApplication application, CancellationToken ct)
     {
         var occurrence = application.Payload.DispatchLease;
@@ -166,13 +175,11 @@ public sealed class DispatchLeaseScheduler(DispatchStore store, DispatchReviewSe
         if (occurrence is null || decision is null) throw new InvalidDataException("Dispatch lease receipt is missing.");
         var registered = projects.FindByIdOrDisplayName(application.ProjectId);
         if (registered is null || settings.Get(registered.DisplayName).DispatchMode != "live") return Task.CompletedTask;
-        if (decision.Persona != "queue-keeper" && !activations.List(registered.WorkspaceId).Personas
-            .Select(p => p.Activation).OfType<PersonaActivationV1>().Any(a => a.PersonaId == decision.Persona
-                && a.State == PersonaStates.Active && a.Operations.Contains("dispatch.plan.write")
-                && (a.Scope.Projects.Contains("*") || a.Scope.Projects.Contains(registered.Id)
-                    || a.Scope.Projects.Contains(registered.DisplayName)))) return Task.CompletedTask;
         lock (_gates.GetOrAdd(registered.DisplayName, _ => new object()))
         {
+            if (decision.Persona != "queue-keeper" && !ScopedPlanners(registered.WorkspaceId, registered.Id,
+                registered.DisplayName, store.ReadLease(registered.DisplayName)).Contains(decision.Persona))
+                return Task.CompletedTask;
             var lease = store.ApplyLeaseDecision(registered.DisplayName, occurrence.ExpectedFence, decision, time.GetUtcNow(), "platform");
             if (lease is not null) PublishGuard(registered.WorkspaceId, registered.DisplayName, lease);
         }
