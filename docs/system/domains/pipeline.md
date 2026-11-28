@@ -3480,7 +3480,21 @@ move-error dialog.
   unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
   creates a review attempt: it first checks that the latest review in
   attempt authority for exactly that delivery SHA ended in `Pass`, and reuses
-  it. See
+  it. Host faults also carry a durable host/fingerprint budget in the platform-owned
+  `gate-host-repairs.json` receipt at the project root (AGT-4100). Delivery SHA
+  changes and operator retries cannot replenish an exhausted host budget. On
+  exhaustion the service quarantines that host fault and creates one separate,
+  code-free host repair obligation through the task mutation boundary. It retains
+  the source result, review and run identity and never queues a product continuation,
+  including when an older engine receipt asks for one. Legacy lane-folder storage
+  or a host without task mutation support closes with a durable quarantine reason
+  instead of creating a hidden card or reopening product work. Completion of the
+  repair permits one replay per held exact delivery; new deliveries cannot claim
+  that historical wake. Manual holds remain held. Transport failures stay with
+  their outage probe, and service-shutdown resumptions spend no host rung.
+  Healthy-host relocation requires a per-replay transport placement input; the
+  existing merge runner has no such input. The scoped quarantine and repair path
+  does not claim that relocation is implemented. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
   for the ladder, the receipts, and the operator action.
 - A gate that never reached a verdict at all - the process that owned the merge

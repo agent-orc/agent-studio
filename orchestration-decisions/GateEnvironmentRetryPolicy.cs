@@ -18,6 +18,9 @@ public static class GateEnvironmentRetryReasons
     public const string Backoff = "gate-environment-backoff";
     public const string Due = "gate-environment-retry-due";
     public const string AlreadyParked = "gate-environment-retry-already-parked";
+    public const string HostQuarantined = "gate-host-quarantined";
+    public const string HostRecovered = "gate-host-repair-recovered";
+    public const string HumanHold = "gate-environment-human-hold";
 
     /// <summary>
     /// AGT-3792: a transport failure is replayable, but not by the timed
@@ -117,7 +120,13 @@ public sealed record GateEnvironmentRetryFacts(
     DateTimeOffset? FailedAt,
     DateTimeOffset Now,
     bool TransportFailure = false,
-    bool IntegrationBeforeFreshReview = false);
+    bool IntegrationBeforeFreshReview = false,
+    int HostAttemptsSpent = 0,
+    bool HostQuarantined = false,
+    bool HostRepairSucceeded = false,
+    bool HostRecoverySpent = false,
+    bool HumanHold = false,
+    bool OperatorRequest = false);
 
 /// <summary>The AI Operator facts: the ladder plus the one continuation after parking.</summary>
 public sealed record GateEnvironmentRetryOperatorFacts(
@@ -144,13 +153,20 @@ public static class GateEnvironmentRetryPolicy
     {
         ArgumentNullException.ThrowIfNull(facts);
         var maximum = facts.Backoff.Count;
-        var spent = Math.Clamp(facts.AttemptsSpent, 0, maximum);
+        var spent = Math.Clamp(Math.Max(facts.AttemptsSpent, facts.HostAttemptsSpent), 0, maximum);
         if (OperatorReplayRefusal(facts) is { } refused)
             return Ignore(refused, spent, maximum);
         // The gate runner already retried the transport against the same
         // subject. Another timed rung would only meet the same unreachable host.
         if (facts.TransportFailure)
             return Ignore(GateEnvironmentRetryReasons.TransportAwaitsGateHost, spent, maximum);
+
+        if (facts.HostQuarantined)
+            return facts.HostRepairSucceeded && !facts.HostRecoverySpent
+                ? new(GateEnvironmentRetryAction.Retry, GateEnvironmentRetryReasons.HostRecovered,
+                    spent, maximum, TimeSpan.Zero, facts.Now)
+                : new(GateEnvironmentRetryAction.Park, GateEnvironmentRetryReasons.HostQuarantined,
+                    spent, maximum, TimeSpan.Zero, DueAt: null);
 
         if (spent >= maximum)
             return new(GateEnvironmentRetryAction.Park, GateEnvironmentRetryReasons.BudgetExhausted,
@@ -185,6 +201,10 @@ public static class GateEnvironmentRetryPolicy
     {
         ArgumentNullException.ThrowIfNull(facts);
         if (!facts.Enabled) return GateEnvironmentRetryReasons.Disabled;
+        if (facts.HumanHold) return GateEnvironmentRetryReasons.HumanHold;
+        if (facts.OperatorRequest && facts.HostQuarantined
+            && (!facts.HostRepairSucceeded || facts.HostRecoverySpent))
+            return GateEnvironmentRetryReasons.HostQuarantined;
         if (!facts.InRetryLane) return GateEnvironmentRetryReasons.OutsideLanes;
         if (!facts.RequiresIntegration) return GateEnvironmentRetryReasons.NoCodeDelivery;
         if (facts.AcceptanceIntegrationInFlight) return GateEnvironmentRetryReasons.AcceptanceIntegrationInFlight;
@@ -206,17 +226,17 @@ public static class GateEnvironmentRetryPolicy
             : gateReason.Trim();
         return $"Parked after {attempts} automatic gate-environment retries: the merge into "
                + $"{integrationBranch} keeps failing on the gate environment, not on the reviewed change. "
-               + $"{detail} Fix the gate host, then use Retry integration to replay the passed review; "
-               + "no new review round is needed.";
+               + $"{detail} The host fault is quarantined with a separate repair obligation. "
+               + "A successful host repair wakes this exact delivery once, reusing its passed review.";
     }
 
     private static GateEnvironmentRetryDecision Ignore(string reason, int spent, int maximum)
         => new(GateEnvironmentRetryAction.Ignore, reason, spent, maximum, TimeSpan.Zero, DueAt: null);
 }
 
-/// <summary>One automatic agent round for a parked gate fault on each delivery.</summary>
+/// <summary>Host faults never authorize a product continuation, including legacy engine receipts.</summary>
 public static class GateEnvironmentContinuationPolicy
 {
     public static bool ShouldStart(bool automaticEnabled, int priorRoundsForDelivery)
-        => automaticEnabled && priorRoundsForDelivery < 1;
+        => false;
 }

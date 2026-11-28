@@ -132,6 +132,43 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExhaustedHostCreatesOneRepairAcrossDeliveriesWithoutAProductRound()
+    {
+        var stack = Build();
+        var first = SeedGateEnvironmentFailure(stack, "host-first", 600, key: "AGT-2811");
+        MoveToFlatStore(stack, "host-first", 2811);
+        for (var rung = 1; rung <= 3; rung++) SeedRetryReceipt(stack, "host-first", first, rung);
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Parked);
+        var second = SeedGateEnvironmentFailure(stack, "host-second", 600, key: "AGT-2812");
+        MoveToFlatStore(stack, "host-second", 2812);
+        Assert.Equal(1, (await stack.Retries.RunOnceAsync()).Parked);
+
+        var repair = Assert.Single(stack.Scanner.ScanAutomationJobsWithArchive(_watchPath),
+            card => card.CreationSource?.StartsWith("gate-host-repair:", StringComparison.Ordinal) == true);
+        Assert.Equal(TaskStates.Ready, repair.State);
+        Assert.False(repair.RequiresIntegration);
+        Assert.Equal(0, stack.Gate.Invocations);
+        Assert.Equal(first, ReviewSubjectStore.Read(stack.Scanner.FindJob("host-first", _watchPath)!.FolderPath)!.ResultSha);
+        Assert.Equal(second, ReviewSubjectStore.Read(stack.Scanner.FindJob("host-second", _watchPath)!.FolderPath)!.ResultSha);
+        foreach (var id in new[] { "host-first", "host-second" })
+        {
+            Assert.Single(stack.Authority.GetTaskProjection(stack.TaskKey(id)).ReviewAttempts);
+            Assert.DoesNotContain(stack.Timeline.ReadAll(stack.Scanner.FindJob(id, _watchPath)!.FolderPath),
+                entry => entry.Details?.GetValueOrDefault("source") == "gate-environment-continuation");
+        }
+    }
+
+    private void MoveToFlatStore(Stack stack, string id, int number)
+    {
+        var original = Path.Combine(_watchPath, TaskStates.HumanReview, id);
+        var target = TaskStorageLayout.JobDir(_watchPath, number, id);
+        if (!Directory.Exists(original)) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        Directory.Move(original, target);
+        stack.Scanner.InvalidateCache();
+    }
+
+    [Fact]
     public async Task Sweep_WithoutAPassedReviewForTheDeliverySha_NeverReplays()
     {
         var stack = Build();
@@ -238,7 +275,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RetryNow_AfterTheLadderParked_RestartsTheBoundedLadder()
+    public async Task RetryNow_CannotReplenishAQuarantinedHostBudget()
     {
         var stack = Build(gateEnvironmentFails: true);
         var delivery = SeedGateEnvironmentFailure(stack, "unpark", failedMinutesAgo: 600);
@@ -248,16 +285,10 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         var job = stack.Scanner.FindJob("unpark", _watchPath)!;
         var result = await stack.Retries.RetryNowAsync(job);
 
-        Assert.Equal(GateEnvironmentRetryStatus.Replayed, result.Status);
-        // An operator replay is not a ladder rung; it restarts the ladder.
-        Assert.Equal(0, result.Rung);
-        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentFailure, result.Outcome);
-
-        // The operator retry means "the host is fixed": the automatic ladder
-        // starts over instead of parking again on the very next sweep.
-        var afterUnpark = await stack.Retries.RunOnceAsync();
-        Assert.Equal(0, afterUnpark.Parked);
-        Assert.Equal(1, afterUnpark.Waiting);
+        Assert.Equal(GateEnvironmentRetryStatus.NotApplicable, result.Status);
+        Assert.Equal(GateEnvironmentRetryReasons.HostQuarantined, result.Code);
+        Assert.Equal(0, stack.Gate.Invocations);
+        Assert.Equal(0, (await stack.Retries.RunOnceAsync()).Retried);
     }
 
     [Fact]
@@ -551,7 +582,9 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         var deliverySha = Git(_repo, "rev-parse", "HEAD");
         Git(_repo, "checkout", "-q", "develop");
 
-        var folder = Path.Combine(_watchPath, state, id);
+        var folder = TaskStorageLayout.EnumerateJobDirs(_watchPath).Any()
+            ? TaskStorageLayout.JobDir(_watchPath, int.Parse((key ?? "AGT-2811").Split('-')[1]), id)
+            : Path.Combine(_watchPath, state, id);
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -729,7 +762,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             authority,
             new TaskProvenanceService(git, settings, mutations, NullLogger<TaskProvenanceService>.Instance),
             configuration,
-            logger ?? NullLogger<GateEnvironmentRetryService>.Instance);
+            logger ?? NullLogger<GateEnvironmentRetryService>.Instance,
+            mutations: mutations);
         return new Stack(scanner, timeline, pipeline, integration, authority, gate, retries, _watchPath);
     }
 

@@ -17,6 +17,39 @@ public sealed class GateEnvironmentRetryPolicyTests
         new(2026, 9, 15, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void ChangedDeliveryDoesNotReplenishTheHostFingerprintBudget()
+    {
+        var facts = HostFacts() with { AttemptsSpent = 0, HostAttemptsSpent = 3 };
+        Assert.Equal(GateEnvironmentRetryAction.Park, GateEnvironmentRetryPolicy.Decide(facts).Action);
+    }
+
+    [Fact]
+    public void SuccessfulHostRepairWakesEachHeldDeliveryOnlyOnce()
+    {
+        var facts = HostFacts() with { HostQuarantined = true, HostRepairSucceeded = true };
+        Assert.Equal(GateEnvironmentRetryReasons.HostRecovered, GateEnvironmentRetryPolicy.Decide(facts).Reason);
+        Assert.Equal(GateEnvironmentRetryAction.Park,
+            GateEnvironmentRetryPolicy.Decide(facts with { HostRecoverySpent = true }).Action);
+        Assert.Equal(GateEnvironmentRetryReasons.HostQuarantined,
+            GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts with { HostRecoverySpent = true, OperatorRequest = true }));
+    }
+
+    [Fact]
+    public void HostRepairCannotReleaseHumanHoldOrTransportProbeOwnership()
+    {
+        var facts = HostFacts() with { HostQuarantined = true, HostRepairSucceeded = true };
+        Assert.Equal(GateEnvironmentRetryReasons.HumanHold,
+            GateEnvironmentRetryPolicy.Decide(facts with { HumanHold = true }).Reason);
+        Assert.Equal(GateEnvironmentRetryReasons.TransportAwaitsGateHost,
+            GateEnvironmentRetryPolicy.Decide(facts with { TransportFailure = true }).Reason);
+    }
+
+    private static GateEnvironmentRetryFacts HostFacts() => new(
+        true, true, true, false, true, true, 0,
+        [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(45)],
+        null, Failed, Failed.AddDays(1));
+
+    [Fact]
     public void Decide_FirstRungIsDueFiveMinutesAfterTheGateEnvironmentFailure()
     {
         var tooEarly = Decide(now: Failed.AddMinutes(4).AddSeconds(59));
@@ -231,7 +264,7 @@ public sealed class GateEnvironmentRetryPolicyTests
         Assert.Contains("Parked after 3 automatic gate-environment retries", reason, StringComparison.Ordinal);
         Assert.Contains("develop", reason, StringComparison.Ordinal);
         Assert.Contains("Tool 'node' version v24.18.0 does not match .nvmrc", reason, StringComparison.Ordinal);
-        Assert.Contains("no new review round is needed", reason, StringComparison.Ordinal);
+        Assert.Contains("reusing its passed review", reason, StringComparison.Ordinal);
     }
 
     [Fact]

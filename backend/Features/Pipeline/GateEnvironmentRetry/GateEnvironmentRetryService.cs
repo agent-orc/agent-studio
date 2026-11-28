@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
 
@@ -19,8 +20,8 @@ public enum GateEnvironmentRetryStatus
 }
 
 /// <summary>
-/// Reads the automatic continuation rounds already queued for a parked gate
-/// fault; the one-round rule is <see cref="GateEnvironmentContinuationPolicy"/>.
+/// Reads historical continuation receipts. These remain readable for older
+/// engine facts; host faults no longer authorize a product continuation.
 /// </summary>
 public static class GateEnvironmentContinuationRounds
 {
@@ -120,7 +121,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     private readonly IConfiguration _configuration;
     private readonly ILogger<GateEnvironmentRetryService> _logger;
     private readonly TimeProvider _time;
-    private readonly TaskRunnerService? _continuations;
+    private readonly TaskMutationService? _mutations;
     private readonly AgentStudio.Runner.AiOperatorDecisionGateway _decisions;
     private readonly TaskTransitionService? _transitions;
     private readonly GateHostOutageMonitor? _hostHealth;
@@ -148,7 +149,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         AgentStudio.Runner.AiOperatorDecisionGateway? decisions = null,
         TaskTransitionService? transitions = null,
         GateHostOutageMonitor? hostHealth = null,
-        ConceptDeliveryPostSteps? conceptDelivery = null)
+        ConceptDeliveryPostSteps? conceptDelivery = null,
+        TaskMutationService? mutations = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -161,7 +163,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
-        _continuations = continuations;
+        _mutations = mutations;
         _decisions = decisions ?? AgentStudio.Runner.AiOperatorDecisionGateway.ForTestHost(configuration);
         _transitions = transitions;
         _hostHealth = hostHealth;
@@ -216,7 +218,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
 
                 candidates++;
                 var payload = new AiOperatorDecisionPayload(Decider,
-                    $"gate-environment:{evaluation.DeliverySha}:{evaluation.Ledger.AttemptsSpent}",
+                    EvaluationSubjectKey(evaluation),
                     GateEnvironmentRetry: OperatorFacts(job, evaluation));
                 var submission = _decisions.Submit(new AgentStudio.Runner.AiOperatorDecisionRequest(
                     job.ProjectName, job.Id, job.State, payload, options.SweepInterval));
@@ -268,9 +270,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     /// The explicit "Retry integration" operator action. Same semantics as a
     /// ladder rung - the passed review for the unchanged delivery SHA is reused
     /// and no review attempt is created - but it ignores the remaining backoff,
-    /// because the operator asking for it is the signal that the gate host was
-    /// repaired. It also restarts the ladder, so a parked card recovers its
-    /// automatic budget instead of parking again on the next fault.
+    /// while the host/fingerprint budget remains authoritative. The operator's
+    /// delivery ledger can restart, but an exhausted host fault waits for its
+    /// separate repair and cannot gain new rungs from a button or result SHA.
     /// <para>
     /// The button overrides the ladder's <em>timing</em>, never its
     /// <em>eligibility</em>: the very same <see cref="GateEnvironmentRetryPolicy"/>
@@ -306,7 +308,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             // The operator intent overrides the ladder's timing; the authority
             // only validates that there is something to replay, and the sweep
             // and the button must agree about that.
-            if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is { } refusal)
+            if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(
+                    evaluation.Facts with { OperatorRequest = true }) is { } refusal)
             {
                 var lookupFailure = evaluation.ReviewLookup.FailureReason;
                 // The ladder reads review archives only once every other fact
@@ -509,7 +512,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         var evaluation = Evaluate(job, status, Options);
         if (MonolithTransitionAdapter.GateEnvironmentRetryPolicyOperatorReplayRefusal(evaluation.Facts) is not null
             || application.Payload.SubjectKey
-                != $"gate-environment:{evaluation.DeliverySha}:{evaluation.Ledger.AttemptsSpent}")
+                != EvaluationSubjectKey(evaluation))
             return;
         await ApplyDecisionAsync(job, evaluation, application.Decision, ct).ConfigureAwait(false);
     }
@@ -521,8 +524,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         {
             case AiOperatorEffects.ParkIntegration:
             case AiOperatorEffects.ParkAndContinue:
-                return await ParkAsync(job, evaluation,
-                    decision.Effect == AiOperatorEffects.ParkAndContinue, ct).ConfigureAwait(false)
+                return await ParkAsync(job, evaluation, ct).ConfigureAwait(false)
                     ? GateEnvironmentRetryAction.Park : GateEnvironmentRetryAction.Ignore;
             case AiOperatorEffects.ReplayIntegration:
                 if (!_inFlight.TryAdd(job.TaskKey, 0)) return GateEnvironmentRetryAction.Ignore;
@@ -603,6 +605,45 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             ? HasPassedReview(job.Key ?? job.TaskKey, deliverySha)
             : new GateEnvironmentReviewLookup(false, null);
 
+        var hostFault = GateEnvironmentRetryFactsReader.IsGateEnvironmentFailure(status)
+            && !GateEnvironmentRetryFactsReader.IsTransportFailure(status)
+            && !GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status);
+        GateEnvironmentHostRepair? host = null;
+        if (hostFault)
+        {
+            // Custody is pinned before the merge reason is annotated. Neither a
+            // new result SHA nor a rewritten display reason resets a host fault.
+            var custody = _timeline.ReadAll(job.FolderPath).LastOrDefault(entry =>
+                entry.Details?.GetValueOrDefault("source") == "gate-host-custody"
+                && entry.Details.GetValueOrDefault("runAttemptId") == subject?.RunAttemptId
+                && entry.Details.GetValueOrDefault("deliverySha") == deliverySha);
+            var identity = custody?.Details?.GetValueOrDefault("host")
+                ?? mergeStep?.ExecutionHostId ?? _configuration["RemoteGate:SshHost"] ?? "unidentified-gate-host";
+            var fingerprint = custody?.Details?.GetValueOrDefault("fingerprint")
+                ?? (GateFailureRouter.ReadReceipt(job.FolderPath) is { } triage
+                    && triage.DeliverySha == deliverySha ? triage.Triage?.Fingerprint : null)
+                ?? GateFailureTriagePolicy.ItemFingerprint([mergeStep?.Reason ?? status?.Failure?.Reason ?? "gate environment"]);
+            host = GateEnvironmentHostRepairs.Read(job.WatchPath, identity, fingerprint);
+            // Import legacy delivery rungs once, without treating a new SHA as a
+            // new host budget. New receipts spend the host budget before execution.
+            host = host with { AttemptsSpent = Math.Max(host.AttemptsSpent, ledger.AttemptsSpent) };
+            var repair = host.RepairTaskId is null ? null : _scanner.FindJob(host.RepairTaskId, job.WatchPath);
+            withoutReview = withoutReview with
+            {
+                HostAttemptsSpent = host.AttemptsSpent,
+                HostQuarantined = host.Quarantined,
+                HostRepairSucceeded = repair?.State == TaskStates.Completed
+                    && host.HeldDeliveries.Contains(DeliveryIdentity(job, subject), StringComparer.Ordinal),
+                HostRecoverySpent = host.ReplayedDeliveries.Contains(DeliveryIdentity(job, subject), StringComparer.Ordinal),
+                LastAttemptAt = host.LastAttemptAt ?? withoutReview.LastAttemptAt,
+            };
+        }
+        var blocker = ParkedBlockerMarker.TryRead(job.FolderPath);
+        withoutReview = withoutReview with
+        {
+            HumanHold = blocker is not null
+                && blocker.BlockerType != GateFailureParkCategories.EnvironmentExhausted,
+        };
         return new GateEnvironmentRetryEvaluation(
             withoutReview with { ReviewPassed = reviewLookup.Passed },
             ledger,
@@ -611,7 +652,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             projectSettings.IntegrationStrategy,
             mergeStep,
             reviewLookup,
-            GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status));
+            GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status),
+            host,
+            subject);
     }
 
     /// <summary>
@@ -677,6 +720,22 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         CancellationToken ct)
     {
         var deliverySha = evaluation.DeliverySha!;
+        var current = _scanner.FindJob(job.Id, job.WatchPath);
+        var subject = current is null ? null : ReviewSubjectStore.Read(current.FolderPath);
+        if (current is null || current.State != job.State || subject is null
+            || subject.RunAttemptId != evaluation.Subject?.RunAttemptId
+            || !string.Equals(subject.ResultSha, deliverySha, StringComparison.OrdinalIgnoreCase)
+            || ParkedBlockerMarker.TryRead(current.FolderPath) is { } blocker
+                && blocker.BlockerType != GateFailureParkCategories.EnvironmentExhausted)
+            return new(GateEnvironmentRetryStatus.NotApplicable, "The delivery or its hold changed before replay.");
+        if (evaluation.Host is { } host)
+        {
+            var next = host.Quarantined
+                ? host with { ReplayedDeliveries = [.. host.ReplayedDeliveries, DeliveryIdentity(job, subject)] }
+                : host with { AttemptsSpent = host.AttemptsSpent + 1, LastAttemptAt = _time.GetUtcNow() };
+            if (!GateEnvironmentHostRepairs.TryWrite(job.WatchPath, host, next))
+                return new(GateEnvironmentRetryStatus.AlreadyRunning, "The host fault budget changed before replay.");
+        }
         // The receipt is written before the merge starts. A crash between the
         // receipt and the outcome then costs one rung instead of leaving a
         // budget that can never be exhausted. An operator replay is not a rung:
@@ -724,7 +783,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
                 evaluation.IntegrationBranch,
                 ct,
                 evaluation.IntegrationStrategy,
-                PipelineTypes.Resolve(job));
+                PipelineTypes.Resolve(job),
+                reviewedResultSha: DeliveryRefResolver.Resolve(job.Id, job.FolderPath).IsRemote
+                    ? deliverySha : null);
             // AGT-3964: a concept card integrates bracketed by its Dossier
             // placement, exactly as the Remote delivery does, so a replay
             // re-checks the Dossier and writes its placement record and
@@ -802,80 +863,89 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
     /// environment failure the ladder gave up on. Written once per ladder; the
     /// receipt makes the repeat sweeps idempotent.
     /// </summary>
-    private async Task<bool> ParkAsync(
-        TaskInfo job, GateEnvironmentRetryEvaluation evaluation, bool continueOnce, CancellationToken ct)
+    private Task<bool> ParkAsync(
+        TaskInfo job, GateEnvironmentRetryEvaluation evaluation, CancellationToken ct)
     {
-        if (evaluation.Ledger.Parked) return false;
+        ct.ThrowIfCancellationRequested();
+        if (evaluation.Ledger.Parked) return Task.FromResult(false);
         var step = evaluation.MergeStep;
-        if (step is null || evaluation.DeliverySha is null) return false;
-
-        var attempts = Math.Clamp(evaluation.Ledger.AttemptsSpent, 0, evaluation.Facts.Backoff.Count);
-        var reason = MonolithTransitionAdapter.GateEnvironmentRetryPolicyParkedReason(
-            attempts,
-            evaluation.IntegrationBranch,
-            step.Reason) + " Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";
-        _pipelineLog.RecordStep(job.FolderPath, step with { Reason = reason });
-        GateEnvironmentRetryReceipts.RecordParked(
-            _timeline,
-            job.FolderPath,
-            evaluation.DeliverySha,
-            attempts,
-            reason);
-        _logger.LogWarning(
-            "gate-environment-retry parked project={Project} job={JobId} attempts={Attempts}",
-            job.ProjectName,
-            job.Id,
-            attempts);
-        if (continueOnce)
-            await ContinueParkedFailureOnceAsync(job, evaluation, reason, ct).ConfigureAwait(false);
-        return true;
-    }
-
-    private async Task ContinueParkedFailureOnceAsync(
-        TaskInfo job,
-        GateEnvironmentRetryEvaluation evaluation,
-        string reason,
-        CancellationToken ct)
-    {
-        if (_continuations is null || evaluation.DeliverySha is null) return;
-
         var subject = ReviewSubjectStore.Read(job.FolderPath);
-        var prompt = IntegrationContinuationPrompt.Build(
-            job.Key ?? job.Id,
-            subject?.ResultRef,
-            evaluation.DeliverySha,
-            evaluation.IntegrationBranch,
-            evaluation.MergeStep?.StepId ?? "pre-develop-build-gate",
-            reason,
-            evidence: evaluation.MergeStep?.VerdictSummary,
-            evidenceRef: evaluation.MergeStep?.EvidenceRef);
-        try
+        if (step is null || evaluation.DeliverySha is null || subject is null
+            || subject.RunAttemptId != evaluation.Subject?.RunAttemptId
+            || subject.ResultSha != evaluation.DeliverySha) return Task.FromResult(false);
+
+        string repair;
+        if (evaluation.Host is { } host)
         {
-            await _continuations.ContinueJobAsync(
-                job.Id, prompt, job.WatchPath, mode: ContinueModes.Extend, ct: ct)
-                .ConfigureAwait(false);
-            var current = _scanner.FindJob(job.Id, job.WatchPath) ?? job;
-            _timeline.Append(current.FolderPath,
-                TimelineEventKinds.IntegrationRecoveryQueued,
-                TimelineActors.System,
-                "Automatically queued one continuation after the gate environment retry budget was spent.",
-                payloadRef: evaluation.MergeStep?.EvidenceRef ?? "pipeline-execution.json",
+            // Serialize the obligation with card creation. CreationSource also
+            // recovers the identity after a crash between create and receipt.
+            lock (GateEnvironmentHostRepairs.Sync)
+            {
+                var latest = GateEnvironmentHostRepairs.Read(job.WatchPath, host.Host, host.Fingerprint);
+                if (latest.Version != host.Version) return Task.FromResult(false);
+                var source = "gate-host-repair:" + GateEnvironmentHostRepairs.Key(host.Host, host.Fingerprint);
+                var repairCard = _scanner.ScanAutomationJobsWithArchive(job.WatchPath)
+                    .FirstOrDefault(card => card.CreationSource == source);
+                if (repairCard is null && _mutations is not null
+                    && TaskStorageLayout.EnumerateJobDirs(job.WatchPath).Any())
+                {
+                    var id = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+                    {
+                        WatchPath = job.WatchPath,
+                        Title = $"Repair gate host {host.Host}",
+                        PromptMarkdown = $"Repair the gate host fault {host.Fingerprint} on {host.Host}. "
+                            + "Execute the repair from a healthy failure domain. Diagnose and repair only the host toolchain or runtime. "
+                            + "Do not change product code, result refs, delivery SHAs, or the source card's review. "
+                            + "Git and workspace mutations remain platform-owned. Verify the failing host operation before completing.\n\n"
+                            + $"Source: {job.Key ?? job.Id}; run: {subject.RunAttemptId}; result: {subject.ResultSha}; "
+                            + $"immutable ref: {subject.ImmutableResultRef ?? subject.ResultRef}; target: {evaluation.IntegrationBranch}.\n"
+                            + $"Evidence: {step.EvidenceRef ?? "pipeline-execution.json"}\n{step.Reason}",
+                        TargetState = TaskStates.Ready,
+                        CreationSource = source,
+                        RequiresIntegration = false,
+                        NoBranchExpected = true,
+                        TaskType = TaskTypes.Bug,
+                        CreatedBy = TimelineActors.System,
+                    }) ?? throw new IOException("The gate host repair obligation could not be created.");
+                    repairCard = _scanner.FindJob(id, job.WatchPath)
+                        ?? throw new IOException("The gate host repair obligation could not be read back.");
+                }
+                var held = repairCard?.State == TaskStates.Completed ? host.HeldDeliveries
+                    : host.HeldDeliveries.Append(DeliveryIdentity(job, subject)).Distinct(StringComparer.Ordinal).ToArray();
+                var next = host with { Quarantined = true, RepairTaskId = repairCard?.Id, HeldDeliveries = held };
+                if (!GateEnvironmentHostRepairs.TryWrite(job.WatchPath, host, next)) return Task.FromResult(false);
+                repair = repairCard?.Key ?? repairCard?.Id
+                    ?? "closed automatically: host quarantined; repair task creation unavailable in this storage layout";
+            }
+            _timeline.Append(job.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued, TimelineActors.System,
+                $"Quarantined host {host.Host}; repair obligation: {repair}. Product delivery and passed review retained.",
                 details: new Dictionary<string, string>
                 {
-                    ["automatic"] = "true",
-                    ["source"] = "gate-environment-continuation",
-                    ["deliverySha"] = evaluation.DeliverySha,
-                    ["failureStage"] = evaluation.MergeStep?.StepId ?? "pre-develop-build-gate",
-                    ["failureEvidenceRef"] = evaluation.MergeStep?.EvidenceRef ?? string.Empty,
+                    ["source"] = "gate-host-custody", ["host"] = host.Host, ["fingerprint"] = host.Fingerprint,
+                    ["runAttemptId"] = subject.RunAttemptId, ["deliverySha"] = subject.ResultSha,
+                    ["repair"] = repair,
                 });
         }
-        catch (TaskOperationException ex)
-        {
-            _logger.LogWarning(ex,
-                "gate-environment-retry could not queue continuation project={Project} job={JobId}",
-                job.ProjectName, job.Id);
-        }
+        else repair = "closed automatically: no replayable host fault";
+
+        var attempts = Math.Clamp(Math.Max(evaluation.Ledger.AttemptsSpent, evaluation.Host?.AttemptsSpent ?? 0),
+            0, evaluation.Facts.Backoff.Count);
+        var reason = MonolithTransitionAdapter.GateEnvironmentRetryPolicyParkedReason(
+            attempts, evaluation.IntegrationBranch, step.Reason)
+            + $" Repair: {repair}. Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";
+        _pipelineLog.RecordStep(job.FolderPath, step with { Reason = reason });
+        GateEnvironmentRetryReceipts.RecordParked(_timeline, job.FolderPath, evaluation.DeliverySha, attempts, reason);
+        _logger.LogWarning("gate-environment-host-quarantined project={Project} job={JobId} repair={Repair}",
+            job.ProjectName, job.Id, repair);
+        return Task.FromResult(true);
     }
+
+    private static string EvaluationSubjectKey(GateEnvironmentRetryEvaluation evaluation)
+        => $"gate-environment:{evaluation.Subject?.RunAttemptId}:{evaluation.DeliverySha}:"
+            + $"{evaluation.Ledger.AttemptsSpent}:{evaluation.Host?.Version}";
+
+    private static string DeliveryIdentity(TaskInfo job, ReviewSubjectRecord? subject)
+        => $"{job.Key ?? job.TaskKey}:{subject?.RunAttemptId}:{subject?.ResultSha}";
 
     private static DateTime Utc(DateTime value)
         => value.Kind == DateTimeKind.Utc ? value : value.ToUniversalTime();
@@ -918,4 +988,61 @@ internal sealed record GateEnvironmentRetryEvaluation(
     string IntegrationStrategy,
     PipelineStepExecution? MergeStep,
     GateEnvironmentReviewLookup ReviewLookup,
-    bool ShutdownInterruption = false);
+    bool ShutdownInterruption = false,
+    GateEnvironmentHostRepair? Host = null,
+    ReviewSubjectRecord? Subject = null);
+
+/// <summary>Durable host/fingerprint budget. Product delivery identities only fence the single repair wake.</summary>
+internal sealed record GateEnvironmentHostRepair(string Host, string Fingerprint)
+{
+    public int Version { get; init; }
+    public int AttemptsSpent { get; init; }
+    public DateTimeOffset? LastAttemptAt { get; init; }
+    public bool Quarantined { get; init; }
+    public string? RepairTaskId { get; init; }
+    public string[] HeldDeliveries { get; init; } = [];
+    public string[] ReplayedDeliveries { get; init; } = [];
+}
+
+/// <summary>Platform-owned atomic receipts shared by all deliveries of a project across restart.</summary>
+internal static class GateEnvironmentHostRepairs
+{
+    internal static readonly object Sync = new();
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    internal const string FileName = "gate-host-repairs.json";
+
+    internal static string Key(string host, string fingerprint)
+        => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(host.Trim().ToLowerInvariant() + "\n" + fingerprint)));
+
+    internal static GateEnvironmentHostRepair Read(string watchPath, string host, string fingerprint)
+    {
+        lock (Sync)
+            return ReadAll(watchPath).GetValueOrDefault(Key(host, fingerprint)) ?? new(host, fingerprint);
+    }
+
+    internal static bool TryWrite(string watchPath, GateEnvironmentHostRepair expected, GateEnvironmentHostRepair next)
+    {
+        lock (Sync)
+        {
+            var records = ReadAll(watchPath);
+            var key = Key(expected.Host, expected.Fingerprint);
+            if ((records.GetValueOrDefault(key)?.Version ?? 0) != expected.Version) return false;
+            records[key] = next with { Version = expected.Version + 1 };
+            var path = Path.Combine(watchPath, FileName);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(records, Json));
+            File.Move(temporary, path, overwrite: true);
+            return true;
+        }
+    }
+
+    private static Dictionary<string, GateEnvironmentHostRepair> ReadAll(string watchPath)
+    {
+        var path = Path.Combine(watchPath, FileName);
+        return File.Exists(path)
+            ? JsonSerializer.Deserialize<Dictionary<string, GateEnvironmentHostRepair>>(File.ReadAllText(path), Json)
+                ?? throw new InvalidDataException("Gate host repair receipts are empty; replay refused.")
+            : new(StringComparer.Ordinal);
+    }
+}
