@@ -4,10 +4,10 @@
   "title": "Remote author checks",
   "summary": "An opt-in pilot sends a named solution build from a running coding session to spare KORI capacity using a fenced snapshot and a model-free wait. An advisory receipt and card log identify the checked source.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-28T13:03:40Z",
+  "updatedAt": "2026-11-28T15:17:59Z",
   "sourceTaskKeys": [
     "AGT-4428"
   ],
@@ -145,5 +145,6 @@
       "promptMarkdown": "# Measure the pilot and add opt-in routing\n\nRead AGENTS.md and docs/remote-author-checks/index.html (AGT-4428). Use the recommendations for the cited decisions unless the recorded owner selection differs. Record the implemented options and evidence.\n\nScope: AC-D3 and AC-D5 in the named check front door. Preserve an explicit remote selection, start outside the pilot disabled, and default to local for incremental single-project builds, single-file tests and missing history. Add opt-in measured routing for eligible, expensive named checks using live admission and the Dossier timing rule. Keep forced remote unavailable distinct from an explicit local retry. Record paired timing and CPU evidence by load and cache band, queue and transfer cost, protected work claim latency and counts of actual replaced local invocations. Reuse existing telemetry sinks where they support the required non-secret fields.\n\nAcceptance: Show route choices with fresh and stale timing or capacity, thresholds at their boundaries and no duplicate launch on fallback or retry. Compare a same-state local/remote pilot on KORI and report p50/p90 when the sample supports them. Keep broader rollout off unless the measured time benefit and protected-work latency criteria hold. Document the pilot results as measured, including sample size and any missing attribution."
     }
   ],
-  "key": "AGT-W3475"
+  "key": "AGT-W3475",
+  "editedBy": "AGT-4428"
 }
