@@ -68,6 +68,8 @@ public sealed class RemoteReviewDaemon
             shutdown,
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
+        var codexReviewSandbox = await CodexReviewSandboxProbe.RunAsync(_options, shutdown, log: _log);
+        _log($"review Codex checkout read ready={codexReviewSandbox.Ready}: {codexReviewSandbox.Detail}");
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         Task oneShotPoll = Task.CompletedTask;
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
@@ -360,7 +362,8 @@ public sealed class RemoteReviewDaemon
                         RunnerCapabilityProbe.Advertise(
                             _options,
                             gitPushReady: false,
-                            connectivity: connectivity.Snapshot),
+                            connectivity: connectivity.Snapshot,
+                            codexReviewSandbox: codexReviewSandbox),
                         RunnerCapabilityProbe.Telemetry(
                             TakeTelemetry(force: true),
                             planeBudget,

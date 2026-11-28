@@ -166,12 +166,22 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
             var response = string.IsNullOrWhiteSpace(provider.FinalAssistantOutput)
                 ? raw.StdOut
                 : provider.FinalAssistantOutput;
+            var finished = DateTime.UtcNow;
+            // Command output can quote diagnostics from the checkout. Attribute
+            // the failure to this host only if the runner's own probe confirms it.
+            var checkoutReadFailure = invocation.CliType == CliSelection.CodexCli
+                                      && CodexReviewCheckoutFailure.HasFailureHint(raw)
+                ? (await CodexReviewSandboxProbe.RunAsync(_options, ct, log: _log)).NamespaceFailure
+                : null;
             return new CommandExecution(
                 new ProcessResult(raw.ExitCode, response ?? string.Empty, raw.StdErr),
                 started,
-                DateTime.UtcNow,
+                finished,
                 timedOut ? "timeout" : null,
-                ParseUsage(raw.StdOut, command.Model, command.CliType));
+                ParseUsage(raw.StdOut, command.Model, command.CliType))
+            {
+                CheckoutReadFailure = checkoutReadFailure,
+            };
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Configuration;
 
+using AgentStudio.Runner;
+
 using Xunit;
 
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -104,6 +106,32 @@ public sealed class ReviewPlaneGateLogicTests
         Assert.Equal(expectedOutcome, NormalizeLikeTheReportEndpoint(report, plan: null).Outcome);
     }
 
+    [Fact]
+    public void Incomplete_measurements_and_uncited_verdicts_preserve_the_checkout_read_diagnostic()
+    {
+        var plan = CodeQualityPlan();
+        const string summary = "The reviewer could not read the checkout on host 'review-host': bwrap: Operation not permitted";
+        var report = Report("ReviewInfra", CitedPath,
+            new Contract.ReviewVerdictDto("code-quality", "block", "RemoteAspectVerdict", "Uncited finding")) with
+        {
+            FailureClassification = Contract.ReviewCheckoutReadPolicy.FailureClassification,
+            Summary = summary,
+            Commands = [new Contract.ReviewCommandEvidenceDto(
+                "verify-build-tests", "build-tests", "dotnet", ["test"],
+                ResultSha, ResultSha, new string('c', 40),
+                DeliveredAt.UtcDateTime, DeliveredAt.UtcDateTime, 1, null,
+                new string('d', 64), new string('e', 64))],
+        };
+
+        var cited = Contract.ReviewVerdictCitationPolicy.NormalizeReport(report, ["code-quality"]);
+        var normalized = MonolithTransitionAdapter.ReviewMeasurements(cited, plan);
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(Contract.ReviewCheckoutReadPolicy.FailureClassification, normalized.FailureClassification);
+        Assert.Equal(summary, normalized.Summary);
+        Assert.Equal("concerns", Assert.Single(normalized.Verdicts).Status);
+    }
+
     // ---- Finding round continuation (AGT-3054) -----------------------------
 
     /// <summary>
@@ -146,6 +174,7 @@ public sealed class ReviewPlaneGateLogicTests
         var current = new HashSet<string>(preLibrary, StringComparer.Ordinal)
         {
             Contract.ReviewCapabilities.LibraryStepV1,
+            Contract.ReviewCapabilities.CodexCheckoutRead,
             Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
             Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
         };
@@ -156,6 +185,7 @@ public sealed class ReviewPlaneGateLogicTests
             {
                 Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
                 Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
+                Contract.ReviewCapabilities.CodexCheckoutRead,
                 Contract.ReviewCapabilities.LibraryStepV1,
             },
             Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, preLibrary));

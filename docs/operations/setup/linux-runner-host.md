@@ -3722,6 +3722,64 @@ runner retains compressed TRX and a compact per-class timing summary with the
 review evidence.
 
 
+### Codex read-only sandbox on review hosts
+
+The Review Executor runs Codex aspects with the CLI's read-only sandbox.
+At startup it uses the configured Codex executable to read a temporary
+file under that sandbox. The startup probe makes no provider request.
+Run the same check as the service user, inside the actual review container
+for a container deployment:
+
+```sh
+probe_dir=$(mktemp -d)
+(
+  cd "$probe_dir" || exit 1
+  printf '%s' codex-review-checkout-read > probe.txt
+  timeout 20s codex -c 'sandbox_mode="read-only"' sandbox linux -- /bin/cat probe.txt
+)
+probe_exit=$?
+rm -r -- "$probe_dir"
+test "$probe_exit" -eq 0
+```
+
+A working host prints `codex-review-checkout-read` and advertises
+`review:codex-checkout-read` as ready. A permission failure is advertised
+with its diagnostic. Codex routes that may inspect the delivery checkout
+require the proof. This includes concept-fit, which reads the full Dossier
+even when the prompt includes excerpts. A planned material-only aspect
+can declare `requiresCheckoutReads: false`. Existing plans default to
+requiring proof for their Codex aspects. Model fallback still observes the
+configured model and review correctness rules.
+
+If a review command reports a bubblewrap permission error, the executor
+repeats this probe before reporting the host as unable to read the checkout.
+The probe uses a runner-owned file because ordinary command output can
+include the same error text.
+
+[OpenAI's sandbox guidance](https://learn.chatgpt.com/docs/agent-approvals-security)
+describes nested Linux sandbox requirements. Use the nested sandbox option.
+For Docker on AppArmor hosts, adapt the [review Compose override](../../../deploy/compose/review/codex-read-only.yaml)
+to the service names in the host's review Compose project. The override
+uses a named, enforced AppArmor profile and a file-backed seccomp profile
+specific to those services. Derive these from the host runtime's existing
+profiles. Permit unprivileged user namespaces and the nested mount, namespace
+and loopback setup bubblewrap needs. On AppArmor systems where the probe
+reports `Failed RTM_NEWADDR`, check the kernel audit log for the capability
+denied in the child user namespace. Scope any allowance for `net_admin` to
+that namespace and the review sandbox profile. On native Linux review services
+apply the equivalent confined executable/profile policy for the Codex helper.
+Keep the engine's other syscall restrictions and the review container's
+existing non-root user, mounts, network restrictions and capability drops.
+Codex's inner sandbox continues to enforce read-only filesystem access and
+restricted command networking. Keep the host and other services on their
+existing profiles.
+
+Apply the override through the review host's Compose configuration after
+draining claims. Render the effective Compose configuration and rerun the
+probe in the recreated service before returning it to review duty. Restart
+the daemon to pick up a repaired sandbox. A failed probe keeps checkout-reading
+Codex review off the host while another eligible host or provider can serve it.
+
 ### Review image rollout retention
 
 The repository-owned `deploy/networked/remote_host.py` rollout records

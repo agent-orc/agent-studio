@@ -112,7 +112,8 @@ internal static class RunnerCapabilityProbe
         TaskServerConnectivitySnapshot? connectivity = null,
         ReviewRepositoryReadProbe? repositoryRead = null,
         TimeProvider? clock = null,
-        string? hostBootId = null)
+        string? hostBootId = null,
+        CodexReviewSandboxProbe? codexReviewSandbox = null)
     {
         var list = new List<AdvertisedCapabilityDto>
         {
@@ -210,6 +211,9 @@ internal static class RunnerCapabilityProbe
                 options,
                 providerAuth ?? ProviderAuthProbe.Shared);
             list.Add(Capability(CapabilityProtocol.Vision, "review", null, "remote-review"));
+            if (codexReviewSandbox is not null)
+                list.Add(Capability(ReviewCapabilities.CodexCheckoutRead, "review", null,
+                    options.CodexCliBin, codexReviewSandbox.Ready ? "ready" : "unavailable", codexReviewSandbox.Detail));
             list.Add(Capability(ReviewCapabilities.SemanticReview, "review", null, "remote-review"));
             list.Add(Capability(ReviewCapabilities.GitMaterialization, "review", ToolVersion("git"), "git"));
             list.Add(Capability(ReviewCapabilities.SourceBundleMaterialization, "review", null, "artifact"));

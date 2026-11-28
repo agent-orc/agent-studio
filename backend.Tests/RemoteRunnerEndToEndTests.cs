@@ -4384,6 +4384,12 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                 Contract.TaskServerProtocol.Current,
                 ReviewExecutorCapabilities));
         registration.EnsureSuccessStatusCode();
+        var registered = (await registration.Content.ReadFromJsonAsync<Contract.RunnerDto>())!;
+        var capability = await http.PutAsJsonAsync($"/api/v1/runners/{runnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(runnerId, instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion, registered.LastSeenAt, 300, 1,
+                [new Contract.AdvertisedCapabilityDto(Contract.ReviewCapabilities.CodexCheckoutRead, "review", "ready")]));
+        capability.EnsureSuccessStatusCode();
     }
 
     /// <summary>

@@ -3,7 +3,7 @@ using static AgentStudio.Tasks.TaskEndpointHelpers;
 
 namespace AgentStudio.Tasks;
 
-/// <summary>Operator recovery of a watchdog park without another coding run.</summary>
+/// <summary>Operator recovery of an infrastructure review park without another coding run.</summary>
 public static class TaskReviewRetryEndpoints
 {
     public static void MapTaskReviewRetryEndpoints(this RouteGroupBuilder group)

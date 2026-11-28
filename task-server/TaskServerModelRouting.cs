@@ -9,7 +9,8 @@ public sealed partial class TaskServerStore
 {
     private async Task<SelectionResult?> SelectTaskRouteAsync(SqliteConnection connection, SqliteTransaction transaction,
         string taskId, string runnerId, string provider, string? model, string? thinking, CancellationToken ct,
-        string consumer = SelectionConsumers.Coding, string? stepId = null, string? taskMode = null)
+        string consumer = SelectionConsumers.Coding, string? stepId = null, string? taskMode = null,
+        bool codexCheckoutUnavailable = false)
     {
         if (_modelRouteAdmission is null) return null;
         string? project = null;
@@ -60,7 +61,8 @@ public sealed partial class TaskServerStore
                    AND c.fresh_until > $now AND c.health_state NOT IN ('draining', 'held', 'blocked');
                 """, ct, transaction, ("$runner", runnerId),
                 ("$key", CapabilityProtocol.ProviderAuthentication(cli)), ("$now", Iso(UtcNow))), CultureInfo.InvariantCulture) > 0;
-            if (!authReady || await ProviderUnauthorizedOnHostAsync(connection, transaction, runnerId, cli, ct))
+            if ((cli == "codex" && codexCheckoutUnavailable) || !authReady
+                || await ProviderUnauthorizedOnHostAsync(connection, transaction, runnerId, cli, ct))
                 unavailable.Add(cli);
         }
         var previous = consumer == SelectionConsumers.Coding
@@ -78,7 +80,8 @@ public sealed partial class TaskServerStore
     }
 
     private async Task<(ReviewSubjectDto? Subject, string? Reason)> RouteReviewAsync(
-        SqliteConnection connection, SqliteTransaction transaction, ReviewSubjectDto subject, string runnerId, CancellationToken ct)
+        SqliteConnection connection, SqliteTransaction transaction, ReviewSubjectDto subject, string runnerId,
+        IReadOnlySet<string> capabilities, CancellationToken ct)
     {
         if (_modelRouteAdmission is null) return (subject, null);
         var commands = new List<ReviewCommandDto>();
@@ -90,10 +93,16 @@ public sealed partial class TaskServerStore
                 command.CliType ?? command.FileName, command.Model, command.ThinkingLevel, ct,
                 command.Aspect == "deep-review" ? SelectionConsumers.ReviewDeep
                     : command.Aspect.Contains("grade", StringComparison.Ordinal) ? SelectionConsumers.ReviewGrade : SelectionConsumers.ReviewAspect,
-                command.StepId, subject.Plan.TaskMode);
+                command.StepId, subject.Plan.TaskMode,
+                codexCheckoutUnavailable: !ReviewCheckoutReadPolicy.Allows(command, "codex", capabilities));
             if (selected is not { ShouldLaunch: true })
             {
                 waitReason ??= selected?.Reason ?? "Model route unavailable.";
+                continue;
+            }
+            if (!ReviewCheckoutReadPolicy.Allows(command, selected.Route.CliType, capabilities))
+            {
+                waitReason ??= $"Host lacks {ReviewCapabilities.CodexCheckoutRead}.";
                 continue;
             }
             commands.Add(command with { FileName = selected.Route.CliType, CliType = selected.Route.CliType,

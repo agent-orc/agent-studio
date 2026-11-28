@@ -100,7 +100,13 @@ public sealed partial class TaskServerStore
                     ? ModelRefusedDetail
                     : capability.Detail;
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
-                var positiveRecovery = request.CredentialHealthVersion != 2 && tracksProbeHistory
+                var positiveRecovery = key == ReviewCapabilities.CodexCheckoutRead && advertisedStatus == "ready"
+                    && await ScalarAsync(connection, """
+                        SELECT advertised_instance_id FROM runner_capabilities
+                         WHERE runner_id = $runner AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key)) is string oldInstance
+                    && oldInstance != request.InstanceId;
+                positiveRecovery |= request.CredentialHealthVersion != 2 && tracksProbeHistory
                                        && advertisedStatus == ProviderAuthProbeStatuses.Ready
                                        && capability.Signal is ProviderAuthProbeSignals.Ok
                                            or ProviderAuthProbeSignals.CredentialsExpiring;
@@ -435,16 +441,18 @@ public sealed partial class TaskServerStore
             var wholeHost = WholeHostCapabilities.Contains(capability.Key);
             var unauthorizedProvider = capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
                 && request.Classification == "ProviderUnauthorized";
+            var sandboxUnavailable = capability.Key == ReviewCapabilities.CodexCheckoutRead
+                && request.Classification == ReviewCheckoutReadPolicy.FailureClassification;
             var failures = capability.ConsecutiveFailures + 1;
             var nextState = capability.HealthState switch
             {
-                _ when unauthorizedProvider => CapabilityHealthStates.Draining,
+                _ when unauthorizedProvider || sandboxUnavailable => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.HalfOpen => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.Draining => CapabilityHealthStates.Draining,
                 _ when wholeHost || failures >= CapabilityFailureThreshold => CapabilityHealthStates.Draining,
                 _ => CapabilityHealthStates.Suspect,
             };
-            DateTime? cooldownUntil = unauthorizedProvider ? DateTime.MaxValue
+            DateTime? cooldownUntil = unauthorizedProvider || sandboxUnavailable ? DateTime.MaxValue
                 : nextState == CapabilityHealthStates.Draining
                 ? UtcNow.AddSeconds(CapabilityBaseCooldownSeconds * (1 << Math.Min(Math.Max(0, failures - 2), 4)))
                 : null;

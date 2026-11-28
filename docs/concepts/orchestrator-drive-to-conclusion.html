@@ -387,6 +387,27 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-agt-4429-review-command-output">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-command-output</span></td>
+          <td>A failed review command that printed a bubblewrap diagnostic could stop a healthy Codex review.</td>
+          <td>The executor attributed command output to its sandbox without confirming the denial.</td>
+          <td>The regression fixtures let the healthy executor reach Pass and preserve ReviewInfra when the read-only probe confirms the namespace denial.</td>
+        </tr>
+        <tr id="case-agt-4429-review-report-validation">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-report-validation</span></td>
+          <td>A review report could lose the Codex checkout-read failure while settling an attempt that had stopped without complete review evidence.</td>
+          <td>General toolchain, measurement and evidence checks could overwrite the classification that excludes the failed host from retry placement.</td>
+          <td>The regression fixture settles as <code>ReviewInfra / ReviewerCheckoutReadUnavailable</code>, retries on a different host and reaches Escalated after the bounded attempts are exhausted.</td>
+        </tr>
+        <tr id="case-agt-4392-codex-review-checkout-sandbox">
+          <td>2026-11-28</td>
+          <td><code>AGT-4392</code><br><span class="small">codex-review-checkout-sandbox</span></td>
+          <td>Codex's read-only bubblewrap sandbox failed before it could read the complete Concept Dossier. The second review encountered the same namespace permission error.</td>
+          <td>Both reviews settled as <code>ReviewInfra / ReviewMaterialUnavailable</code>. The card parked at 12:33 UTC and the unchanged-delivery retry returned <code>card-changed-since-park</code> after the park refreshed its result scaffold.</td>
+          <td>At 13:00 UTC the operator routed concept-fit to Claude and returned the card for unchanged redelivery. AGT-4429 adds startup proof, a host-attributed checkout-read failure, and retry placement away from the failed host. Operator retry recognizes the engine's fenced park and the watchdog's post-park card state.</td>
+        </tr>
         <tr id="case-post-merge-lint-signer-socket">
           <td>2026-11-28</td>
           <td><code>AGT-4336</code><br><span class="small">post-merge-lint-signer-socket</span></td>

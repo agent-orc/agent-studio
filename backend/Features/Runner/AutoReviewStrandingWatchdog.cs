@@ -32,6 +32,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly EngineReportReviewService? _reportReviews;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
     private readonly TimeProvider _time;
+    private readonly TimelineLog? _timeline;
 
     public AutoReviewStrandingWatchdog(TaskScannerService scanner, AttemptAuthorityService authority,
         ReviewAttemptTaskLifecycleService reviews, BatchGateStore batches, BatchGatePilotService batchPilot,
@@ -43,7 +44,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         RemoteDeliveryIntegrationCoordinator? integration = null,
         V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null,
         IEngineDeliveryIntegration? engine = null,
-        EngineReportReviewService? reportReviews = null)
+        EngineReportReviewService? reportReviews = null, TimelineLog? timeline = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -65,6 +66,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _reportReviews = reportReviews;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _timeline = timeline;
     }
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
@@ -778,28 +780,62 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var record = _records.All().Where(item => item.Kind == "auto-review-stranded"
             && item.Project == card.ProjectName && item.AffectedCards.Contains(card.Id))
             .OrderByDescending(item => item.DecidedAtUtc).FirstOrDefault();
-        if (record is null || !MatchesPark(record, card)) return (false, "card-changed-since-park");
         var projection = _authority.GetTaskProjection(CardKey(card));
+        var watchdogPark = record is not null && MatchesPark(record, card) ? record : null;
+        if (watchdogPark is null && !MatchesReviewSettlementPark(card, projection.CurrentReviewAttempt))
+            return (false, "card-changed-since-park");
         var run = projection.CurrentRunAttempt;
         var review = projection.CurrentReviewAttempt;
         if (run is not { State: AttemptLifecycleState.Completed, ResultEnvelope: not null, ResultSha: not null }
-            || review?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
+            || review?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased
+            || watchdogPark is null && !ReviewMatchesCurrentRun(review, run))
             return (false, "review-delivery-unavailable");
         var moved = await _transitions.MoveAsync(card.Id, TaskStates.AutoReview, card.WatchPath, ct,
             cause: "system:auto-review-stranding-retry", expectedSourceState: TaskStates.Escalated,
-            expectedSourceEnteredLaneAt: record.ParkedAtUtc,
-            expectedSourceTaskJsonWriteTicks: record.ParkedTaskWriteTicks,
+            expectedSourceEnteredLaneAt: card.EnteredLaneAt,
+            expectedSourceTaskJsonWriteTicks: card.TaskJsonWriteTicks,
             transitionCause: LaneChangeCauses.Delivered, transitionDetail: "auto-review-stranding-retry");
         if (moved.Status != MoveJobStatus.Success) return (false, "card-changed-since-park");
         var current = _scanner.FindJob(card.Id, card.WatchPath);
         var started = current is not null && CreateReview(current, review, run, "operator-review-retry");
-        var updated = record with { Undoable = false, RevertedBy = "review-retry",
-            Outcome = started
-                ? "A fresh review attempt was started for the unchanged delivery."
-                : "Auto Review was restored, but the new review attempt could not start." };
-        _records.Save(updated);
-        _receipts.Publish(updated, _records.All());
+        if (watchdogPark is not null)
+        {
+            var updated = watchdogPark with { Undoable = false, RevertedBy = "review-retry",
+                Outcome = started
+                    ? "A fresh review attempt was started for the unchanged delivery."
+                    : "Auto Review was restored, but the new review attempt could not start." };
+            _records.Save(updated);
+            _receipts.Publish(updated, _records.All());
+        }
         return started ? (true, "review-started") : (false, "review-attempt-could-not-start");
+    }
+
+    private bool MatchesReviewSettlementPark(TaskInfo card, ReviewAttemptDto? review)
+    {
+        if (card.State != TaskStates.Escalated
+            || review is not { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure })
+            return false;
+        var lastMove = _timeline?.ReadAll(card.FolderPath).LastOrDefault(entry => entry.Kind == TimelineEventKinds.LaneChanged);
+        if (lastMove?.Details is not { } details
+            || details.GetValueOrDefault("from") != TaskStates.AutoReview
+            || details.GetValueOrDefault("to") != TaskStates.Escalated
+            || details.GetValueOrDefault("attemptId") != review.AttemptId
+            || details.GetValueOrDefault("fence") != review.LastFence.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || details.GetValueOrDefault("authorityEpoch") != review.AuthorityEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || lastMove.Ts < card.EnteredLaneAt || card.TaskJsonWriteTicks > lastMove.Ts.Ticks)
+            return false;
+
+        var detail = details.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey);
+        if (!(lastMove.Actor == "engine-decision" && detail == nameof(TransitionAction.Escalate))
+            && !(lastMove.Actor == TimelineActors.System
+                && detail == AgentStudio.TaskServer.Contracts.ReviewCheckoutReadPolicy.FailureClassification))
+            return false;
+
+        // The fenced move is the park receipt. Result scaffolds are
+        // sidecars of that move. The frozen brief and task metadata fence still
+        // protect the immutable delivery against an intervening edit.
+        return review.Subject.Plan?.BriefSha256 is not { Length: > 0 } brief
+            || string.Equals(brief, BriefVersionStore.ReadCurrent(card.FolderPath), StringComparison.OrdinalIgnoreCase);
     }
 
     private bool MatchesPark(StallInterventionRecord record, TaskInfo? card)

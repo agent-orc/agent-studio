@@ -728,7 +728,7 @@ public sealed class RemoteReviewWorkspace
                 execution.AgentUsage is not null);
             if (modelUnknown || MissingToolchain(execution.Process)
                 || AgentCommandUnavailable(command, execution.Process)
-                || cliRefusal is not null)
+                || cliRefusal is not null || execution.CheckoutReadFailure is not null)
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId,
@@ -753,6 +753,12 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage, envelope: execution.Envelope));
+                if (execution.CheckoutReadFailure is { } checkoutFailure)
+                    throw await InfrastructureFailureAsync(
+                        ReviewCheckoutReadPolicy.FailureClassification,
+                        $"The reviewer could not read the checkout on host '{_lease.HostId}' " +
+                        $"(Codex read-only sandbox, step '{command.StepId}'): {checkoutFailure}",
+                        commands, artifacts, ct);
                 var lostScope = MissingCandidateScopes().FirstOrDefault(scope =>
                     scope.Reason is "deps-dir-missing" or "install-root-missing");
                 var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
@@ -4865,6 +4871,7 @@ internal sealed record CommandExecution(
     RemoteAgentUsage? AgentUsage = null,
     StallDiagnostics? Stall = null)
 {
+    public string? CheckoutReadFailure { get; init; }
     public PostMergeEnvelopeFingerprint? Envelope { get; init; }
 }
 

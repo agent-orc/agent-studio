@@ -637,6 +637,9 @@ public static class MonolithTransitionAdapter
     public static string? ReviewFollowUpPolicyExtractFindingSection(string? reportBody)
         => ReviewFollowUpPolicy.ExtractFindingSection(reportBody);
 
+    public static bool ReviewCheckoutFailedOnHost(string? classification, string? failedHost, string claimingHost)
+        => ReviewCheckoutRetryPolicy.FailedOnHost(classification, failedHost, claimingHost);
+
     public static ReviewInfrastructureRepeatDiagnosis? ReviewInfrastructureRepeatPolicyDiagnose(IReadOnlyList<ReviewInfrastructureAttemptFact> chainOldestFirst, string? plannedIntegrationRef)
         => ReviewInfrastructureRepeatPolicy.Diagnose(chainOldestFirst, plannedIntegrationRef);
 

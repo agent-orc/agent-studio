@@ -572,6 +572,11 @@ public static class V1ReviewPlaneEndpoints
             string? hostWaitReason = null;
             bool AdmitHost(ReviewAttemptDto candidate)
             {
+                if (authority.ReviewCheckoutRetryFailedOnHost(candidate.AttemptId, executor.HostId))
+                {
+                    hostWaitReason = Contract.ReviewClaimEmptyReasons.CheckoutRetryDifferentHostRequired;
+                    return false;
+                }
                 var codingHost = candidate.Subject.CodingHostId
                     ?? authority.GetRun(candidate.SourceRunAttemptId)?.Lease?.HostId;
                 if (string.IsNullOrWhiteSpace(codingHost)
@@ -580,6 +585,7 @@ public static class V1ReviewPlaneEndpoints
                 var required = task is not null && settings.Get(task.ProjectName).RequireDifferentReviewHost;
                 var otherIdle = alternativeHosts.Any(other =>
                     !string.Equals(other.HostId, codingHost, StringComparison.Ordinal)
+                    && !authority.ReviewCheckoutRetryFailedOnHost(candidate.AttemptId, other.HostId)
                     && CanServeReviewPlanOnHost(candidate.Subject.Plan, other.Capabilities)
                     // AGT-3077: a host without this repository's read key
                     // skips a private review, so yielding to it strands it.
@@ -614,6 +620,12 @@ public static class V1ReviewPlaneEndpoints
                     quotaWaitReason ??= refusal;
                     return false;
                 }
+                // A Codex-only executor with no proof cannot use a provider
+                // fallback. Skip its unreadable plans while scanning the queue.
+                if (!executor.Capabilities.Contains(Contract.CapabilityProtocol.CliExecution("claude"))
+                    && candidate.Subject.Plan?.Commands.Any(command => !Contract.ReviewCheckoutReadPolicy.Allows(
+                        command, command.CliType ?? command.FileName, executor.Capabilities)) == true)
+                    return false;
                 return AdmitHost(candidate);
             }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
@@ -632,7 +644,9 @@ public static class V1ReviewPlaneEndpoints
                         hostWaitReason,
                         hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
                             ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
-                            : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
+                            : hostWaitReason == Contract.ReviewClaimEmptyReasons.CheckoutRetryDifferentHostRequired
+                                ? $"Review retry needs a different host after a checkout read failure on '{executor.HostId}'."
+                                : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
                 if (quotaWaitReason is not null)
                     return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                         Contract.ReviewClaimEmptyReasons.QuotaDeferred,
@@ -730,6 +744,7 @@ public static class V1ReviewPlaneEndpoints
                         return admission;
                     },
                     runnerId,
+                    executor.Capabilities,
                     out quotaDeferredReason,
                     out hostCapabilityDeferredCode,
                     immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null),
@@ -751,7 +766,10 @@ public static class V1ReviewPlaneEndpoints
                 }
                 if (modelAcceptanceDeferred)
                 {
-                    var missing = missingModelAcceptance.Keys.Order(StringComparer.Ordinal).ToArray();
+                    var missing = missingModelAcceptance.Keys
+                        .Concat(quotaDeferredReason.Contains(Contract.ReviewCapabilities.CodexCheckoutRead, StringComparison.Ordinal)
+                            ? [Contract.ReviewCapabilities.CodexCheckoutRead] : [])
+                        .Order(StringComparer.Ordinal).ToArray();
                     var reason = quotaDeferredReason;
                     Contract.ReviewUnclaimableAttemptDto[] unclaimable =
                         [new(review.AttemptId, review.TaskKey, review.CreatedAt, missing)];
@@ -770,6 +788,19 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.QuotaDeferred,
                     quotaDeferredReason));
+            }
+            if (subject.Plan.Commands.Any(command => !Contract.ReviewCheckoutReadPolicy.Allows(
+                    command, command.CliType ?? command.FileName, executor.Capabilities)))
+            {
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                    return Results.Conflict(new Contract.ApiError(
+                        "review-capability-defer-failed", "The checkout-read claim could not be relinquished."));
+                Contract.ReviewUnclaimableAttemptDto[] unclaimable =
+                    [new(review.AttemptId, review.TaskKey, review.CreatedAt, [Contract.ReviewCapabilities.CodexCheckoutRead])];
+                unclaimableLog.Record(runnerId, unclaimable);
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(unclaimable,
+                    Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                    $"Codex checkout reads are unavailable on host '{executor.HostId}'."));
             }
             unclaimableLog.Clear(review.AttemptId);
             var lease = ToLease(authority, review);
@@ -1028,9 +1059,9 @@ public static class V1ReviewPlaneEndpoints
                     "Review command evidence does not match the leased library step digest."));
             }
 
-            if (Contract.ReviewToolchainFailurePolicy.IsUnavailable(
-                    request.Commands,
-                    request.Artifacts))
+            if (!Contract.ReviewCheckoutReadPolicy.IsFailure(request)
+                && Contract.ReviewToolchainFailurePolicy.IsUnavailable(
+                    request.Commands, request.Artifacts))
             {
                 request = request with
                 {
@@ -1098,7 +1129,7 @@ public static class V1ReviewPlaneEndpoints
                     string.Equals(verdict.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(verdict.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase))
                     .Select(verdict => verdict.Aspect).ToArray();
-                if (exhaustedAspects.Length > 0)
+                if (exhaustedAspects.Length > 0 && !Contract.ReviewCheckoutReadPolicy.IsFailure(request))
                     request = request with
                     {
                         Outcome = "ReviewInfra",
@@ -1274,7 +1305,8 @@ public static class V1ReviewPlaneEndpoints
                 concernRoundsUsed: 0,
                 maxConcernRounds: 1);
             var aspectRetryExhausted =
-                reviewFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect;
+                reviewFollowUp.Action == Contract.ReviewFollowUpAction.RetryAspect
+                && !Contract.ReviewCheckoutReadPolicy.IsFailure(request);
             if (aspectRetryExhausted)
             {
                 // RemoteReviewWorkspace already reran each malformed aspect once.
@@ -2495,13 +2527,16 @@ public static class V1ReviewPlaneEndpoints
                     // the subject (and parked the card on a git-ancestry
                     // condition) when the host was what kept failing.
                     var hostRestarts = chain.HostRestartSentence(AttemptAuthorityService.ReviewInfrastructureRetryBudget);
+                    var checkoutFailure = request.FailureClassification == Contract.ReviewCheckoutReadPolicy.FailureClassification;
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted || diagnosisContractUnsupported || hostRestarts is not null
+                        : checkoutFailure || aspectRetryExhausted || diagnosisContractUnsupported || hostRestarts is not null
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
-                        ?? (aspectRetryExhausted
+                        ?? (checkoutFailure
+                            ? $"{request.Summary} The checkout-read retry budget is exhausted. {chain.Headline}"
+                            : aspectRetryExhausted
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
                             : diagnosisContractUnsupported
                                 ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
@@ -2515,7 +2550,11 @@ public static class V1ReviewPlaneEndpoints
                         category,
                         escalationReason,
                         ct,
-                        statusDetail: chain.Detail);
+                        authorityWrite: checkoutFailure ? new AttemptWriteReference(attemptId,
+                            request.Fence, request.AuthorityEpoch, $"checkout-read-park:{request.IdempotencyKey}") : null,
+                        statusDetail: chain.Detail,
+                        expectedSourceState: checkoutFailure ? TaskStates.AutoReview : null,
+                        parkDetail: checkoutFailure ? Contract.ReviewCheckoutReadPolicy.FailureClassification : null);
                     if (moved.Status != MoveJobStatus.Success)
                     {
                         // The lane write failed, not the task-folder location -
@@ -2765,7 +2804,9 @@ public static class V1ReviewPlaneEndpoints
                 aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
             && !capabilities.Contains(Contract.ReviewCapabilities.SemanticReview))
             return false;
-        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities, routePending: true);
+        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities, routePending: true)
+            && plan.Commands.All(command => Contract.ReviewCheckoutReadPolicy.Allows(
+                command, command.CliType ?? command.FileName, capabilities));
     }
 
     internal static bool PreparePlanSkewReview(
@@ -2879,6 +2920,7 @@ public static class V1ReviewPlaneEndpoints
         QuotaAdmissionRecorder recorder,
         Func<string, string?, Contract.ModelAcceptanceAdmission> modelAdmission,
         string claimingHost,
+        IReadOnlySet<string> checkoutCapabilities,
         out string? deferredReason,
         out string? hostCapabilityDeferredCode,
         bool immutablePlan = false,
@@ -2895,6 +2937,8 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
+            bool CheckoutAvailable(string provider)
+                => Contract.ReviewCheckoutReadPolicy.Allows(command, provider, checkoutCapabilities);
             var operatorSwitch = quotaAdmission.IsOperatorSwitchActive(command.CliType);
             string? deniedFallbackKey = null;
             Contract.ModelAcceptanceAdmission? deniedFallbackDecision = null;
@@ -2905,8 +2949,9 @@ public static class V1ReviewPlaneEndpoints
                 task.ProjectName,
                 OccupiedSlots: 0,
                 ExecutionPath: "remote-review-claim",
-                ModelAccepted: (provider, model) => modelAdmission(provider, model)
-                    is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
+                ModelAccepted: (provider, model) => CheckoutAvailable(provider)
+                    && modelAdmission(provider, model)
+                        is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
                 ClaimingHost: claimingHost,
                 SameClassOnly: true,
                 StepId: command.StepId,
@@ -2914,6 +2959,7 @@ public static class V1ReviewPlaneEndpoints
                 WorkClass: command.Aspect == "deep-review" ? Contract.SelectionWorkClasses.Analysis : Contract.SelectionWorkClasses.Review,
                 FallbackModelAccepted: (provider, model) =>
                 {
+                    if (!CheckoutAvailable(provider)) return false;
                     var decision = modelAdmission(provider, model);
                     if (decision != Contract.ModelAcceptanceAdmission.Accepted
                         && deniedFallbackKey is null && !string.IsNullOrWhiteSpace(model))
@@ -2929,8 +2975,12 @@ public static class V1ReviewPlaneEndpoints
                 {
                     var modelDecision = deniedFallbackDecision
                         ?? modelAdmission(plan.CliType, plan.Model);
-                    var capabilityKey = deniedFallbackKey
-                        ?? Contract.CapabilityProtocol.ModelAcceptance(plan.CliType, plan.Model!);
+                    var checkoutUnavailable = !CheckoutAvailable(command.CliType ?? command.FileName);
+                    var capabilityKey = checkoutUnavailable
+                        ? Contract.ReviewCapabilities.CodexCheckoutRead
+                        : deniedFallbackKey ?? Contract.CapabilityProtocol.ModelAcceptance(plan.CliType, plan.Model!);
+                    if (checkoutUnavailable)
+                        modelDecision = Contract.ModelAcceptanceAdmission.Unavailable;
                     capabilityDeferred = modelDecision == Contract.ModelAcceptanceAdmission.Unavailable
                         ? Contract.ReviewClaimEmptyReasons.HostModelUnavailable
                         : Contract.ReviewClaimEmptyReasons.HostCapabilityMissing;
@@ -4135,7 +4185,15 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 _reprobeRequests.Remove(runnerId);
             // A registration re-declares this identity's health, so a restarted
             // executor is never born paused by a previous instance's failures.
+            var checkoutFailure = previousInstanceId is null
+                ? _capabilityFailures.GetValueOrDefault(runnerId)?.GetValueOrDefault(Contract.ReviewCapabilities.CodexCheckoutRead)
+                : null;
             ClearCapabilityFailures(runnerId);
+            if (checkoutFailure is not null)
+                _capabilityFailures[runnerId] = new(StringComparer.Ordinal)
+                {
+                    [Contract.ReviewCapabilities.CodexCheckoutRead] = checkoutFailure,
+                };
         }
         return new RunnerRegistrationResult(
             new Contract.RunnerDto(
@@ -4527,12 +4585,14 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             var consecutive = (previous?.ConsecutiveFailures ?? 0) + 1;
             var unauthorizedProvider = capabilityKey.StartsWith("provider-auth:", StringComparison.Ordinal)
                 && string.Equals(request.Classification, "ProviderUnauthorized", StringComparison.Ordinal);
-            var state = unauthorizedProvider || previous?.HealthState == Contract.CapabilityHealthStates.Draining
+            var sandboxUnavailable = capabilityKey == Contract.ReviewCapabilities.CodexCheckoutRead
+                && request.Classification == Contract.ReviewCheckoutReadPolicy.FailureClassification;
+            var state = sandboxUnavailable || unauthorizedProvider || previous?.HealthState == Contract.CapabilityHealthStates.Draining
                         || wholeHost
                         || consecutive >= CapabilityFailureThreshold
                 ? Contract.CapabilityHealthStates.Draining
                 : Contract.CapabilityHealthStates.Suspect;
-            DateTime? cooldownUntil = unauthorizedProvider ? DateTime.MaxValue
+            DateTime? cooldownUntil = unauthorizedProvider || sandboxUnavailable ? DateTime.MaxValue
                 : state == Contract.CapabilityHealthStates.Draining
                 ? now.AddSeconds(
                     CapabilityBaseCooldownSeconds * (1 << Math.Min(Math.Max(0, consecutive - 2), 4)))
@@ -4820,9 +4880,17 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         {
             if (!_registrations.TryGetValue(runnerId, out var registration)
                 || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
+            var now = _time.GetUtcNow().UtcDateTime;
             var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
-            foreach (var hold in CapabilityHoldsLocked(runnerId, registration, _time.GetUtcNow().UtcDateTime))
+            foreach (var hold in CapabilityHoldsLocked(runnerId, registration, now))
                 admitted.Remove(hold.Key);
+            admitted.Remove(Contract.ReviewCapabilities.CodexCheckoutRead);
+            if (_capabilityStates.TryGetValue(runnerId, out var state) && state.InstanceId == instanceId
+                && state.Capabilities.Any(item => item.Key == Contract.ReviewCapabilities.CodexCheckoutRead
+                    && item.AdvertisedStatus == "ready" && item.FreshUntil > now)
+                && _capabilityFailures.GetValueOrDefault(runnerId)?.ContainsKey(
+                    Contract.ReviewCapabilities.CodexCheckoutRead) != true)
+                admitted.Add(Contract.ReviewCapabilities.CodexCheckoutRead);
             return admitted;
         }
     }
