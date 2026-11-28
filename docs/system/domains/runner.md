@@ -30,6 +30,22 @@ absolute ceiling. Live copies can exceed the target. Host filesystem telemetry
 reports the measured total as `ownedBytes["preparation copies"]`. A disk hold
 names free space and the preparation footprint in the card and Operations.
 
+## Clean context storage
+
+The coding daemon's startup and five-minute storage sweep inventories task
+homes under the host's clean-context root. The Task Server returns only matching
+hashes for completed or archived cards the runner has run. Idle homes expire
+after two days, allowing an overnight continuation and a working-day delay.
+The sweep preserves reserved slots and checks Linux process bindings and worker
+launch locks before moving a home out of circulation. A later round can start
+from the durable worktree and the full card prompt. The host storage report
+shows the number of homes and their logical file size even on healthy disks.
+
+The same sweep checks the M1 pilot preparation cache in the user data directory.
+It reclaims unbound per-run copies after the existing 24-hour orphan window and
+includes their bytes in the preparation-copy footprint. Published entries and
+preparation locks remain available to the cache.
+
 ## Dispatch overlap admission, DS-0 and AGT-4037
 
 Both the local pickup in `ProjectRunner` and the remote claim in

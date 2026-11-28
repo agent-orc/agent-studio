@@ -67,7 +67,8 @@ internal static class CarWorkerExecution
         Func<CliOptions, CliOptions>? optionsCustomizer = null,
         string? cleanContextRoot = null,
         IReadOnlyList<string>? extraCliArguments = null,
-        CancellationToken stopToken = default)
+        CancellationToken stopToken = default,
+        string? cleanContextUserHome = null)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
@@ -99,7 +100,7 @@ internal static class CarWorkerExecution
                 cleanContext = TaskCleanContextStore.Acquire(
                     cliType,
                     string.IsNullOrWhiteSpace(spec.CleanContextKey) ? runId : spec.CleanContextKey!,
-                    rootOverride: cleanContextRoot);
+                    userHome: cleanContextUserHome, rootOverride: cleanContextRoot, runnerManaged: true);
                 append(
                     "system",
                     $"[runner] clean-context {(cleanContext.Reused ? "reused" : "seeded")} " +
@@ -200,7 +201,7 @@ internal static class CarWorkerExecution
                 WorkingDirectory = spec.WorkingDirectory,
                 Model = spec.Model,
                 ThinkingLevel = spec.ThinkingLevel,
-                ResumeSessionId = spec.ResumeSessionId,
+                ResumeSessionId = cleanContext is { Reused: false } ? null : spec.ResumeSessionId,
                 // Null normalizes to YOLO — documented T1 behaviour jump: remote
                 // runs used to inject no flag and let the host config decide.
                 PermissionMode = spec.PermissionMode,

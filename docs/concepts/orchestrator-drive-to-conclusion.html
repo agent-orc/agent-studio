@@ -3601,6 +3601,13 @@
           <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
           <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
         </tr>
+        <tr id="case-runner-clean-context-retention">
+          <td>2026-11-28</td>
+          <td><code>AGT-4349</code><br><span class="small">runner-clean-context-retention</span></td>
+          <td>Clean-context homes accumulated until disk pressure held new claims. No CLI crashed in the observation.</td>
+          <td>The coding runner retained task-stable session homes without a lifecycle sweep.</td>
+          <td>The runner sweeps terminal and idle homes, protects live bindings and starts expired continuations with a fresh CLI session. The fixture round reaches <code>[[TASK_DONE]]</code>.</td>
+        </tr>
         <!-- append-only:drive-to-conclusion:end -->
         <tr id="case-stale-red-review-baseline">
           <td>2026-11-27</td>

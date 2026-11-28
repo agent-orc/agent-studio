@@ -470,7 +470,6 @@ fixed-date retention.Tests/ArtifactClassifierTests.cs
 fixed-date retention.Tests/RetentionExcerptWriterTests.cs
 fixed-date retention.Tests/RetentionPlannerTests.cs
 fixed-date retention.Tests/RetentionRuntimeCommitTests.cs
-fixed-date runner.Tests/CarWorkerExecutionTests.cs
 fixed-date runner.Tests/CliProtocolNoveltyTests.cs
 fixed-date runner.Tests/DetachedReviewWorkerOptionsTests.cs
 fixed-date runner.Tests/ExecutionOutcomeAdapterTests.cs

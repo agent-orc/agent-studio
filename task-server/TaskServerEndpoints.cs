@@ -407,6 +407,17 @@ public static class TaskServerEndpoints
                 return Results.Json(new ApiError(refusal.Code, refusal.Message), statusCode: refusal.Status);
             return await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct));
         });
+        runners.MapPost("/{runnerId}/clean-context/terminal", async (
+            HttpContext context, string runnerId, string[] hashes, TaskServerStore store, CancellationToken ct) =>
+        {
+            if (context.TaskServerPrincipal() is not
+                { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } bound } || bound != runnerId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "A runner can check only its own task contexts."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            if (hashes.Length > 512 || hashes.Any(hash => hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigit)))
+                return Results.BadRequest(new ApiError("clean-context-hashes-invalid", "Expected at most 512 task hashes."));
+            return Results.Ok(await store.GetTerminalCleanContextHashesAsync(runnerId, hashes, ct));
+        });
         runners.MapPut("/{runnerId}/capabilities", async (
             HttpContext context,
             string runnerId,

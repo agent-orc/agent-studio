@@ -11,7 +11,8 @@ internal static class MechanicalSessionContinuation
         string provider,
         string? contextMode,
         string host,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? cleanContextRoot = null)
     {
         var delta = slot.MechanicalDelta is null ? null
             : slot.MechanicalDelta with
@@ -21,7 +22,7 @@ internal static class MechanicalSessionContinuation
             return (null, "context-mode-mismatch", null);
         bool homeExists;
         string? home;
-        try { homeExists = TaskCleanContextStore.TryGetExistingHome(provider, slot.TaskKey, out home); }
+        try { homeExists = TaskCleanContextStore.TryGetExistingHome(provider, slot.TaskKey, out home, rootOverride: cleanContextRoot); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return (null, "clean-context-unavailable", null);
@@ -72,7 +73,8 @@ internal static class MechanicalSessionContinuation
             return false;
         try
         {
-            return Directory.EnumerateFiles(home, "*", SearchOption.AllDirectories)
+            return Directory.EnumerateFiles(home, "*", new EnumerationOptions
+                { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
                 .Any(path => Path.GetFileName(path).Contains(sessionId, StringComparison.Ordinal));
         }
         catch (IOException) { return false; }

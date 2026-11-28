@@ -205,7 +205,7 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // but no project transcript or history ever lands in it. A credential
 // generation change re-acquires the home so a later login is linked (AGT-3216).
 var authProbeContexts = new ProviderAuthProbeContexts(
-    provider => TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity),
+    provider => TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity, runnerManaged: true),
     provider => ProviderCredentialMonitor.Inspect(provider).CredentialGeneration,
     Log);
 using var client = new TaskServerClient(options);

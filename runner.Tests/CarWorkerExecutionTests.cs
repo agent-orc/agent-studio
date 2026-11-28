@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AgentRunner;
+using AgentStudio.CliHosting;
 using AgentStudio.TestSupport;
 using AgentStudio.TaskServer.Contracts;
 using CodingAgentRunner.Abstractions;
@@ -194,6 +195,61 @@ public sealed class CarWorkerExecutionTests : IDisposable
         Assert.Equal(firstHome, continued.SpawnedEnvironment!["CODEX_HOME"]);
         Assert.NotEqual(firstHome, otherTask.SpawnedEnvironment!["CODEX_HOME"]);
         Assert.Contains(continued.Shipped, line => line.Text.Contains("clean-context reused", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_expired_clean_context_starts_a_fresh_session(bool decideBeforeWorker)
+    {
+        if (!OperatingSystem.IsLinux() || NodeMissing()) return;
+        const string key = "AGT-4349";
+        const string session = "old-session";
+        const string fullPrompt = "Complete the card using the recorded delivery and verification plan.";
+        var fixture = Fixture.Load("p1-happy-done.codex.fixture");
+        var root = Path.Combine(_root, "clean-context");
+        var previous = await RunFixtureAsync(fixture, cleanContextKey: key);
+        var home = previous.SpawnedEnvironment!["CODEX_HOME"];
+        File.WriteAllText(Path.Combine(home, $"rollout-{session}.jsonl"), "{}");
+
+        var start = new DateTimeOffset(2026, 11, 28, 3, 10, 0, TimeSpan.Zero);
+        using var previousHome = TaskCleanContextStore.Acquire("codex", key, Path.Combine(_root, "user"),
+            root, nowUtc: start);
+        var sweep = new RunnerCleanContexts(root, () => [], (_, _) => Task.FromResult(Array.Empty<string>()), _ => { });
+        await sweep.SweepAsync(start.AddDays(RunnerCleanContexts.IdleRetentionDays + 1), default);
+        Assert.False(Directory.Exists(home));
+
+        string? resume = session;
+        var options = new RunnerOptions { WorkDir = _root, ServerUrl = "http://test", RunnerId = "runner",
+            RunnerName = "runner", Hostname = "host", BackendName = "test", BaseBranch = "main" };
+        var workspace = new GitWorkspace(options, key, _ => { }, gitRemote: "https://example.invalid/repo.git",
+            restoredBaseSha: new string('b', 40));
+        if (decideBeforeWorker)
+        {
+            var state = new RunnerStateStore(Path.Combine(_root, "state"));
+            var slot = state.Create(key, new RunLeaseInfoDto(key, "runner", "runner", "host", 0, "test",
+                "lease", 1, start.UtcDateTime, start.AddMinutes(5).UtcDateTime), workspace.RepoPath) with
+            {
+                MechanicalDelta = new(new string('b', 40), "refs/heads/delivery", new string('a', 40), [], "recover", "verify"),
+                PreviousSession = new("attempt-1", key, "codex", workspace.RepositoryUrl!,
+                    workspace.RepoPath, workspace.WorkBranch, "refs/heads/delivery", new string('a', 40),
+                    "host|" + home, null, session, "fresh-run", null, false, 0, 100, 20, 0, 120, 60, start.UtcDateTime),
+            };
+            var decision = await MechanicalSessionContinuation.DecideAsync(slot, workspace, "codex",
+                "clean", "host", default, root);
+            Assert.Equal("clean-context-mismatch", decision.Reason);
+            Assert.Null(decision.DeltaPrompt);
+            resume = decision.SessionId;
+        }
+
+        var round = await RunFixtureAsync(fixture, prompt: fullPrompt, cleanContextKey: key, resumeSessionId: resume);
+        Assert.True(round.Result.Success);
+        Assert.False(round.LaunchFailed);
+        Assert.DoesNotContain("resume", round.SpawnedArgv!);
+        Assert.DoesNotContain(session, round.SpawnedArgv!);
+        Assert.Equal(fullPrompt.Length, round.Capture!.RootElement.GetProperty("stdinChars").GetInt32());
+        Assert.True(Directory.Exists(home));
+        Assert.False(File.Exists(Path.Combine(home, $"rollout-{session}.jsonl")));
     }
 
     [Fact]
@@ -469,6 +525,7 @@ public sealed class CarWorkerExecutionTests : IDisposable
                         },
                     },
                     cleanContextRoot: Path.Combine(_root, "clean-context"),
+                    cleanContextUserHome: Path.Combine(_root, "user"),
                     stopToken: stop),
                 deadline.Token));
 
@@ -519,7 +576,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
                     TimeoutSeconds: 20, CliType: "claude", RunId: "candidate-real-request"),
                 worker, (_, _) => { },
                 options => options with { ClaudePath = "node", Spawner = spawner },
-                cleanContextRoot: Path.Combine(_root, "clean-context"), stopToken: ct);
+                cleanContextRoot: Path.Combine(_root, "clean-context"),
+                cleanContextUserHome: Path.Combine(_root, "user"), stopToken: ct);
             return result;
         }, null!);
         try
@@ -567,7 +625,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
             {
                 ClaudePath = Path.Combine(_root, "missing-cli"),
             },
-            cleanContextRoot: Path.Combine(_root, "clean-context"));
+            cleanContextRoot: Path.Combine(_root, "clean-context"),
+            cleanContextUserHome: Path.Combine(_root, "user"));
 
         Assert.Equal(125, result.ExitCode);
         Assert.False(timedOut);
@@ -694,6 +753,7 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 EnvironmentOverrides = environment,
             },
             cleanContextRoot: Path.Combine(_root, "clean-context"),
+            cleanContextUserHome: Path.Combine(_root, "user"),
             stopToken: stopToken);
 
         JsonDocument? capture = null;

@@ -1,3 +1,5 @@
+using AgentStudio.CliHosting;
+
 namespace AgentRunner;
 
 /// <summary>Credential policies for worker process boundaries.</summary>
@@ -19,7 +21,7 @@ internal static class WorkerEdgeCredentialBoundary
         "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "GOCACHE", "GOMODCACHE",
         "JAVA_HOME", "GRADLE_USER_HOME", "PYTHONPYCACHEPREFIX", "PIP_CACHE_DIR", "UV_CACHE_DIR",
         "PLAYWRIGHT_BROWSERS_PATH", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
-        "XDG_STATE_HOME", "JOB_RESULTS_DIR",
+        "XDG_STATE_HOME", TaskCleanContextStore.RootOverrideEnvironmentVariable, "JOB_RESULTS_DIR",
     };
 
     internal static bool IsCodingRuntimeName(string key, string? cliType)

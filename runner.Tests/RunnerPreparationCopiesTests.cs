@@ -365,6 +365,48 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
     }
 
     [Fact]
+    public async Task Legacy_pilot_sweeps_stale_unbound_runs_and_keeps_published_entries()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var pilot = Path.Combine(_work, "user-data", "cache", "agent-studio-m1-pilot");
+        foreach (var name in new[] { "entries", ".locks" })
+            File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(pilot, name)).FullName, "keep"), "keep");
+        string Seed(int size, int ageHours)
+        {
+            var root = Directory.CreateDirectory(Path.Combine(pilot, ".runs", Guid.NewGuid().ToString("N"))).FullName;
+            File.WriteAllBytes(Path.Combine(root, "payload"), new byte[size]);
+            Directory.SetLastWriteTimeUtc(root, AttemptTime.AddHours(-ageHours));
+            return root;
+        }
+
+        var orphan = Seed(1024, 48);
+        var bound = Seed(2048, 48);
+        var recent = Seed(4096, 1);
+        var start = new ProcessStartInfo("/bin/sleep", "120") { UseShellExecute = false };
+        start.Environment["NUGET_PACKAGES"] = bound;
+        using var child = Process.Start(start)!;
+        long Sweep() => RunnerPreparationCopies.Sweep(_work, _state.LoadAll, long.MaxValue,
+            false, _ => { }, pilot, AttemptTime);
+        try
+        {
+            Assert.Equal(6144, Sweep());
+            Assert.False(Directory.Exists(orphan));
+            Assert.True(Directory.Exists(bound));
+        }
+        finally
+        {
+            child.Kill();
+            await child.WaitForExitAsync();
+        }
+
+        Assert.Equal(4096, Sweep());
+        Assert.False(Directory.Exists(bound));
+        Assert.True(Directory.Exists(recent));
+        Assert.True(File.Exists(Path.Combine(pilot, "entries", "keep")));
+        Assert.True(File.Exists(Path.Combine(pilot, ".locks", "keep")));
+    }
+
+    [Fact]
     public void Host_sample_reports_the_measured_bytes_and_disk_hold_reason()
     {
         Prepare(Claim(), 180);
