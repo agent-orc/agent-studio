@@ -1,6 +1,6 @@
 namespace AgentRunner;
 
-internal sealed record CodexReviewSandboxProbe(bool Ready, string Detail)
+internal sealed record CodexReviewSandboxProbe(bool Ready, string Detail, string? NamespaceFailure = null)
 {
     private static IReadOnlyList<string>? Arguments()
     {
@@ -30,7 +30,9 @@ internal sealed record CodexReviewSandboxProbe(bool Ready, string Detail)
             if (result.Success && result.StdOut.Trim() == marker)
                 return new(true, "The Codex read-only sandbox read the probe file.");
             var detail = string.IsNullOrWhiteSpace(result.StdErr) ? result.StdOut.Trim() : result.StdErr.Trim();
-            return new(false, $"Codex read-only sandbox probe exited {result.ExitCode}. {detail[..Math.Min(detail.Length, 400)]}");
+            var namespaceFailure = result.Success ? null : CodexReviewCheckoutFailure.ReadNamespaceError(result.StdErr);
+            return new(false, $"Codex read-only sandbox probe exited {result.ExitCode}. {detail[..Math.Min(detail.Length, 400)]}",
+                namespaceFailure);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

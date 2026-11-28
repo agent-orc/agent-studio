@@ -387,6 +387,13 @@
       </thead>
       <tbody>
         <!-- append-only:drive-to-conclusion:start -->
+        <tr id="case-agt-4429-review-command-output">
+          <td>2026-11-28</td>
+          <td><code>AGT-4429</code><br><span class="small">review-command-output</span></td>
+          <td>A failed review command that printed a bubblewrap diagnostic could stop a healthy Codex review.</td>
+          <td>The executor attributed command output to its sandbox without confirming the denial.</td>
+          <td>The regression fixtures let the healthy executor reach Pass and preserve ReviewInfra when the read-only probe confirms the namespace denial.</td>
+        </tr>
         <tr id="case-agt-4429-review-report-validation">
           <td>2026-11-28</td>
           <td><code>AGT-4429</code><br><span class="small">review-report-validation</span></td>

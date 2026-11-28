@@ -3748,7 +3748,12 @@ can declare `requiresCheckoutReads: false`. Existing plans default to
 requiring proof for their Codex aspects. Model fallback still observes the
 configured model and review correctness rules.
 
-[OpenAI's sandbox guidance](https://developers.openai.com/codex/agent-approvals-security)
+If a review command reports a bubblewrap permission error, the executor
+repeats this probe before reporting the host as unable to read the checkout.
+The probe uses a runner-owned file because ordinary command output can
+include the same error text.
+
+[OpenAI's sandbox guidance](https://learn.chatgpt.com/docs/agent-approvals-security)
 describes nested Linux sandbox requirements. Use the nested sandbox option.
 For Docker on AppArmor hosts, adapt the [review Compose override](../../../deploy/compose/review/codex-read-only.yaml)
 to the service names in the host's review Compose project. The override

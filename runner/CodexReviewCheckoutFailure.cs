@@ -4,7 +4,7 @@ namespace AgentRunner;
 
 internal static class CodexReviewCheckoutFailure
 {
-    public static string? Read(ProcessResult raw)
+    public static bool HasFailureHint(ProcessResult raw)
     {
         foreach (var line in raw.StdOut.Split('\n'))
         {
@@ -21,7 +21,7 @@ internal static class CodexReviewCheckoutFailure
                     || exitCode.ValueKind != JsonValueKind.Number || !exitCode.TryGetInt32(out var code) || code == 0
                     || !item.TryGetProperty("aggregated_output", out var output) || output.ValueKind != JsonValueKind.String)
                     continue;
-                if (NamespaceError(output.GetString()!) is { } error) return error;
+                if (ReadNamespaceError(output.GetString()!) is not null) return true;
             }
             catch (JsonException)
             {
@@ -30,10 +30,10 @@ internal static class CodexReviewCheckoutFailure
             }
         }
 
-        return raw.Success ? null : NamespaceError(raw.StdErr);
+        return !raw.Success && ReadNamespaceError(raw.StdErr) is not null;
     }
 
-    private static string? NamespaceError(string output)
+    public static string? ReadNamespaceError(string output)
         => output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line =>
             line.StartsWith("bwrap:", StringComparison.Ordinal)
             && (line.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase)

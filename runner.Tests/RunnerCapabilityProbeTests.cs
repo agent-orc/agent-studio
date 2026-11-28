@@ -35,6 +35,7 @@ public sealed class RunnerCapabilityProbeTests
             codexReviewSandbox: proof), item => item.Key == ReviewCapabilities.CodexCheckoutRead);
         Assert.Equal(1, calls);
         Assert.Equal(ready ? "ready" : "unavailable", capability.Status);
+        Assert.Equal(ready ? null : failure, proof.NamespaceFailure);
         if (!ready) Assert.Contains(failure, capability.Detail);
     }
 

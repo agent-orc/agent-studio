@@ -964,10 +964,12 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("diff characters omitted", prompt);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "ReviewFlaky")]
     [Trait("Category", "MachineBound")]
-    public async Task Codex_namespace_failure_is_reported_with_host_even_when_the_cli_exits_zero()
+    public async Task Codex_checkout_failure_requires_sandbox_confirmation(bool sandboxReady)
     {
         if (OperatingSystem.IsWindows()) return;
         var sha = await SeedOriginAsync();
@@ -975,16 +977,31 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         const string failure = "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted";
         await File.WriteAllTextAsync(fakeCodex, $$$"""
             #!/bin/sh
+            if [ "$3" = sandbox ]; then
+                if [ "{{{(sandboxReady ? "yes" : "no")}}}" = yes ]; then
+                    exec /bin/cat probe.txt
+                fi
+                printf '%s\n' '{{{failure}}}' >&2
+                exit 1
+            fi
             printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"cat README.md","exit_code":1,"aggregated_output":"{{{failure}}}"}}'
-            printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=concerns; classification=ReviewMaterialUnavailable; summary=Read denied]]"}}'
+            printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=approve; summary=Reviewed README.md; evidence_checked=README.md; missing=none]]"}}'
             """);
         File.SetUnixFileMode(fakeCodex, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var command = new ReviewCommandDto("concept-fit", "concept-fit", "codex", [],
-            ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: "Review the delivered Dossier.",
+        var command = new ReviewCommandDto("aspect-code-quality", "code-quality", "codex", [],
+            ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: "Review the delivery.",
             CliType: "codex", Model: "gpt-5.4-mini");
         var (workspace, _) = Workspace("attempt-checkout-read", sha, [command], 24108,
             integrationRef: "refs/heads/main", codexCliBin: fakeCodex);
         await workspace.PrepareAsync(null!, default);
+
+        if (sandboxReady)
+        {
+            var review = await workspace.ExecutePlanAsync(default);
+            Assert.Equal("Pass", review.Outcome);
+            Assert.Equal("approve", Assert.Single(review.Verdicts).Status);
+            return;
+        }
 
         var error = await Assert.ThrowsAsync<ReviewInfrastructureException>(() => workspace.ExecutePlanAsync(default));
 

@@ -354,11 +354,13 @@ selected provider, so the authored step digest remains valid after a
 permitted provider fallback.
 
 A denied bubblewrap namespace setup can fail a tool call while the Codex
-process exits successfully. The runner uses failed command events as evidence
-and reports `ReviewInfra / ReviewerCheckoutReadUnavailable` with the lease's
-host and the command diagnostic. The retry excludes the hosts that failed
-this way earlier in the same chain. Lease, subject and library-step checks
-still apply. Once the failure is attributed, partial review evidence and
+process exits successfully. A matching diagnostic in a failed command event
+or a failed CLI's stderr triggers a repeat of the read-only startup probe
+against a runner-owned temporary file. Only a namespace denial from that
+probe establishes `ReviewInfra / ReviewerCheckoutReadUnavailable`. The report
+carries the lease's host and the confirmed diagnostic. The retry excludes
+the hosts that failed this way earlier in the same chain. Lease, subject and
+library-step checks still apply. Once the failure is attributed, partial review evidence and
 generic toolchain or verdict classification cannot replace the host diagnosis.
 The report carries the command and artifact digests collected before the stop.
 
