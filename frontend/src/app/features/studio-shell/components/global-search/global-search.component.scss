@@ -22,8 +22,8 @@
   color: var(--studio-fg);
   background: var(--studio-bg-elevated);
   border: 1px solid var(--studio-border);
-  border-radius: 8px;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 38%);
+  border-radius: var(--studio-compat-radius-5);
+  box-shadow: var(--elevation-popover);
 }
 
 .search-input-row {
@@ -33,11 +33,11 @@
   padding: var(--studio-spacing-3) var(--studio-spacing-4);
   border-bottom: 1px solid var(--studio-border);
 
-  input { flex: 1; border: 0; outline: 0; color: var(--studio-fg); background: transparent; font: 15px var(--font-ui); }
-  kbd { color: var(--studio-fg-muted); font: 10px var(--font-mono); }
+  input { flex: 1; border: 0; outline: 0; color: var(--studio-fg); background: transparent; font: var(--studio-compat-type-32) var(--font-ui); }
+  kbd { color: var(--studio-fg-muted); font: var(--studio-compat-type-1) var(--font-mono); }
 }
 
-.search-elapsed { color: var(--studio-fg-muted); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
+.search-elapsed { color: var(--studio-fg-muted); font: var(--studio-compat-type-1) var(--font-mono); font-variant-numeric: tabular-nums; }
 
 .search-domain-filters {
   display: flex;
@@ -52,8 +52,8 @@
   color: var(--studio-fg-muted);
   background: var(--studio-bg-editor);
   border: 1px solid var(--studio-border);
-  border-radius: 999px;
-  font-size: 10px;
+  border-radius: var(--studio-radius-pill);
+  font-size: var(--studio-compat-type-1);
 
   &--enabled {
     color: var(--studio-nav-active-fg);
@@ -64,13 +64,13 @@
 
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
 .search-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--studio-spacing-3); }
-.search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: var(--studio-compat-type-1); letter-spacing: .08em; text-transform: uppercase; }
 .search-group-status {
   display: flex;
   gap: var(--studio-spacing-2);
   margin-right: var(--studio-spacing-2);
   color: var(--studio-fg-muted);
-  font-size: 10px;
+  font-size: var(--studio-compat-type-1);
   align-items: center;
   min-width: 0;
   font-variant-numeric: tabular-nums;
@@ -81,23 +81,23 @@
   align-items: center;
   gap: var(--studio-spacing-3);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border-radius: 4px;
+  border-radius: var(--studio-compat-radius-6);
   text-align: left;
   // Selection is the background tint alone. A coloured left accent bar is a
   // hard-rule violation (docs/quality/design/style-guide-hard-rules.md) and was
   // redundant with the tint anyway.
   &--active { background: var(--studio-nav-active-bg); }
 }
-.search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
+.search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: var(--studio-compat-radius-4); }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }
-.search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: 9px; font-size: 10px; }
+.search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: var(--studio-compat-radius-12); font-size: var(--studio-compat-type-1); }
 .search-badge--lane {
   @include lane-tone.vars;
   color: var(--lane-tone-fg);
   background: var(--lane-tone-bg);
   border-color: var(--lane-tone-border);
 }
-.search-updated { color: var(--studio-fg-muted); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.search-updated { color: var(--studio-fg-muted); font: var(--studio-compat-type-1) var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .search-hint, .search-loading, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
 .search-error { color: var(--studio-fg-dim); }
-footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 10px; }
+footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: var(--studio-compat-type-1); }

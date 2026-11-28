@@ -31,15 +31,16 @@
   }
 
   &__eyebrow {
-    margin: 0 0 var(--studio-spacing-1);
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-1);
     color: var(--studio-fg-muted);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
   }
 
   &__title {
-    margin: 0 0 var(--studio-spacing-2);
-    font-size: 24px;
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2);
+    font-size: var(--studio-workbench-statement);
+    font-family: var(--font-display, var(--font-ui));
     font-weight: 650;
     color: var(--studio-fg-strong);
     letter-spacing: -0.02em;
@@ -55,13 +56,13 @@
 
   &__chat-cta {
     min-height: 32px;
-    margin: 0;
+    margin: var(--studio-spacing-0);
     padding: var(--studio-spacing-2) var(--studio-spacing-5);
-    border-radius: 7px;
+    border-radius: var(--studio-compat-radius-1);
     background: var(--studio-accent);
     border-color: var(--studio-accent);
     color: var(--studio-on-accent);
-    font-size: 14px;
+    font-size: var(--studio-font-size-lg);
     font-weight: 650;
 
     &:hover {
@@ -71,9 +72,9 @@
   }
 
   &__section-title {
-    margin: var(--studio-spacing-5) 0 var(--studio-spacing-3);
+    margin: var(--studio-spacing-5) var(--studio-spacing-0) var(--studio-spacing-3);
     color: var(--studio-fg-muted);
-    font-size: 12px;
+    font-size: var(--studio-font-size-sm);
     font-weight: 600;
   }
 
@@ -90,8 +91,8 @@
     padding: var(--studio-spacing-2) var(--studio-spacing-3);
     background: color-mix(in srgb, var(--studio-fg-dim) 4%, var(--studio-bg-surface));
     border: 1px solid var(--studio-border);
-    border-radius: 7px;
-    font-size: 12px;
+    border-radius: var(--studio-compat-radius-1);
+    font-size: var(--studio-font-size-sm);
     color: var(--studio-fg);
     text-align: left;
     transition:
@@ -113,10 +114,10 @@
   &__project-glyph {
     width: 16px;
     height: 16px;
-    border-radius: 4px;
+    border-radius: var(--studio-compat-radius-6);
     display: grid;
     place-items: center;
-    font-size: 9px;
+    font-size: var(--studio-compat-type-4);
     font-weight: 700;
     color: var(--studio-on-accent);
     flex-shrink: 0;
@@ -125,11 +126,11 @@
   &__project-count {
     min-width: 18px;
     height: 14px;
-    padding: 0 var(--studio-spacing-1);
+    padding: var(--studio-spacing-0) var(--studio-spacing-1);
     background: var(--studio-bg-elevated);
     color: var(--studio-fg-dim);
-    border-radius: 3px;
-    font-size: 10px;
+    border-radius: var(--studio-compat-radius-9);
+    font-size: var(--studio-compat-type-1);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     display: grid;
@@ -143,7 +144,7 @@
     padding: var(--studio-spacing-4);
 
     &__title {
-      font-size: 20px;
+      font-size: var(--studio-font-size-2xl);
     }
 
     &__projects {

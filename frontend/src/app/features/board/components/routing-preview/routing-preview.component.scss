@@ -4,7 +4,7 @@
   margin-block-start: var(--studio-spacing-3);
   padding: var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
-  border-radius: 10px;
+  border-radius: var(--studio-compat-radius-3);
   background: color-mix(in srgb, var(--studio-accent-4) 9%, var(--studio-bg-editor));
   color: var(--studio-fg);
 }

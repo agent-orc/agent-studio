@@ -118,13 +118,13 @@
   margin-bottom: var(--studio-spacing-4);
 }
 .ws-settings__panel-title {
-  margin: 0 0 var(--studio-spacing-1);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-1);
   font-size: var(--studio-compat-type-9);
   font-weight: 600;
   color: var(--studio-fg-strong);
 }
 .ws-settings__panel-desc {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-dim);
   font-size: var(--studio-compat-type-26);
   max-width: 64ch;
@@ -139,6 +139,10 @@
   margin-bottom: var(--studio-spacing-3);
 }
 .ws-settings__operations { display: grid; gap: var(--studio-spacing-4); }
+.ws-settings__operations .ws-settings__panel-title {
+  font-family: var(--font-display, var(--font-ui));
+  font-size: var(--studio-section-heading);
+}
 .ws-settings__operations-links { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .ws-settings__operations-links button {
   font: inherit;

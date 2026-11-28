@@ -5,7 +5,7 @@
       flex-direction: column;
       gap: var(--studio-spacing-1);
       padding: var(--studio-spacing-2) var(--studio-spacing-3);
-      margin: var(--studio-spacing-2) 0;
+      margin: var(--studio-spacing-2) var(--studio-spacing-0);
       font-size: var(--studio-compat-type-13);
       background: var(--alpha-white-04);
       border-radius: var(--studio-compat-radius-5);
@@ -73,7 +73,7 @@
       border: 1px solid var(--studio-border);
     }
     .chat-compose__mode--guarded {
-      color: var(--studio-accent);
+      color: var(--studio-link-ink);
       border-color: var(--studio-accent);
     }
     .activity-panel .chat-compose__send {
@@ -93,7 +93,7 @@
     }
     .activity-panel .chat-compose__send:disabled { opacity: 0.45; cursor: not-allowed; }
     .chat-compose__status {
-      margin: var(--studio-spacing-2) 0 0;
+      margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
       color: var(--studio-fg-dim);
       font-size: var(--studio-compat-type-11);
     }
@@ -227,7 +227,7 @@
       // host so the splitter and tabs sit flush against the edge.
       background: var(--studio-bg-surface);
       border: 0;
-      border-radius: 0;
+      border-radius: var(--studio-radius-none);
       padding: var(--studio-spacing-3) var(--studio-spacing-3);
       height: 100%;
       min-height: 0;
@@ -267,7 +267,7 @@
     }
     .detail__back:hover { background: var(--studio-bg-elevated); color: var(--studio-fg-strong); }
     .detail__title {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       font-size: var(--studio-font-size-xl);
       line-height: 1.25;
       color: var(--studio-fg-strong);
@@ -332,7 +332,7 @@
     }
     .detail__title-input:focus {
       border-color: var(--studio-accent-3);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent-3) 20%, transparent);
+      box-shadow: var(--studio-title-input-ring);
     }
     .detail__title-actions {
       display: flex;
@@ -501,7 +501,7 @@
       flex: 1;
       align-items: stretch;
       min-height: 0;
-      gap: 0;
+      gap: var(--studio-spacing-0);
       margin-left: calc(var(--studio-spacing-3) * -1);
       margin-right: calc(var(--studio-spacing-3) * -1);
     }
@@ -534,7 +534,7 @@
     }
     .pane__title {
       flex: 1;
-      margin: 0;
+      margin: var(--studio-spacing-0);
       font-size: var(--studio-font-size-md);
       font-weight: 600;
       letter-spacing: 0.02em;
@@ -584,7 +584,7 @@
       flex-direction: column;
       min-width: 0;
       min-height: 0;
-      padding: 0;
+      padding: var(--studio-spacing-0);
       // The pane body is the single vertical scroll owner. Horizontal content
       // must reflow within the pane instead of creating a second axis.
       overflow-x: hidden;
@@ -768,7 +768,7 @@
       flex: 1;
       flex-direction: column;
       min-height: 0;
-      padding: 0;
+      padding: var(--studio-spacing-0);
     }
     .activity-panel__header {
       display: flex;
@@ -778,14 +778,14 @@
       padding-bottom: var(--studio-compat-space-2);
     }
     .activity-panel__empty {
-      padding: var(--studio-compat-space-5) 0;
+      padding: var(--studio-compat-space-5) var(--studio-spacing-0);
       color: var(--studio-fg-dim);
       font-size: var(--studio-font-size-md);
       line-height: 1.5;
     }
 
     .section {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       background: var(--studio-bg-editor);
       border: 1px solid var(--studio-border);
       border-radius: var(--studio-compat-radius-6);
@@ -817,7 +817,7 @@
     .section__title {
       font-size: var(--studio-font-size-md);
       color: var(--studio-fg-dim);
-      margin: 0;
+      margin: var(--studio-spacing-0);
     }
     .section__title--large {
       font-size: var(--studio-font-size-2xl);
@@ -826,7 +826,7 @@
     }
     .markdown-source,
     .markdown-preview {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       border: 1px solid var(--studio-border);
       border-radius: var(--studio-compat-radius-6);
       background: var(--studio-bg-hover);
@@ -841,12 +841,12 @@
       font-family: inherit;
     }
     .markdown-preview :where(h1, h2, h3, h4) {
-      margin: 0 0 var(--studio-spacing-2);
+      margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2);
       color: var(--studio-fg-strong);
       line-height: 1.25;
     }
     .markdown-preview :where(p, ul, pre) {
-      margin: 0 0 var(--studio-compat-space-5);
+      margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-compat-space-5);
     }
     .markdown-preview :where(ul) {
       padding-left: var(--studio-compat-space-8);
@@ -867,9 +867,9 @@
     .notes-panel__body.markdown-source,
     .notes-panel__body.markdown-preview {
       border: 0;
-      border-radius: 0;
+      border-radius: var(--studio-radius-none);
       background: transparent;
-      padding: var(--studio-spacing-1) 0 0;
+      padding: var(--studio-spacing-1) var(--studio-spacing-0) var(--studio-spacing-0);
     }
     .log {
       display: flex;
@@ -1020,7 +1020,7 @@
       color: var(--studio-fg-dim);
     }
     .sidebar-card--collapsed {
-      padding-bottom: 0;
+      padding-bottom: var(--studio-spacing-0);
     }
     .sidebar-card--collapsed .sidebar-card__header {
       align-items: center;
@@ -1083,7 +1083,7 @@
     }
     .cli-config__separator {
       border-top: 1px solid var(--alpha-white-08);
-      margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
+      margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-1);
     }
     /* Modal chrome belongs to the top-layer dialog. */
     .log-overlay {
@@ -1094,7 +1094,7 @@
       height: 92vh;
       max-width: 96vw;
       max-height: 92vh;
-      padding: 0;
+      padding: var(--studio-spacing-0);
       border: 1px solid var(--alpha-white-08);
       border-radius: var(--studio-compat-radius-20);
       background: var(--studio-bg-overlay);
@@ -1123,7 +1123,7 @@
       gap: var(--studio-spacing-4);
     }
     .log-overlay__title {
-      margin: 0;
+      margin: var(--studio-spacing-0);
       font-size: var(--studio-font-size-xl);
       font-weight: 600;
       letter-spacing: 0.01em;
@@ -1180,7 +1180,7 @@
     @media (max-width: 720px) {
       .detail {
         padding: var(--studio-spacing-3);
-        padding-bottom: 0;
+        padding-bottom: var(--studio-spacing-0);
         overflow: hidden;
       }
       .detail__panes {
@@ -1229,7 +1229,7 @@
         height: 100vh;
         max-width: 100vw;
         max-height: 100vh;
-        border-radius: 0;
+        border-radius: var(--studio-radius-none);
         border: 0;
       }
       .log-overlay__panel {

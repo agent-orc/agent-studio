@@ -18,7 +18,7 @@ app-status-bar {
   display: flex;
   align-items: center;
   gap: var(--studio-spacing-1);
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   height: var(--statusbar-bar-height);
   background: var(--studio-bg-activitybar);
   border-top: 1px solid var(--studio-border);
@@ -64,7 +64,7 @@ app-status-bar {
   align-items: center;
   justify-content: center;
   gap: var(--statusbar-item-gap-inner);
-  padding: 0 var(--statusbar-item-pad-x);
+  padding: var(--studio-spacing-0) var(--statusbar-item-pad-x);
   height: var(--statusbar-item-height);
   border-radius: var(--statusbar-item-radius);
   background: transparent;
@@ -176,7 +176,7 @@ app-status-bar {
   width: 1px;
   height: 14px;
   background: var(--studio-border);
-  margin: 0 var(--studio-spacing-1);
+  margin: var(--studio-spacing-0) var(--studio-spacing-1);
   flex: 0 0 auto;
 }
 
@@ -213,7 +213,7 @@ app-status-bar {
   .statusbar__group--right {
     flex: 1 1 100%;
     max-width: none;
-    margin-inline-start: 0;
+    margin-inline-start: var(--studio-spacing-0);
     justify-content: space-between;
     flex-wrap: wrap;
   }

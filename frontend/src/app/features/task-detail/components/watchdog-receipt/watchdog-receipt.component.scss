@@ -12,8 +12,8 @@
   color: var(--studio-fg);
   font-size: var(--studio-font-size-sm);
 
-  p { margin: 0; }
-  a { color: var(--studio-accent); }
+  p { margin: var(--studio-spacing-0); }
+  a { color: var(--studio-link-ink); }
   button {
     padding: var(--studio-spacing-1) var(--studio-spacing-2);
     border: 1px solid var(--studio-border);

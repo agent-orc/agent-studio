@@ -15,7 +15,7 @@
     display: block;
     width: 6px;
     height: 6px;
-    border-radius: 50%;
+    border-radius: var(--studio-compat-radius-4);
   }
 
   &--active::before {
@@ -39,7 +39,7 @@
   &--blocked::before {
     width: 6px;
     height: 6px;
-    border-radius: 1px;
+    border-radius: var(--studio-compat-radius-14);
     background: var(--studio-auto-pickup-blocked);
     transform: rotate(45deg) scale(0.78);
   }

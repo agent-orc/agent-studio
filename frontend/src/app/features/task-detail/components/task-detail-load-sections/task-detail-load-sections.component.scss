@@ -18,7 +18,7 @@
 .task-load-head__back {
   width: 1.75rem;
   height: 1.75rem;
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 1px solid var(--studio-border);
   color: var(--studio-fg);
   background: transparent;
@@ -80,7 +80,7 @@
 
 .task-load-head h1 {
   overflow: hidden;
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-strong);
   font-size: var(--studio-compat-type-16);
   font-weight: 600;
@@ -112,19 +112,19 @@
 }
 
 .task-core__section h2 {
-  margin: 0 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-3);
   color: var(--studio-fg-strong);
   font-size: var(--studio-compat-type-12);
 }
 
 .task-core__section p {
-  margin: 0 0 var(--studio-spacing-2);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-2);
   color: var(--studio-fg-dim);
   font-size: var(--studio-compat-type-13);
 }
 
 .task-core__section pre {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font: var(--studio-compat-type-13)/1.5 var(--font-mono, monospace);
@@ -150,7 +150,7 @@
 }
 
 .task-load-section__header h2 {
-  margin: 0;
+  margin: var(--studio-spacing-0);
   color: var(--studio-fg-strong);
   font-size: var(--studio-compat-type-12);
   font-weight: 600;
@@ -193,7 +193,7 @@
 }
 
 .task-load-section__error p {
-  margin: 0 0 var(--studio-spacing-3);
+  margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-3);
   color: var(--studio-fg-dim);
   font-size: var(--studio-compat-type-12);
 }

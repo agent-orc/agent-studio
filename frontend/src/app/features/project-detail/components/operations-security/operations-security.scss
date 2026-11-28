@@ -5,7 +5,7 @@
   padding: var(--studio-spacing-4) var(--studio-spacing-5) var(--studio-spacing-5);
   font-variant-numeric: tabular-nums;
 
-  h2, h3, p { margin: 0; }
+  h2, h3, p { margin: var(--studio-spacing-0); }
   h3 { color: var(--studio-fg-strong); font-size: var(--studio-compat-type-16); font-weight: 600; }
 }
 
@@ -36,11 +36,11 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: var(--studio-spacing-3);
-  margin: 0;
+  margin: var(--studio-spacing-0);
 
   > div { display: grid; gap: var(--studio-spacing-1); }
   dt { @include m.type-label; }
-  dd { margin: 0; color: var(--studio-fg-strong); font-size: var(--studio-compat-type-33); font-weight: 650; }
+  dd { margin: var(--studio-spacing-0); color: var(--studio-fg-strong); font-size: var(--studio-compat-type-33); font-weight: 650; }
 }
 
 .operations-security__soon {
@@ -54,8 +54,8 @@
 
 .operations-security__list {
   display: grid;
-  margin: 0;
-  padding: 0;
+  margin: var(--studio-spacing-0);
+  padding: var(--studio-spacing-0);
   list-style: none;
 }
 

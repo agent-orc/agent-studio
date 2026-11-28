@@ -40,7 +40,7 @@
   &__row {
     appearance: none;
     width: 100%;
-    margin-left: 0;
+    margin-left: var(--studio-spacing-0);
     border: 0;
     border-radius: var(--studio-compat-radius-7);
     background: transparent;
@@ -201,7 +201,7 @@
     align-items: baseline;
     gap: var(--studio-spacing-2);
     min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
-    margin: var(--studio-spacing-2) 0 0;
+    margin: var(--studio-spacing-2) var(--studio-spacing-0) var(--studio-spacing-0);
     padding: var(--studio-row-pad-block) var(--studio-spacing-2);
     border-radius: var(--studio-compat-radius-7);
     background: var(--studio-bg-hover);
@@ -223,7 +223,7 @@
   &__badge {
     display: inline-flex;
     align-items: center;
-    padding: 0 var(--studio-spacing-1);
+    padding: var(--studio-spacing-0) var(--studio-spacing-1);
     border-radius: var(--studio-compat-radius-2);
     background: color-mix(in srgb, var(--studio-accent) 18%, transparent);
     color: var(--studio-accent-strong);
@@ -259,8 +259,8 @@
   }
 
   &__breakdown-caption {
-    margin: 0 0 0 var(--ov-pipeline-step-indent);
-    padding: 0 var(--studio-spacing-2);
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-0) var(--ov-pipeline-step-indent);
+    padding: var(--studio-spacing-0) var(--studio-spacing-2);
     color: var(--studio-fg-muted);
     font-size: var(--studio-compat-type-42);
     font-weight: 600;
@@ -279,7 +279,7 @@
   }
 
   &__empty {
-    margin: 0 0 0 var(--ov-pipeline-step-indent);
+    margin: var(--studio-spacing-0) var(--studio-spacing-0) var(--studio-spacing-0) var(--ov-pipeline-step-indent);
     padding: var(--studio-spacing-2);
     color: var(--studio-fg-muted);
     font-size: var(--studio-compat-type-6);
@@ -379,7 +379,7 @@
 .ptu__analysis {
   align-self: flex-start;
   margin-top: var(--studio-spacing-2);
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
   background: none;
   color: var(--studio-tooltip-link);

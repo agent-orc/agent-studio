@@ -30,7 +30,7 @@
     justify-content: center;
     width: var(--studio-spacing-5);
     height: var(--studio-spacing-5);
-    padding: 0;
+    padding: var(--studio-spacing-0);
     border-radius: var(--studio-spacing-1);
     font-family: var(--font-mono);
     font-weight: 700;
@@ -65,7 +65,7 @@
     border: 1px solid var(--studio-border);
     border-radius: var(--studio-compat-radius-5);
     background: var(--studio-bg-elevated);
-    box-shadow: var(--elevation-modal, 0 12px 32px var(--studio-compat-shadow-ink-2));
+    box-shadow: var(--elevation-modal);
     overflow: auto;
   }
 

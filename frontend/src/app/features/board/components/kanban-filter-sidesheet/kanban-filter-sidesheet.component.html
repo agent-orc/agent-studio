@@ -163,7 +163,7 @@
                      [checked]="activeOwnerId() === owner.id"
                      (change)="onSetOwner(owner.id)" />
               <span class="sheet__swatch"
-                    [style.background]="owner.colour || 'rgba(255,255,255,0.12)'"
+                    [style.background]="owner.colour || 'var(--studio-surface-muted)'"
                     aria-hidden="true">{{ owner.emoji || '·' }}</span>
               <span class="sheet__checkbox-label">{{ owner.displayName || owner.id }}</span>
             </label>

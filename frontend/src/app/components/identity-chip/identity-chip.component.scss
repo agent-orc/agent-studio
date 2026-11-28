@@ -1,7 +1,7 @@
 :host { display: inline-flex; min-width: 0; max-width: var(--identity-chip-max, 160px); }
 .identity-chip {
   display: inline-flex; align-items: center; gap: var(--studio-spacing-1); min-width: 0; max-width: 100%;
-  height: 22px; padding: 0 var(--studio-compat-space-2); border-radius: var(--studio-compat-radius-1); font-size: var(--studio-compat-type-1); font-weight: 700; line-height: 1;
+  height: 22px; padding: var(--studio-spacing-0) var(--studio-compat-space-2); border-radius: var(--studio-compat-radius-1); font-size: var(--studio-compat-type-1); font-weight: 700; line-height: 1;
   background: var(--identity-chip-bg, var(--studio-surface-2, var(--studio-compat-surface-4)));
   border: 1px solid var(--identity-chip-border, var(--studio-border, var(--studio-compat-border-6)));
   color: var(--identity-chip-fg, var(--studio-fg-dim));

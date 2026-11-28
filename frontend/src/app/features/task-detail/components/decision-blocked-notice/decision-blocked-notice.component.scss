@@ -17,13 +17,13 @@
 
 .decision-blocked__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
 .decision-blocked__line,
-.decision-blocked__hint { margin: 0; }
+.decision-blocked__hint { margin: var(--studio-spacing-0); }
 .decision-blocked__line { color: var(--studio-fg-strong); font-weight: 600; }
 .decision-blocked__hint { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); }
 .decision-blocked__title { margin-left: var(--studio-spacing-1); color: var(--studio-fg); font-weight: 400; }
 
 .decision-blocked__link {
-  padding: 0;
+  padding: var(--studio-spacing-0);
   border: 0;
   background: transparent;
   color: var(--studio-wiki-link);

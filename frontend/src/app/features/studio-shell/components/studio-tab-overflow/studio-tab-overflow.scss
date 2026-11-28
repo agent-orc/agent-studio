@@ -9,13 +9,13 @@
   // The tab row height, not 100%: once the actions wrap below, the tab bar's
   // height is auto and a percentage stretched the first row to both rows.
   height: var(--studio-tabbar-h);
-  padding: 0 var(--studio-spacing-2);
+  padding: var(--studio-spacing-0) var(--studio-spacing-2);
   border: 0;
   border-left: 1px solid var(--studio-border);
   background: transparent;
   color: var(--studio-fg-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
   cursor: pointer;
 
   &:hover { color: var(--studio-fg-strong); background: var(--studio-bg-hover); }

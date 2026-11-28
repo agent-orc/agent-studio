@@ -543,12 +543,14 @@
           } @placeholder { <p>Loading structure…</p> }
         }
         @if (activeTab() === null || productWithoutProject()) {
-          <app-studio-welcome
-            [projects]="projectRows()"
-            [emptyMessage]="productWithoutProject() ? productNoProjectMessage : null"
-            (boardOpened)="openBoard($event)"
-            (deploymentDashboardOpened)="openDeploymentDashboard()"
-            (chatOpened)="chatToggle.emit()" />
+          @defer (on immediate) {
+            <app-studio-welcome
+              [projects]="projectRows()"
+              [emptyMessage]="productWithoutProject() ? productNoProjectMessage : null"
+              (boardOpened)="openBoard($event)"
+              (deploymentDashboardOpened)="openDeploymentDashboard()"
+              (chatOpened)="chatToggle.emit()" />
+          }
         }
         </div>
       </div>

@@ -3,3 +3,5 @@ export { CreateTaskDialogComponent } from './components/create-task-dialog/creat
 /** Legacy-layout header chrome, rendered only when the VS Code layout is off. */
 export { FiltersDropdownComponent } from './components/filters-dropdown/filters-dropdown.component';
 export { ProjectTabsComponent } from './components/project-tabs/project-tabs.component';
+export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
+export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sidesheet/kanban-filter-sidesheet.component';

@@ -17,7 +17,7 @@
 
 .off-stable__line,
 .off-stable__hint,
-.off-stable__error { margin: 0; overflow-wrap: anywhere; }
+.off-stable__error { margin: var(--studio-spacing-0); overflow-wrap: anywhere; }
 .off-stable__line { color: var(--studio-fg-strong); font-weight: 600; }
 .off-stable__hint { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); font-variant-numeric: tabular-nums; }
 .off-stable__error { color: var(--studio-error); }

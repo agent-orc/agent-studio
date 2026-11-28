@@ -17,7 +17,7 @@
 
 .attempt-gap__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
 .attempt-gap__line,
-.attempt-gap__hint { margin: 0; overflow-wrap: anywhere; }
+.attempt-gap__hint { margin: var(--studio-spacing-0); overflow-wrap: anywhere; }
 .attempt-gap__line { color: var(--studio-fg-strong); font-weight: 600; }
 .attempt-gap__epoch { font-variant-numeric: tabular-nums; }
 .attempt-gap__hint { color: var(--studio-fg-muted); font-size: var(--studio-compat-type-10); }
@@ -38,7 +38,7 @@
   resize: vertical;
 }
 .attempt-gap__input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
-.attempt-gap__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+.attempt-gap__error { margin: var(--studio-spacing-0); color: var(--studio-error); overflow-wrap: anywhere; }
 .attempt-gap__actions {
   display: flex;
   align-items: center;
