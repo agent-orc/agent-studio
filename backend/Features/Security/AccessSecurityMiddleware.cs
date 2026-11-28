@@ -206,6 +206,25 @@ public sealed class AccessSecurityMiddleware
             await _next(context);
             return;
         }
+        if (OperatorBatchEndpoints.IsSessionRoute(context.Request.Method, path))
+        {
+            // The typed batch protocol authorizes each item itself. Keep the
+            // ordinary session attribution and request audit around that boundary.
+            var principal = _store.AuthenticateOperatorSession(operatorBearer, recordUse: false);
+            using var scope = principal?.Operator is { } batchActor ? OperatorActorScope.Enter(batchActor) : null;
+            var digest = await ParameterDigestAsync(context.Request, path);
+            var failed = false;
+            try { await _next(context); }
+            catch { failed = true; throw; }
+            finally
+            {
+                if (principal is not null)
+                    _store.AppendServiceAccountAudit(principal, context.Request.Method, path,
+                        failed ? 500 : context.Response.StatusCode, "operator-batch", digest.Value, null, null,
+                        OperatorInstructionSources.Unstated);
+            }
+            return;
+        }
         context.Items[AttributionClientIdItem] = context.Request.Headers["X-Client-Id"].FirstOrDefault();
         if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";

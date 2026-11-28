@@ -1,3 +1,4 @@
+import { OperatorBatchSheetComponent } from '../operator-batch-sheet/operator-batch-sheet';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, afterNextRender, afterRenderEffect, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
@@ -66,7 +67,7 @@ const WIDE_PX = 1180;
 @Component({
   selector: 'app-access-area',
   standalone: true,
-  imports: [
+  imports: [OperatorBatchSheetComponent,
     AccessElevatedSessionsComponent, AccessSessionLimitsComponent, AccessAccountDetailComponent, AccessAccountFormComponent, AccessBackupActivityComponent, AccessBindingFormComponent, AccessBindingsComponent,
     AccessBreakGlassComponent, AccessEnrollmentFormComponent, AccessGroupDetailComponent, AccessGroupFormComponent, AccessGroupsComponent,
     AccessInviteFormComponent, AccessOperatorActivityComponent, AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent,

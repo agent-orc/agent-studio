@@ -1736,7 +1736,7 @@ public static class TaskCrudEndpoints
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
         AttemptAuthorityService authority, TimelineLog timeline,
-        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct, string? expectedState = null)
+        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct, string? expectedState = null, Func<TaskInfo, IResult?>? approvalItemGuard = null)
     {
         // Completion and claim use this same gate. Keep the lane move and its
         // authority decision in one ordering so neither can settle in between.
@@ -1745,6 +1745,7 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            if (approvalItemGuard?.Invoke(card) is { } batchRefusal) return batchRefusal;
             expectedState ??= request.ExpectedSourceState;
             if (request.RequireUnstarted && (card.ExecutionLocation?.StartedAt is not null || card.SessionChain.Count > 0
                 || card.SessionName is not null || card.LastUsage is not null || card.Commits.Count > 0

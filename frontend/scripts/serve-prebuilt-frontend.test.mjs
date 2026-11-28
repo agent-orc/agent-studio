@@ -20,8 +20,8 @@ const ipv6Probe = () => new Promise(resolve => {
   probe.listen(0, '::1', () => probe.close(() => resolve({ available: true })));
 });
 
-const get = (host, port, urlPath) => new Promise((resolve, reject) => {
-  const request = http.get({ host, port, path: urlPath, agent: false, headers: { accept: 'text/html' } }, response => {
+const get = (host, port, urlPath, accept = 'text/html') => new Promise((resolve, reject) => {
+  const request = http.get({ host, port, path: urlPath, agent: false, headers: { accept } }, response => {
     let body = '';
     response.setEncoding('utf8');
     response.on('data', chunk => { body += chunk; });
@@ -80,6 +80,14 @@ test('the /api proxy reaches the backend from both loopbacks', async t => {
   if (!ipv6Loopback.available) { t.skip(ipv6Loopback.reason); return; }
   const ipv6 = await get('::1', server.port, '/api/health?from=v6');
   assert.deepEqual(ipv6, { status: 200, body: 'stub /api/health?from=v6' });
+});
+
+test('the /healthz probe reaches the backend instead of the static fallback', async t => {
+  const server = await startFrontendServer(tmpDir, 0, stubUrl);
+  t.after(() => server.close());
+  const health = await get('127.0.0.1', server.port, '/healthz?from=browser', 'application/json');
+  assert.deepEqual(health, { status: 200, body: 'stub /healthz?from=browser' });
+  assert.equal((await get('127.0.0.1', server.port, '/healthz-missing', 'application/json')).status, 404);
 });
 
 test('an unavailable [::1] logs one warning and keeps serving IPv4', async t => {
