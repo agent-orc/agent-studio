@@ -44,6 +44,10 @@ class Failure(Exception):
         self.code = code
 
 
+class CommandFailure(Failure):
+    pass
+
+
 def command(*args, cwd=None):
     # Compose output contains credentials. Never include stdout, stderr or
     # command arguments in a failure reported to the terminal or the journal.
@@ -51,7 +55,7 @@ def command(*args, cwd=None):
         result = subprocess.run(args, cwd=cwd, capture_output=True, check=True,
                                 timeout=90, text=True, errors="replace")
     except (OSError, subprocess.SubprocessError):
-        raise Failure(f"{args[0]} {args[1]} failed") from None
+        raise CommandFailure(f"{args[0]} {args[1]} failed") from None
     return result.stdout.strip()
 
 
@@ -260,11 +264,13 @@ def health(container):
     try:
         state = command("docker", "inspect", "-f",
                         "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", container)
-    except Failure:
-        return "exited"
+    except CommandFailure:
+        return "unknown"
     running, _, status = state.partition(" ")
-    if running != "true":
+    if running == "false":
         return "exited"
+    if running != "true":
+        return "unknown"
     return status or "running"
 
 
