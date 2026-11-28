@@ -1513,6 +1513,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     }
 
     private double? _advertisementRoundTripMs;
+    private readonly LinuxStructureCollector? _structureCollector = OperatingSystem.IsLinux() ? LinuxStructureCollector.Local() : null;
 
     public async Task AdvertiseCapabilitiesAsync(
         IReadOnlyList<Contract.AdvertisedCapabilityDto> capabilities,
@@ -1525,7 +1526,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (telemetry is not null)
             telemetry = telemetry with
             {
-                Containers = await RunnerCapabilityProbe.ContainersAsync(ct),
+                Structure = _structureCollector?.Sample(options, telemetry, HostMaxParallelism),
+                Containers = Directory.Exists("/sys/fs/cgroup/studio.slice") ? null : await RunnerCapabilityProbe.ContainersAsync(ct),
                 // AGT-3954: the previous advertisement's round trip is the probed latency of this link.
                 TaskServerRoundTripMs = _advertisementRoundTripMs,
             };

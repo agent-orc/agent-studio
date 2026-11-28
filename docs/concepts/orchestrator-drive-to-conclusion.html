@@ -3587,6 +3587,53 @@
           <td>The successor awaited the predecessor's result before invoking recovery, inheriting its exception or independent cancellation.</td>
           <td>The successor waits for completion, recovers the predecessor's fenced claim and then executes. Shutdown still cancels the wait. Focused regression coverage exercises both gate authorities; delivery returns to platform-owned review.</td>
         </tr>
+        <tr id="case-nested-tap-summary">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">nested-tap-summary</span></td>
+          <td>Different children failed on successive post-merge lint attempts. The receipt showed a confirmed failure for their enclosing suite.</td>
+          <td>Each attempt counted the suite's TAP summary as another failing test.</td>
+          <td>The regression fixture ends with a red lint receipt. It records the first child's recovery and the second child's new failure. A suite hook with its own error retains its verdict.</td>
+        </tr>
+        <tr id="case-untyped-tap-teardown">
+          <td>2026-11-28</td>
+          <td><code>AGT-4358</code><br><span class="small">untyped-tap-teardown</span></td>
+          <td>A post-merge lint receipt recorded the failed child but lost a separate suite teardown error on both attempts.</td>
+          <td>The parser inferred a summary from the failed child. Only an explicit TAP failure type could override that inference.</td>
+          <td>The regression fixture reaches a red lint receipt with both failures and the teardown diagnostic. The nested-suite fixture records only child verdicts when its suite reports a failed subtest count.</td>
+        </tr>
+        <tr id="case-integration-fresh-empty-checkout">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353 / AGT-4018</code><br><span class="small">integration-fresh-empty-checkout</span></td>
+          <td>A resumed conflict round hit its 300-second watchdog under CPU contention.
+            Its fresh successor started without the reviewed delivery or preparation record.</td>
+          <td>The Engine completion return skipped fallback-base persistence. Claims consumed
+            the recovery pin, and later result discovery selected an empty NeedsInput result.</td>
+          <td>Recovery pins now survive until integration. Both authorities receive persisted
+            fallback custody before Ready; failed writes hold Progress. Failed or commitless
+            attempts cannot replace the delivery. CPU full stall is excluded when available.
+            The original run escalated as missing-integration-preparation.</td>
+        </tr>
+        <tr id="case-integration-recovery-review-follow-up">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-recovery-review-follow-up</span></td>
+          <td>Review found that historical passes could hide newer salvage and watchdog
+            observation faults could be mistaken for duration expiry, stopping a live CLI.</td>
+          <td>Base discovery treated any historical passing review as outstanding delivery.
+            The watchdog continuation discarded fault status as if its deadline had elapsed.</td>
+          <td>Only a retained integration pin protects delivery discovery. Pressure faults
+            fall back to wall-clock charging; diagnostic failures leave the monitor alive.
+            Cancellation remains distinct from an unexpected deadline fault.</td>
+        </tr>
+        <tr id="case-integration-resolved-merge-lost-on-fallback">
+          <td>2026-11-28</td>
+          <td><code>AGT-4353</code><br><span class="small">integration-resolved-merge-lost-on-fallback</span></td>
+          <td>The resumed CLI resolved the case-log conflict and reached its duration limit during
+            verification. The next CLI started on the target and ended <code>NeedsInput</code>.</td>
+          <td>Completion published the resolved merge but the fresh claim received no base.</td>
+          <td>A mechanical fallback advances the retained base to verified descendant salvage.
+            A fresh conflict claim with no base fails preparation before launch. The operator
+            restored the incident's saved merge as a single delivery commit.</td>
+        </tr>
         <tr id="case-post-merge-temp-budget">
           <td>2026-11-28</td>
           <td><code>AGT-4369</code><br><span class="small">post-merge-temp-budget</span></td>
@@ -3691,6 +3738,27 @@
           <td>When the report identifies a material failure and supplies the executed concept-fit command,
             Task Server validates the available evidence and schedules the <code>ReviewMaterialUnavailable</code> retry.</td>
         </tr>
+        <tr id="case-mixed-review-assertion-hidden-by-base-failure">
+          <td>2026-11-28</td>
+          <td><code>AGT-4133</code><br><span class="small">mixed-review-assertion-hidden-by-base-failure (fix <code>AGT-4326</code>)</span></td>
+          <td>No CLI crashed in the named receipt. On 27 November, result <code>cb7c0030ed</code>, review <code>review_67986fdcb7e04f5592be22db7075bf25</code>, recorded a new durable-mutation assertion in <code>verify-8</code> while candidate, repeat and base exited 1 with different failure sets. Terminal: <code>Pass</code>.</td>
+          <td>Whole-run environment attribution hid the completed candidate-only assertion when another test failed on the base.</td>
+          <td>The repair collects at most three exact-test control pairs using each checkout's pinned envelope. A matching candidate assertion and an observed passing base control supply the existing <code>ProductFailure</code> decision. Aborted, missing or mismatched controls remain <code>ReviewInfra</code>; rejected proofs also lose their product verdict before grading. Shared base failures retain their disposition. No lane transition rule changes.</td>
+        </tr>
+        <tr id="case-review-assertion-fingerprint-collision">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-fingerprint-collision</span></td>
+          <td>No CLI crashed. A synthetic mixed-run regression changed an asserted duration from <code>1 ms</code> to <code>2 ms</code> in the exact candidate repeat. With a passing base control, the original fingerprint still charged <code>ProductFailure</code>.</td>
+          <td>Command-output normalization removed assertion values and whitespace before hashing. Substring test-name matching could also select a sibling method or parameterized case.</td>
+          <td>Assertion fingerprints preserve values and require an exact test heading. Changed assertions remain incomplete evidence and reach <code>ReviewInfra</code>; matching assertions retain the existing product-failure path. Repeat bounds, checkout envelopes and transition rules are unchanged.</td>
+        </tr>
+        <tr id="case-review-assertion-partial-diagnostic-and-lost-proof">
+          <td>2026-11-28</td>
+          <td><code>AGT-4326</code><br><span class="small">review-assertion-partial-diagnostic-and-lost-proof</span></td>
+          <td>No CLI crashed. Synthetic regressions reproduced collisions when assertion messages resembled console metadata or identical messages came from different source lines. A mixed report could also reach <code>Pass</code> after its exact-test proof was removed and its diagnosis became environment or integration-branch debt.</td>
+          <td>Fingerprint extraction discarded message content and assertion locations. Grading required the control proof only for a product diagnosis and checked integration-branch debt earlier.</td>
+          <td>Complete diagnostic blocks retain message content and assertion source locations; ambiguous blocks remain incomplete. The proof check runs before disposition shortcuts and removes unsupported product verdicts. Missing or invalid controls reach <code>ReviewInfra</code>, while matching assertions retain <code>ProductFailure</code>. Repeat bounds, per-tree envelopes and lane transitions are unchanged.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3762,7 +3830,7 @@
       is recorded as <code>sessionMode=resumed|fresh</code> in continuation evidence and remote token
       receipts. Explicit pins and correctness floors govern any reasoning reduction.</p>
 
-    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
+    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 charged seconds. On Linux workers with cgroup CPU pressure accounting, the duration excludes the worker group's full CPU stall intervals; unavailable counters retain a logged wall-clock fallback. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
        session is genuinely gone. That fallback consumes one attempt; it does not reset the budget. The current defect is the

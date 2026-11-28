@@ -42,8 +42,8 @@ export class ProductApi {
   removeProjectUrl(projectId, urlId) { return this.session.delete(`/api/projects/${enc(projectId)}/urls/${enc(urlId)}`); }
 
   // The project chat beside the preview; "URL preview" switches it to product language.
-  productChat(projectId, text) {
-    return this.session.send('POST', `/api/runner/project:${enc(projectId)}/orchestrator-chat`, {
+  productChat(projectName, text) {
+    return this.session.send('POST', `/api/runner/project:${enc(projectName)}/orchestrator-chat`, {
       body: { text, navigationContext: { observedSurface: 'URL preview', currentPage: 'url-preview' } },
       timeoutMs: CHAT_TIMEOUT_MS,
     });
@@ -70,10 +70,10 @@ export class ProductApi {
   }
 
   /** Moves a card the way studio-op does: take the attention lease, send its revision. */
-  async moveTask(id, project, targetState) {
+  async moveTask(id, project, targetState, archiveReason) {
     const attention = await this.session.request('POST', `/api/tasks/${enc(id)}/attention`, { query: { project } });
     return this.session.request('POST', `/api/tasks/${enc(id)}/move`, {
-      query: { project }, body: { targetState }, headers: { 'If-Match': attention.revision },
+      query: { project }, body: { targetState, ...(archiveReason ? { archiveOverride: true, reason: archiveReason } : {}) }, headers: { 'If-Match': attention.revision },
     });
   }
 

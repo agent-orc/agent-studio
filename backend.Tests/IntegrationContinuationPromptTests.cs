@@ -327,8 +327,8 @@ public sealed class IntegrationPreparationFixtureTests : IDisposable
     public IntegrationPreparationFixtureTests() { }
     private IntegrationPreparationFixtureTests(string root) => _root = root;
 
-    private async Task<(Workspace Workspace, string Delivery, string Target)> Fixture(
-        bool conflict, string reason = "continue-round-result", bool mergeDelivery = false)
+    internal async Task<(Workspace Workspace, string Delivery, string Target)> Fixture(
+        bool conflict, string reason = "continue-round-result", bool mergeDelivery = false, bool concernRound = false)
     {
         var origin = Path.Combine(_root, "origin");
         Directory.CreateDirectory(origin);
@@ -342,6 +342,11 @@ public sealed class IntegrationPreparationFixtureTests : IDisposable
         await Git(origin, true, "checkout", "-b", "results/delivery");
         File.WriteAllText(Path.Combine(origin, "shared.txt"), "delivery\n");
         await Commit(origin, "delivery");
+        if (concernRound)
+        {
+            File.WriteAllText(Path.Combine(origin, "concern-fix.txt"), "bounded concern fix\n");
+            await Commit(origin, "bounded concern round");
+        }
         if (mergeDelivery)
         {
             await Git(origin, true, "checkout", "-b", "side", "develop");
@@ -355,14 +360,8 @@ public sealed class IntegrationPreparationFixtureTests : IDisposable
         File.WriteAllText(Path.Combine(origin, conflict ? "shared.txt" : "target.txt"), conflict ? "target\n" : "target");
         await Commit(origin, "target");
         var target = (await Git(origin, true, "rev-parse", "HEAD")).Output;
-        var workspace = new Workspace(new Runner::AgentRunner.RunnerOptions
-        {
-            ServerUrl = "http://localhost", RunnerName = "fixture", Hostname = "fixture-host", BackendName = "fixture",
-            RunnerId = "fixture", WorkDir = Path.Combine(_root, "cache"), GitRemote = origin,
-            BaseBranch = "develop", StateDir = Path.Combine(_root, "state"),
-        }, "AGT-4097", _ => { }, sourceRunAttemptId: "fixture-run", fencingToken: 1,
-            continuationBaseRef: "refs/heads/results/delivery", continuationBaseSha: delivery,
-            continuationBaseReason: reason);
+        var workspace = CreateWorkspace(new ContinuationBaseRecord("refs/heads/results/delivery", delivery,
+            reason, "fixture-run", DateTime.UnixEpoch));
         Directory.CreateDirectory(Path.GetDirectoryName(workspace.SharedRepoPath)!);
         await Git(_root, true, "clone", origin, workspace.SharedRepoPath);
         // Saved claim/base fixture, including the reason the audit lacked.
@@ -371,13 +370,22 @@ public sealed class IntegrationPreparationFixtureTests : IDisposable
         return (workspace, delivery, target);
     }
 
+    internal Workspace CreateWorkspace(ContinuationBaseRecord? claim, bool fresh = false)
+        => new(new Runner::AgentRunner.RunnerOptions
+        {
+            ServerUrl = "http://localhost", RunnerName = "fixture", Hostname = "fixture-host", BackendName = "fixture",
+            RunnerId = "fixture", WorkDir = Path.Combine(_root, fresh ? "fresh-cache" : "cache"), GitRemote = Path.Combine(_root, "origin"),
+            BaseBranch = "develop", StateDir = Path.Combine(_root, "state"),
+        }, "AGT-4097", _ => { }, sourceRunAttemptId: "fixture-run", fencingToken: 1,
+            continuationBaseRef: claim?.Ref, continuationBaseSha: claim?.CommitSha,
+            continuationBaseReason: claim?.Reason, requiresContinuationBase: fresh);
     private static async Task Commit(string path, string message)
     {
         await Git(path, true, "add", "--all");
         await Git(path, true, "commit", "-m", message);
     }
 
-    private static async Task<(int ExitCode, string Output)> Git(string path, bool success, params string[] args)
+    internal static async Task<(int ExitCode, string Output)> Git(string path, bool success, params string[] args)
     {
         var start = new ProcessStartInfo("git")
         { WorkingDirectory = path, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };

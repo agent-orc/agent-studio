@@ -167,19 +167,33 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
         Assert.False(Directory.Exists(path));
     }
 
+    private string LinkRunsDirectory(PersistedRunnerSlot slot)
+    {
+        var copy = RunnerPreparationCopies.RootFor(_work, slot)!;
+        var runs = Directory.GetParent(copy)!;
+        runs.Parent!.Create();
+        var target = Directory.CreateDirectory(Path.Combine(_work, "relocated")).FullName;
+        Directory.CreateSymbolicLink(runs.FullName, target);
+        return Path.Combine(target, Path.GetFileName(copy));
+    }
+
     [SkippableTheory]
-    [InlineData("cwd")]
-    [InlineData("fd")]
-    [InlineData("argument")]
+    [InlineData("cwd", false)]
+    [InlineData("fd", false)]
+    [InlineData("argument", false)]
+    [InlineData("cwd", true)]
+    [InlineData("fd", true)]
+    [InlineData("argument", true)]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     [Trait("Category", "MachineBound")]
-    public async Task Terminal_release_preserves_child_references_without_cache_environment(string reference)
+    public async Task Terminal_release_preserves_child_references_without_cache_environment(string reference, bool linkRuns)
     {
         PlatformGate.LinuxOnly("inspects a live child's procfs links");
         var slot = Claim();
-        Prepare(slot, 21);
         var workAlias = Directory.CreateSymbolicLink(Path.Combine(_work, "alias"), ".").FullName;
         var path = RunnerPreparationCopies.RootFor(workAlias, slot)!;
+        var childPath = linkRuns ? LinkRunsDirectory(slot) : path;
+        Prepare(slot, 21);
         _state.Delete(slot);
         var start = new ProcessStartInfo("/bin/sh")
         {
@@ -197,22 +211,26 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
             _ => ":"
         };
         start.ArgumentList.Add($"set -eu; read -r root; {bind}; echo ready; read -r done");
-        if (reference == "argument") start.ArgumentList.Add(Path.Combine(path, "package"));
+        if (reference == "argument") start.ArgumentList.Add(Path.Combine(childPath, "package"));
         using var child = Process.Start(start)!;
         try
         {
-            await child.StandardInput.WriteLineAsync(path);
+            await child.StandardInput.WriteLineAsync(childPath);
             Assert.Equal("ready", await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)));
             RunnerPreparationCopies.Release(workAlias, slot, _ => { });
             Assert.True(File.Exists(Path.Combine(path, "package")));
-            Assert.Equal(21, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 0, true, _ => { }));
+            if (!linkRuns)
+                Assert.Equal(21, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 0, true, _ => { }));
         }
         finally
         {
             child.StandardInput.Close();
             await child.WaitForExitAsync();
         }
-        Assert.Equal(0, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 100, false, _ => { }));
+        if (linkRuns)
+            RunnerPreparationCopies.Release(workAlias, slot, _ => { });
+        else
+            Assert.Equal(0, RunnerPreparationCopies.Sweep(workAlias, _state.LoadAll, 100, false, _ => { }));
         Assert.False(Directory.Exists(path));
     }
 
@@ -222,6 +240,7 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
     {
         PlatformGate.LinuxOnly("inspects a package mapping in procfs");
         var slot = Claim();
+        LinkRunsDirectory(slot);
         var path = Prepare(slot, 21);
         _state.Delete(slot);
         var package = Path.Combine(path, "package");
@@ -233,7 +252,7 @@ public sealed class RunnerPreparationCopiesTests : IDisposable
             Assert.True(File.Exists(package));
             Assert.Equal(0, view.ReadByte(0));
         }
-        Assert.Equal(0, RunnerPreparationCopies.Sweep(_work, _state.LoadAll, 100, false, _ => { }));
+        RunnerPreparationCopies.Release(_work, slot, _ => { });
         Assert.False(Directory.Exists(path));
     }
 

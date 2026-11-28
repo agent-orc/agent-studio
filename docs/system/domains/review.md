@@ -34,7 +34,7 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-27
+Version: 2026-11-28
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Deterministic measurement dispositions (AGT-4099)
@@ -56,6 +56,27 @@ measurement proof and missing verdicts retain infrastructure handling. A cited,
 diff-confirmed product finding takes the fix-round path even when another
 measurement is environmental. Human holds, immutable results and attempt
 fences remain admission requirements.
+
+For a completed mixed test run, a candidate-only assertion shared with the clean
+repeat receives at most three exact-test control pairs per command. Each pair
+uses fresh candidate and merge-base checkouts with their own pinned declarations.
+A matching assertion fingerprint and an observed passing same-filter base test
+supply the existing product-failure decision, even when other tests fail on the
+base. The settled command retains the assertion identity, fingerprints and both
+control measurements. An aborted host, changed assertion, absent base test or
+unavailable control remains explicit incomplete evidence. Shared base failures
+keep their existing disposition. Parameterized cases that cannot be identified
+by an exact method filter also remain incomplete.
+Assertion fingerprints require the exact test heading, a complete diagnostic
+block and an assertion source location. They retain message whitespace, asserted
+paths, console-like message text and stack locations, including source line
+numbers. Only framing established by the test heading and checkout paths in
+stack source locations are normalized. Missing locations or ambiguous output
+remain incomplete evidence. Report grading requires retained controls before
+accepting a reproduced candidate-only assertion, including environment and
+integration-branch diagnoses; losing the proof cannot turn the mixed run into a
+pass. Inference respects the frozen comparison mode and known backend diff
+scope. A clean repeat that passed keeps its existing disposition.
 
 When a deterministic command is red on a stale merge base and the fetched target
 has advanced, the review host measures the command on a clean target checkout.
@@ -98,13 +119,43 @@ review host checks relative file references in declared tool and preparation
 commands against that commit and the delivery's Git tree. If the plan commit
 contains a file that the delivery tree lacks, the attempt ends as
 `DeliveryPredatesReviewPlan`. Option **(b)** is implemented: the card receives
-an automatic merge round whose prompt names the full immutable result ref and
-asks the agent to merge the target branch, resolve conflicts, and submit the
-new delivery. A merge conflict is handled by that round. The attempt runs no
-review commands and spends no review infrastructure retry. A shell exit 127
-with no such Git-tree skew remains `ReviewInfra/ToolUnavailable` when the host
-lacks the declared binary. A delivery that contains the file runs its plan as
-before.
+an automatic preparation round whose prompt names the full immutable result
+ref and exact plan commit. Git and workspace preparation remain platform-owned;
+the run resolves content conflicts and submits the prepared delivery. The skew
+attempt runs no review commands and spends no review infrastructure retry.
+A shell exit 127 with no such Git-tree skew remains
+`ReviewInfra/ToolUnavailable` when the host lacks the declared binary. A delivery
+that contains the file runs its plan as before.
+
+AGT-4101 bounds the monolith `PlanMergeRound` continuation with the shared
+lifetime `CardRoundBudget` allowance (`OperatorSweeps:MaxRoundsPerCard`, default
+4). Before Ready, an atomic `logs/review-plan-skew-allowance.json` reservation
+binds the accepted settlement key, review attempt, immutable delivery SHA and
+plan commit. A replay reuses that reservation. The common counter counts its
+`card_round_budget_disposition` receipt and the later `quality_loop_reopened`
+receipt once per attempt, including older skew reopen receipts. Reservation
+survives a crash before the lane move; the existing keyed continuation replay
+finishes an interrupted move or its prompt/receipt projection without charging
+again. New delivery SHAs and target commits do not replenish the allowance.
+
+A pending recovery review rebuilds its delivery-specific plan against the
+pinned target commit before claim. Target ref movement alone retains the pin.
+A changed build-profile fingerprint or authored brief explicitly replaces the
+pin with the new plan commit and records `review_attempt_replanned` with cause
+`review-plan-skew-plan-replaced`. It retains all spent reservations. A delivered
+review outcome releases the active pin while retaining the lifetime allowance.
+A legacy settlement uses the executor's fetched target SHA when available;
+without a valid plan identity it cannot open a preparation round.
+
+On exhaustion the source enters `machine-blocker-quarantine` in Escalated with
+its immutable delivery retained and acceptance evidence still unsatisfied. A
+stable creation identity produces one linked configuration repair in Ready,
+with no dependency on the quarantined source. Creation, reference projection
+and continuation completion repair on replay. The repair diagnoses plan churn
+and verification preparation inputs on its platform-assigned base. This path
+creates no operator decision request or operator escalation notification and
+never overrides an existing human lane hold. The separate Engine review action
+applier is outside this monolith continuation contract.
 
 ## Host source cache startup
 
@@ -443,7 +494,8 @@ lifetime per card; the reissue limit applies to the current review epoch.
 The task detail shows the delivered round count, limit, and aspect
 that spent the budget. Automatic continuation admission also checks the
 per-card `CardRoundBudget` (default 4), which counts reissues, review finding
-and concern reopens, and automatic continuations across all epochs.
+and concern reopens, plan-skew reservations, and automatic continuations across
+all epochs. A plan-skew reservation and its reopen receipt spend one round.
 
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the

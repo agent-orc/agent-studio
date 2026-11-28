@@ -23,6 +23,15 @@ export interface CredentialInventoryItem {
   binding?: string | null;
   storageMode?: string | null;
   revocationReceipt?: string | null;
+  lifetimeClass?: 'short-lived' | 'long-lived';
+  holder?: string | null;
+  target?: string | null;
+  createdAt?: string | null;
+  expiry?: string;
+  rotationIntervalDays?: number | null;
+  rotationDueAt?: string | null;
+  rotationPlanSource?: string;
+
 }
 
 export interface CredentialInventory {

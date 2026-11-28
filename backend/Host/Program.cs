@@ -503,6 +503,12 @@ builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.GitHubAppHostKeys(
     sp.GetRequiredService<AccessSecurityStore>().SecurityFolder));
 // Registered before every Git-using hosted service. Its background loop writes
 // the first App tokens; integration waits on the readiness without holding startup.
+builder.Services.AddSingleton<AgentStudio.GitHubApp.ICredentialLifecycleNotifier, AgentStudio.GitHubApp.CredentialLifecycleNotifier>();
+builder.Services.AddSingleton(sp => new AgentStudio.GitHubApp.CredentialLifecycleMonitor(
+    Path.Combine(sp.GetRequiredService<AccessSecurityStore>().SecurityFolder, "credential-lifecycle.json"),
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<AgentStudio.GitHubApp.ICredentialLifecycleNotifier>()));
+builder.Services.AddSingleton<AgentStudio.GitHubApp.CredentialInventoryService>();
+builder.Services.AddHostedService<AgentStudio.GitHubApp.CredentialLifecycleHostedService>();
 builder.Services.AddSingleton<AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness>();
 builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialService>();
 builder.Services.AddSingleton<SecretProjectKeys>();
@@ -720,6 +726,9 @@ builder.Services.AddSingleton<AgentStudio.Management.StructureLibraryService>();
 builder.Services.AddSingleton<AgentStudio.Management.StructurePlacementSource>();
 builder.Services.AddSingleton<AgentStudio.Management.StudioSelfObserver>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureDataLocationService>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureHistoryBuffer>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureRuntimeSampler>();
+builder.Services.AddSingleton<AgentStudio.Management.StructureReportCache>();
 builder.Services.AddSingleton<AgentStudio.Management.StructureSnapshotService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Management.StructureSnapshotService>());
 builder.Services.AddSingleton<AgentStudio.Host.StructureHubBroadcaster>();
@@ -1290,7 +1299,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(service
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateRunLedger(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "gate-run-ledger"),
-    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>()));
+    logger: sp.GetRequiredService<ILogger<AgentStudio.Pipeline.GateRunLedger>>(),
+    structure: sp.GetRequiredService<AgentStudio.Management.StructureHistoryBuffer>()));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 // AGT-3856: while a batch gate runs, at most one other full suite starts.
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchLaneAdmission>(sp =>
@@ -1595,7 +1605,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlo
     task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
         .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
-    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>()));
+    sp.GetRequiredService<ProviderLimitRegistry>(), sp.GetRequiredService<AgentStudio.Cli.ModelSelectionLedger>(),
+    sp.GetRequiredService<AgentStudio.Cli.QuotaService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorGateHostFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.GateHostOutageMonitor>(),
     sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
@@ -1624,6 +1635,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorEnv
     sp.GetRequiredService<HealthCheckStore>(),
     () => sp.GetRequiredService<TaskScannerService>().GetWatchPaths().Select(path => path.Name),
     (project, cardId) => sp.GetRequiredService<EnvironmentHealthService>().CardKey(project, cardId)));
+builder.Services.AddSingleton<OperatorAttentionDismissals>();
+builder.Services.AddSingleton<OperatorAttentionReadModel>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());
@@ -1961,10 +1974,11 @@ app.UseOperatorListener();
 // AGT-3954: note that a proxy forwarded the request before the headers are consumed;
 // the structure view reads it as the observation of the edge.
 var structureSelf = app.Services.GetRequiredService<AgentStudio.Management.StudioSelfObserver>();
-app.Use((context, next) =>
+app.Use(async (context, next) =>
 {
     structureSelf.ObserveRequest(context.Request.Headers);
-    return next(context);
+    try { await next(context); }
+    finally { structureSelf.FinishRequest(); }
 });
 app.UseForwardedHeaders();
 // Directly after forwarding, so every later short-circuit (Task Server proxy

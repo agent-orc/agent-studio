@@ -21,6 +21,7 @@ public static class OperatorSignInEndpoints
     public static void MapOperatorSignInEndpoints(this WebApplication app)
     {
         app.MapOperatorSessionEndpoints();
+        app.MapOperatorBatchSessionEndpoints();
         app.MapPost(StartPath, async (HttpContext context, AccessSecurityStore store) =>
         {
             var (request, refusal) = await ReadBoundedAsync<StartOperatorSignInRequest>(context);
@@ -53,6 +54,7 @@ public static class OperatorSignInEndpoints
     public static void MapOperatorSignInOwnerEndpoints(this RouteGroupBuilder iam)
     {
         iam.MapOperatorSessionOwnerEndpoints();
+        iam.MapOperatorBatchOwnerEndpoints();
         var signIns = iam.MapGroup("/operator-sign-ins");
 
         signIns.MapPost("/lookup", (OperatorSignInCodeRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -88,11 +90,11 @@ public static class OperatorSignInEndpoints
     }
 
     /// <summary>Reads at most 4 KiB of JSON before binding, with or without Content-Length.</summary>
-    internal static async Task<(T? Request, IResult? Refusal)> ReadBoundedAsync<T>(HttpContext context) where T : class
+    internal static async Task<(T? Request, IResult? Refusal)> ReadBoundedAsync<T>(HttpContext context, int maxBodyBytes = MaxBodyBytes) where T : class
     {
         if (!context.Request.HasJsonContentType()) return (null, Results.StatusCode(StatusCodes.Status415UnsupportedMediaType));
-        if (context.Request.ContentLength > MaxBodyBytes) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
-        var body = new byte[MaxBodyBytes + 1];
+        if (context.Request.ContentLength > maxBodyBytes) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
+        var body = new byte[maxBodyBytes + 1];
         var length = 0;
         while (length < body.Length)
         {
@@ -100,7 +102,7 @@ public static class OperatorSignInEndpoints
             if (read == 0) break;
             length += read;
         }
-        if (length > MaxBodyBytes) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
+        if (length > maxBodyBytes) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
         try
         {
             var request = JsonSerializer.Deserialize<T>(body.AsSpan(0, length), JsonSerializerOptions.Web);

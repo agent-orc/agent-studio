@@ -34,12 +34,32 @@ instead of creating a new article.
 | `kind` | `digest`, `decision-brief`, `report` or `note`. |
 | `author`, `authors` | The principal of a revision, set by Studio from the authenticated caller, an optional persona name, persona id and role id. `authors` lists every distinct author. Old articles without ids remain readable. The orchestrator may publish with a persona name and no role id until persona records exist. |
 | `sources` | Up to 100 `{ kind, ref }` entries with kind `card`, `dossier` or `batch`. |
+| `items` | Up to eight scored editorial findings, stored with each revision. |
+| `leadImportance` | The highest item importance in the revision shown, or `null` if the revision has no items. The list shows the current revision's score. |
 | `createdAt`, `updatedAt`, `revision` | `updatedAt` and `revision` change with every content update. |
 | `pinned`, `archivedAt` | Flags. Changing them appends no revision and leaves `updatedAt` alone. |
 
 Every upsert appends a revision, and every earlier revision stays readable.
 A title, summary, or body holding a credential-shaped value is refused
 (`magazine-credential-in-content`) rather than masked.
+
+Each editorial finding has `id`, `headline`, `importance`, `howDerived`,
+`evidence`, `proposal` and `needsOwner`. The article keeps the editor's
+integer importance (0 to 100), rationale and boolean Owner flag. PT-4
+continues to compute importance for scheduled persona items.
+
+- IDs are unique within an article, case-sensitive, and at most 80 characters
+  with no whitespace or control characters. Findings are stored in descending
+  importance, with IDs compared ordinally to break ties.
+- Headlines hold up to 200 characters. The rationale and proposal each hold
+  up to 2,000 characters. Text fields contain nonblank text without NUL
+  characters. Limits count UTF-16 code units.
+- Evidence is an array of up to 16 text entries of at most 1,000 characters
+  each. Entries can cite references. Studio treats them as text and never
+  opens files or fetches URLs from them.
+- `MagazineEditorialItems.ValidateAndOrder` validates the typed array for
+  Magazine writes and report delivery readers. The item model requires an
+  integer JSON token for `importance` and a JSON boolean for `needsOwner`.
 
 ## Store
 
@@ -72,10 +92,10 @@ The store is not proxied to a standalone Task Server.
 
 | Route | Permission | Answer |
 |---|---|---|
-| `GET /api/magazine?scope=<scope>[&includeArchived=true]` | `magazine.read` | `{ scope, articles }`, without bodies, pinned first, then newest `updatedAt`. Archived articles only with `includeArchived`. |
-| `GET /api/magazine/{scope}/{slug}[?revision=n]` | `magazine.read` | The article with `body`, `bodyFormat: "markdown"`, `revision` (the one shown) and `currentRevision`. `ETag` is the current revision. |
+| `GET /api/magazine?scope=<scope>[&includeArchived=true]` | `magazine.read` | `{ scope, articles }`, with `leadImportance` and without bodies or items, pinned first, then newest `updatedAt`. Archived articles only with `includeArchived`. |
+| `GET /api/magazine/{scope}/{slug}[?revision=n]` | `magazine.read` | The article with `body`, `bodyFormat: "markdown"`, `items`, `leadImportance`, `revision` (the one shown) and `currentRevision`. `ETag` is the current revision. |
 | `GET /api/magazine/{scope}/{slug}/history` | `magazine.read` | `{ scope, slug, currentRevision, revisions }`, newest first, without bodies. |
-| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, personaId?, roleId?, sources? }`. 201 on create, 200 on update. |
+| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, personaId?, roleId?, sources?, items? }`. 201 on create, 200 on update. |
 | `POST /api/magazine/{scope}/{slug}/pin` | `magazine.write` | `{ pinned }`, default `true`. |
 | `POST /api/magazine/{scope}/{slug}/archive` | `magazine.write` | `{ archived }`, default `true`. `false` restores the article. |
 
@@ -88,6 +108,10 @@ How `PUT` treats `If-Match`:
 - A create sends no `If-Match`. A positive revision on an absent article is a 409.
 - A request above 2 MiB is refused before it is read (`magazine-body-too-large`).
 
+Omitted, null or empty `items` creates an unscored revision with an empty
+item array. Historical detail reads serve the items, score and author from
+the requested revision.
+
 Errors are `{ error, message }` with stable codes: `magazine-scope-invalid`,
 `magazine-scope-not-found`, `magazine-scope-denied`,
 `magazine-article-not-found`, `magazine-revision-not-found`,
@@ -96,6 +120,13 @@ Errors are `{ error, message }` with stable codes: `magazine-scope-invalid`,
 `magazine-kind-invalid`, `magazine-source-invalid`,
 `magazine-sources-too-many`, `magazine-persona-invalid`,
 `magazine-body-invalid`, `magazine-request-invalid`.
+
+Item validation returns 400 with `magazine-item-invalid` for invalid values,
+`magazine-items-too-many` for excess items, and
+`magazine-credential-in-content` for credential-shaped text in any item
+field. Invalid JSON types, including fractional or quoted importance values,
+return 400 `magazine-request-invalid`. Validation happens before any revision
+is written.
 
 The body is text in a JSON string. Studio never renders it as HTML or
 executes it. The MAG-2 views must render the Markdown through the

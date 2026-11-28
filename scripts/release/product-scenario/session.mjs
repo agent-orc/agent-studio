@@ -6,7 +6,7 @@ import { createHmac } from 'node:crypto';
 
 import { OperationError, failure } from '../../../tools/studio-op/src/studio.mjs';
 
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = Number(process.env.PRODUCT_SCENARIO_REQUEST_TIMEOUT_MS ?? 30_000);
 const SESSION_COOKIE = '__Host-agentstudio-session';
 const LOOPBACK_SESSION_COOKIE = 'agentstudio-session';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -94,7 +94,7 @@ export class SessionClient {
       });
     } catch (error) {
       throw new OperationError('studio-unreachable',
-        `Studio at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`);
+        `${method} ${path.split('?')[0]} at ${this.base.origin} did not answer (${error.cause?.code ?? error.name}).`);
     }
     this.keepCookies(response.headers);
     const text = await response.text();

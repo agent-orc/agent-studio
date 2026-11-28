@@ -150,7 +150,8 @@ frontend/.frontend-dev.log
 /jobs-dump.json
 /mini-test-screenshot.png
 /presentation/
-/scenarios/
+/scenarios/*
+!/scenarios/application-lifecycle/
 /results/*
 !/results/evidence.md
 

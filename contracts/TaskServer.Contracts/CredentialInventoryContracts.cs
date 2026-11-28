@@ -19,8 +19,24 @@ public sealed record CredentialInventoryItemDto(
     string? Issuer = null,
     string? Binding = null,
     string? StorageMode = null,
-    string? RevocationReceipt = null);
+    string? RevocationReceipt = null,
+    string? Holder = null,
+    string? Target = null,
+    DateTime? CreatedAt = null,
+    int? RotationIntervalDays = null,
+    DateTime? RotationDueAt = null,
+    DateTime? RotationBasisAt = null,
+    bool Refreshable = false,
+    bool Active = true,
+    string RotationPlanSource = "inventory-default")
+{
+    public string LifetimeClass => CredentialLifecyclePolicy.Classify(this);
+    public string Expiry => ExpiresAt?.ToString("O", System.Globalization.CultureInfo.InvariantCulture) ?? "none";
+}
 
 public sealed record CredentialInventoryDto(
     DateTime GeneratedAt,
-    IReadOnlyList<CredentialInventoryItemDto> Items);
+    IReadOnlyList<CredentialInventoryItemDto> Items)
+{
+    public IReadOnlyList<CredentialLifecycleWarningDto> Warnings => CredentialLifecyclePolicy.Warnings(Items, GeneratedAt);
+}

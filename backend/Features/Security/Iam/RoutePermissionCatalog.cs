@@ -383,7 +383,7 @@ public static class RoutePermissionCatalog
             "/api/operator/watcher/lease",
             "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
-            "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
+            "/api/operator/attention/dismiss", "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
         Add("R", IamPermissions.ProjectRead, "/api/operator/log");
         AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/operator/log");
         Add("POST", IamPermissions.ProjectCardsWrite, "/api/tasks/{}/attention");

@@ -32,7 +32,7 @@ public sealed record HostPlacementDto(
     string? Virtualization = null,
     string? KernelId = null,
     string? MachineName = null,
-    string? MachineVirtualization = null);
+    string? MachineVirtualization = null, string? DetectedVm = null, string? DetectedContainer = null);
 
 /// <summary>One enclosing machine of a reporting host. <c>Kind</c> is <c>vm</c> or <c>physical</c>.</summary>
 public sealed record HostPlacementAncestorDto(string Id, string Kind);
@@ -98,7 +98,7 @@ public static class HostPlacementProbe
         return new HostPlacementDto(kind, inContainer ? name : null,
             ancestors.Count > 0 ? ancestors[^1].Id : null, ancestors.Count > 0 ? ancestors : null,
             inContainer ? containerTechnology : vmTechnology, KernelId(read("/proc/sys/kernel/random/boot_id")),
-            string.IsNullOrWhiteSpace(machineName) ? null : machineName.Trim(), vmTechnology);
+            string.IsNullOrWhiteSpace(machineName) ? null : machineName.Trim(), vmTechnology, detectVirtVm, detectVirtContainer);
     }
 
     /// <summary>The real host: marker files under <c>/</c>, <c>/proc</c> and <c>/sys</c>.</summary>
