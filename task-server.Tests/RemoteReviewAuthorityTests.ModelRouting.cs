@@ -28,13 +28,17 @@ public sealed partial class RemoteReviewAuthorityTests
         await seed.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest("review-a", "instance-a",
             CapabilityProtocol.CurrentSchemaVersion, clock.GetUtcNow().UtcDateTime, 900, 1,
             [new(CapabilityProtocol.CliExecution("claude"), "cli-execution", "ready"),
-             new(CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready")]), "review-a", default);
+             new(CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth", "ready"),
+             new(CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth", "ready"),
+             new(ReviewCapabilities.CodexCheckoutRead, "review", preferred == "codex" ? "unavailable" : "ready")]), "review-a", default);
         var routing = new RoutingAuthority(bothExhausted);
         var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock,
             new ApplicationResultFinalizationSummaryGenerator(), null, null, modelRouteAdmission: routing);
         await store.InitializeAsync();
         var claim = await store.ClaimReviewAsync(new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         Assert.NotEmpty(routing.Requests);
+        if (preferred == "codex")
+            Assert.All(routing.Requests, request => Assert.Contains("codex", request.UnavailableProviders));
         if (bothExhausted)
         {
             Assert.Equal("empty", claim.Status);

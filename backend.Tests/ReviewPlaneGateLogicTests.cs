@@ -146,6 +146,7 @@ public sealed class ReviewPlaneGateLogicTests
         var current = new HashSet<string>(preLibrary, StringComparer.Ordinal)
         {
             Contract.ReviewCapabilities.LibraryStepV1,
+            Contract.ReviewCapabilities.CodexCheckoutRead,
             Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
             Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
         };
@@ -156,6 +157,7 @@ public sealed class ReviewPlaneGateLogicTests
             {
                 Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
                 Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
+                Contract.ReviewCapabilities.CodexCheckoutRead,
                 Contract.ReviewCapabilities.LibraryStepV1,
             },
             Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, preLibrary));

@@ -13,12 +13,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Xunit;
+using TaskStates = AgentStudio.Shared.TaskStates;
 
 namespace TaskServer.Tests;
 
 public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture fixture) : IClassFixture<InitializedStoreFixture>
 {
     private readonly InitializedStoreFixture _fixture = fixture;
+    private static readonly DateTimeOffset CheckoutFixtureAt = DateTimeOffset.UnixEpoch.AddDays(20000);
     private const string ResultSha = "589c462f589c462f589c462f589c462f589c462f";
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
     private const string RepositoryId = "repo_0123456789abcdef";
@@ -1384,6 +1386,98 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         Assert.Equal("coding-capability-required", codingClaim.Code);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public async Task Codex_review_uses_a_fresh_checkout_read_proof_when_the_plan_needs_it(bool? checkoutReads)
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
+        await store.InitializeAsync();
+        var aspect = checkoutReads == false ? "code-quality" : "concept-fit";
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto($"aspect-{aspect}", aspect, "codex", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: "Review the delivery.",
+                CliType: "codex", Model: "gpt-5.4-mini", RequiresCheckoutReads: checkoutReads)],
+            [aspect], IntegrationRef: "refs/heads/develop", LibraryVersion: ReviewLibraryStepPolicy.Version);
+        var subject = await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "unavailable");
+        await AdvertiseCheckoutAsync(store, "review-b", "instance-b", "ready");
+
+        var first = await store.ClaimReviewAsync(new("review-a", "instance-a"), "review-a", default);
+        if (checkoutReads == false)
+        {
+            Assert.Equal(subject.SubjectId, first.Subject!.SubjectId);
+            return;
+        }
+        Assert.Equal(ReviewClaimEmptyReasons.UnclaimablePlanRequirements, first.Reason);
+        Assert.Contains(ReviewCapabilities.CodexCheckoutRead, first.MissingCapabilities!);
+
+        var second = await store.ClaimReviewAsync(new("review-b", "instance-b"), "review-b", default);
+        Assert.Equal(subject.SubjectId, second.Subject!.SubjectId);
+        Assert.Equal("host-b", second.Lease!.HostId);
+    }
+
+    [Fact]
+    public async Task Checkout_read_failure_keeps_its_host_diagnostic_and_retries_on_another_host()
+    {
+        using var temp = _fixture.CreateDirectory();
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
+        await store.InitializeAsync();
+        const string brief = "Review the delivered Dossier.";
+        var version = Hash(brief);
+        await SeedReviewSubjectAsync(store, plan: new ReviewPlanDto(
+            [new ReviewCommandDto("concept-fit", "concept-fit", "codex", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: brief, CliType: "codex", Model: "gpt-5.4-mini")],
+            ["concept-fit"], IntegrationRef: "refs/heads/develop",
+            LibraryVersion: ReviewLibraryStepPolicy.Version, BriefSha256: version),
+            fullPrompt: brief, authoredVersion: version);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-a");
+        await RegisterReviewerAsync(store, "review-c", "instance-c", "host-c");
+        await RegisterReviewerAsync(store, "review-d", "instance-d", "host-d");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
+        await AdvertiseCheckoutAsync(store, "review-b", "instance-b", "ready");
+        await AdvertiseCheckoutAsync(store, "review-c", "instance-c", "ready");
+        await AdvertiseCheckoutAsync(store, "review-d", "instance-d", "ready");
+        var first = await store.ClaimReviewAsync(new("review-a", "instance-a"), "review-a", default);
+        const string summary = "The reviewer could not read the checkout on host 'host-a': bwrap: Operation not permitted";
+        ReviewReportRequest Failure(ReviewClaimResponse claim) => PassingReport(claim) with
+        {
+            Outcome = "ReviewInfra",
+            FailureClassification = ReviewCheckoutReadPolicy.FailureClassification,
+            Summary = summary.Replace("host-a", claim.Lease!.HostId, StringComparison.Ordinal),
+            Verdicts = [],
+        };
+        var report = await store.ReportReviewAsync(first.Attempt!.AttemptId, Failure(first), "review-a", default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(ReviewCheckoutReadPolicy.FailureClassification, report.FailureClassification);
+        Assert.Equal(summary, report.Summary);
+        Assert.True(report.RetryScheduled);
+        var sameHost = await store.ClaimReviewAsync(new("review-b", "instance-b"), "review-b", default);
+        Assert.Equal(ReviewClaimEmptyReasons.CheckoutRetryDifferentHostRequired, sameHost.Reason);
+        var retry = await store.ClaimReviewAsync(new("review-c", "instance-c"), "review-c", default);
+        Assert.Equal(first.Subject!.SubjectId, retry.Subject!.SubjectId);
+        Assert.Equal("host-c", retry.Lease!.HostId);
+        Assert.Equal(2, retry.Attempt!.AttemptNumber);
+        Assert.True((await store.ReportReviewAsync(retry.Attempt.AttemptId, Failure(retry), "review-c", default)).RetryScheduled);
+        var final = await store.ClaimReviewAsync(new("review-d", "instance-d"), "review-d", default);
+        var finalFailure = Failure(final);
+        var exhausted = await store.ReportReviewAsync(final.Attempt!.AttemptId, finalFailure, "review-d", default);
+        Assert.False(exhausted.RetryScheduled);
+        Assert.Equal(TaskStates.Escalated, exhausted.TaskState);
+        Assert.Equal(exhausted, await store.ReportReviewAsync(final.Attempt.AttemptId, finalFailure, "review-d", default));
+    }
+
+    private static Task<RunnerCapabilitySnapshotDto> AdvertiseCheckoutAsync(
+        TaskServerStore store, string runner, string instance, string status)
+        => store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            runner, instance, CapabilityProtocol.CurrentSchemaVersion, CheckoutFixtureAt.UtcDateTime, 300, 1,
+            [new AdvertisedCapabilityDto(ReviewCapabilities.CodexCheckoutRead, "review", status)]), runner, default);
+
     [Fact]
     public async Task Tool_unavailable_is_retained_as_a_typed_infrastructure_outcome()
     {
@@ -2267,7 +2361,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     public async Task Semantic_block_without_citation_is_admitted_as_non_escalating_concern()
     {
         using var temp = _fixture.CreateDirectory();
-        var store = Store(temp.Path);
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
@@ -2283,6 +2377,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         var request = PassingReport(claim) with
@@ -2314,7 +2409,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis()
     {
         using var temp = _fixture.CreateDirectory();
-        var store = Store(temp.Path);
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
@@ -2325,6 +2420,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             ["code-quality"], IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         var request = PassingReport(claim) with
@@ -2380,7 +2476,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds(bool materialAvailable)
     {
         using var temp = _fixture.CreateDirectory();
-        var store = Store(temp.Path);
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
         await store.InitializeAsync();
         const string authored = "Deliver the persona team Dossier.";
         var version = Hash(authored);
@@ -2395,6 +2491,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             fullPrompt: fullPrompt, authoredVersion: version);
         Assert.Equal(version, subject.Plan.BriefSha256);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
 
@@ -2420,7 +2517,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
         string executedStep, string expectedClassification)
     {
         using var temp = _fixture.CreateDirectory();
-        var store = Store(temp.Path);
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
         await store.InitializeAsync();
         const string brief = "Review the persona team Dossier.";
         var conceptFit = new ReviewCommandDto("aspect-concept-fit", "concept-fit", "codex", [],
@@ -2430,6 +2527,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             IntegrationRef: "refs/heads/develop", BriefSha256: Hash(brief), TaskMode: "concept");
         await SeedReviewSubjectAsync(store, plan: plan, fullPrompt: brief, authoredVersion: plan.BriefSha256);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
 
@@ -2456,7 +2554,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
     public async Task Coding_agent_verdict_citing_changed_file_keeps_existing_delivery_grade()
     {
         using var temp = _fixture.CreateDirectory();
-        var store = Store(temp.Path);
+        var store = Store(temp.Path, new ManualTimeProvider(CheckoutFixtureAt));
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
@@ -2467,6 +2565,7 @@ public sealed partial class RemoteReviewAuthorityTests(InitializedStoreFixture f
             ["requirements"], IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await AdvertiseCheckoutAsync(store, "review-a", "instance-a", "ready");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         var request = PassingReport(claim) with

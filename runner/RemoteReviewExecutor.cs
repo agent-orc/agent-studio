@@ -1505,6 +1505,7 @@ public sealed class RemoteReviewExecutor
                 => CapabilityProtocol.RepositoryAccess,
             "PreparationFailed" => ReviewCapabilities.DependencyPreparation,
             "ToolUnavailable" => ReviewCapabilities.SemanticReview,
+            ReviewCheckoutReadPolicy.FailureClassification => ReviewCapabilities.CodexCheckoutRead,
             "VisionUnavailable" => CapabilityProtocol.Vision,
             "DiskFull" => CapabilityProtocol.Disk,
             "LeaseAuthorityInvalid" => CapabilityProtocol.LeaseAuthority,

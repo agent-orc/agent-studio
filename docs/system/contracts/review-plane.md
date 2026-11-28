@@ -344,6 +344,26 @@ the same proven read key, so the coding host keeps a review no other host can
 clone. See
 [review.md](../domains/review.md#private-repository-access-agt-3077).
 
+## Checkout access for Codex aspects
+
+The plan's optional `requiresCheckoutReads` field defaults to true for
+agent aspects. Concept-fit always reads the delivery checkout. A lease using
+Codex for one of these aspects requires a fresh `review:codex-checkout-read`
+advertisement from the executor's current instance. The capability follows the
+selected provider, so the authored step digest remains valid after a
+permitted provider fallback.
+
+A denied bubblewrap namespace setup can fail a tool call while the Codex
+process exits successfully. The runner uses failed command events as evidence
+and reports `ReviewInfra / ReviewerCheckoutReadUnavailable` with the lease's
+host and the command diagnostic. The retry excludes the hosts that failed
+this way earlier in the same chain. The report still includes the command
+and artifact digests even if the aspect stopped before a verdict.
+
+Operator review retry checks the fenced lane change for a review settlement
+park and the current delivery identity. The platform can refresh the result
+scaffold during that park without changing the retry's delivery identity.
+
 ## Runner-side changes
 
 - `TaskServerClient.ReportReviewAsync` uses a fixed 10-second timeout

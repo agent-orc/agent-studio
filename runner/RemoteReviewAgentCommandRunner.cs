@@ -171,7 +171,11 @@ internal sealed class RemoteReviewAgentCommandRunner : IReviewAgentCommandRunner
                 started,
                 DateTime.UtcNow,
                 timedOut ? "timeout" : null,
-                ParseUsage(raw.StdOut, command.Model, command.CliType));
+                ParseUsage(raw.StdOut, command.Model, command.CliType))
+            {
+                CheckoutReadFailure = invocation.CliType == CliSelection.CodexCli
+                    ? CodexReviewCheckoutFailure.Read(raw) : null,
+            };
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

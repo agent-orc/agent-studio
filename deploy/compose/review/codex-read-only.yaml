@@ -1,0 +1,7 @@
+# Merge into the operator-managed review service after installing host profiles
+# that permit the namespaces used by Codex's inner read-only sandbox.
+services:
+  review:
+    security_opt:
+      - "apparmor=${REVIEW_CODEX_APPARMOR_PROFILE:?Set the confined review AppArmor profile}"
+      - "seccomp=${REVIEW_CODEX_SECCOMP_PROFILE:?Set the review seccomp profile path}"

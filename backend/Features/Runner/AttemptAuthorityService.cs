@@ -1838,6 +1838,22 @@ public sealed partial class AttemptAuthorityService
         }
     }
 
+    internal bool ReviewCheckoutRetryFailedOnHost(string attemptId, string hostId)
+    {
+        lock (_gate)
+        {
+            var cursor = FindReview(attemptId);
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (cursor?.SourceReviewAttemptId is { Length: > 0 } source && visited.Add(source))
+            {
+                cursor = FindReview(source);
+                if (MonolithTransitionAdapter.ReviewCheckoutFailedOnHost(cursor?.FailureClassification, cursor?.Lease?.HostId, hostId))
+                    return true;
+            }
+            return false;
+        }
+    }
+
     /// <summary>
     /// Returns the infrastructure retry chain that ends at
     /// <paramref name="attemptId"/>, oldest attempt first, with each attempt's
